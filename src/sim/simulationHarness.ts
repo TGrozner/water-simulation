@@ -19,6 +19,11 @@ import {
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { evaluateLevel, GAME_LEVELS } from "../game/levels";
+import {
+  ROUTE_FLOW_STAGE_COMPLETE_WATER,
+  STAGE_CLEAR_RATIO,
+  isStageChoiceComplete,
+} from "../game/stageCompletion";
 
 type HarnessResult = {
   preset: ScenePresetId;
@@ -38,6 +43,7 @@ function runHarness(): void {
   const results: HarnessResult[] = [];
 
   runEdgeCaseHarness();
+  assertStageCompletionRules();
   assertGameLevelsComplete();
 
   for (const preset of SCENE_PRESETS) {
@@ -79,6 +85,7 @@ function assertGameLevelsComplete(): void {
         activeStageIsManual: stages[1] ? !isStageAutoOpen(stages[1]) : false,
         selectedChoiceLabel: null,
         selectedRouteWater: null,
+        openedHazardCount: 0,
       },
       true,
     );
@@ -172,6 +179,7 @@ function makeProgress(
   activeStageProgress: number,
   selectedChoiceLabel: string | null,
   selectedRouteWater: number | null = selectedChoiceLabel === null ? null : 0,
+  openedHazardCount = 0,
 ) {
   const activeStage = stages[completedStages];
   return {
@@ -182,7 +190,41 @@ function makeProgress(
     activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel,
     selectedRouteWater,
+    openedHazardCount,
   };
+}
+
+function assertStageCompletionRules(): void {
+  const initialSolids = 108;
+  const remainingSolidsAtGateThreshold = initialSolids - Math.ceil(initialSolids * STAGE_CLEAR_RATIO);
+
+  assert(
+    isStageChoiceComplete({
+      autoOpen: true,
+      initialSolids,
+      remainingSolids: remainingSolidsAtGateThreshold,
+      routeWater: 0,
+    }),
+    "authored stages should complete from clear ratio alone",
+  );
+  assert(
+    !isStageChoiceComplete({
+      autoOpen: false,
+      initialSolids,
+      remainingSolids: remainingSolidsAtGateThreshold,
+      routeWater: 0,
+    }),
+    "manual stages should not complete from clear ratio without route water",
+  );
+  assert(
+    isStageChoiceComplete({
+      autoOpen: false,
+      initialSolids,
+      remainingSolids: remainingSolidsAtGateThreshold,
+      routeWater: ROUTE_FLOW_STAGE_COMPLETE_WATER,
+    }),
+    "manual stages should complete once enough rock is cleared and route water enters",
+  );
 }
 
 function getManualStageIndex(stages: ReturnType<typeof getSceneOpeningStages>): number {
@@ -234,6 +276,8 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         `${preset}: choice ${choiceIndex + 1} unexpectedly cleared choice ${otherChoiceIndex + 1}`,
       );
     }
+
+    assertUnfinishedManualRouteDoesNotFail(preset, level, stages, choiceStageIndex, choiceIndex, tuning);
 
     const beforeManualProgress = evaluateLevel(
       world,
@@ -315,6 +359,46 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
       )}/${level.deliveryTargetWater.toFixed(1)} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)}`,
     );
   }
+}
+
+function assertUnfinishedManualRouteDoesNotFail(
+  preset: ScenePresetId,
+  level: (typeof GAME_LEVELS)[number],
+  stages: ReturnType<typeof getSceneOpeningStages>,
+  choiceStageIndex: number,
+  choiceIndex: number,
+  tuning: ReturnType<typeof cloneTuningPreset>,
+): void {
+  const manualStageIndex = getManualStageIndex(stages);
+  if (manualStageIndex < 0) {
+    return;
+  }
+
+  const world = createWorld(preset);
+  const baselineWater = totalWater(world);
+  for (let stageIndex = 0; stageIndex < choiceStageIndex; stageIndex += 1) {
+    openSceneStage(world, preset, stageIndex);
+  }
+  openSceneStage(world, preset, choiceStageIndex, choiceIndex);
+  runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: unfinished choice ${choiceIndex + 1}`);
+
+  const selectedChoice = getStageChoices(stages[choiceStageIndex])[choiceIndex];
+  const manualChoices = getStageChoices(stages[manualStageIndex]);
+  const manualChoice = manualChoices[Math.min(choiceIndex, manualChoices.length - 1)];
+  const progress = evaluateLevel(
+    world,
+    level,
+    makeProgress(stages, manualStageIndex, manualChoice.label, 0, selectedChoice.label, 0),
+    true,
+  );
+
+  assert(
+    !progress.failed,
+    `${preset}: unfinished manual route ${choiceIndex + 1} should not fail before a hazard or completed route, wasted=${progress.wastedWater.toFixed(
+      1,
+    )}/${level.maxWastedWater.toFixed(1)}`,
+  );
+  assert(!progress.complete, `${preset}: unfinished manual route ${choiceIndex + 1} should not complete`);
 }
 
 function runEdgeCaseHarness(): void {

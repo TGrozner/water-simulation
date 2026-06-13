@@ -3,6 +3,7 @@ import { createDebugOverlay, updateDebugOverlay } from "./debug/debugOverlay";
 import { createDebugPanel } from "./debug/debugPanel";
 import { createGamePanel } from "./game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, getLevel, measureBoxWater, type GameLevel, type LevelProgress } from "./game/levels";
+import { STAGE_CLEAR_RATIO, isStageChoiceComplete } from "./game/stageCompletion";
 import { createCellInspector } from "./input/cellInspector";
 import { createFirstPersonController } from "./input/firstPersonController";
 import {
@@ -59,7 +60,6 @@ configureOrbitControls(sceneContext.controls);
 const VOLUME_WARNING_TOLERANCE = 0.05;
 const FLOW_DEBUG_TTL = 16;
 const STABLE_COMPLETE_TICKS = 18;
-const STAGE_CLEAR_RATIO = 0.72;
 const initialUrlParams = new URLSearchParams(window.location.search);
 
 let gameModeEnabled = getInitialGameModeEnabled();
@@ -312,20 +312,23 @@ function advanceClearedGameStages(): void {
   while (openedStageCount < stages.length) {
     const stage = stages[openedStageCount];
     const choices = getStageChoices(stage);
+    const stageAutoOpen = isStageAutoOpen(stage);
     const availableChoiceIndexes = getAvailableChoiceIndexes(openedStageCount);
     const initialChoiceSolids = stageInitialSolidCounts[openedStageCount] ?? [];
     let clearedChoiceIndex = -1;
 
     for (const choiceIndex of availableChoiceIndexes) {
       const initialSolids = initialChoiceSolids[choiceIndex] ?? 0;
-      if (initialSolids <= 0) {
-        clearedChoiceIndex = choiceIndex;
-        break;
-      }
-
       const remainingSolids = countStageSolidCells(world, choices[choiceIndex]);
-      const clearedRatio = 1 - remainingSolids / initialSolids;
-      if (clearedRatio >= STAGE_CLEAR_RATIO) {
+      const routeWater = stageAutoOpen ? 0 : getManualChoiceRouteWater(stage, choiceIndex);
+      if (
+        isStageChoiceComplete({
+          autoOpen: stageAutoOpen,
+          initialSolids,
+          remainingSolids,
+          routeWater,
+        })
+      ) {
         clearedChoiceIndex = choiceIndex;
         break;
       }
@@ -341,7 +344,7 @@ function advanceClearedGameStages(): void {
     }
 
     openedStageChoices[openedStageCount] = clearedChoiceIndex;
-    if (isStageAutoOpen(stage)) {
+    if (stageAutoOpen) {
       openSceneStage(world, currentPreset, openedStageCount, clearedChoiceIndex);
     }
     openedStageCount += 1;
@@ -781,6 +784,7 @@ function getMissionStageProgress() {
     activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel: getSelectedChoiceLabel(),
     selectedRouteWater: getSelectedRouteWater(),
+    openedHazardCount: openedHazards.size,
   };
 }
 
@@ -829,15 +833,12 @@ function getSelectedRouteWater(): number | null {
   }
 
   const selectedManualChoiceIndex = Math.min(selectedRouteChoiceIndex, choices.length - 1);
-  const boxes = choices.flatMap((choice, choiceIndex) => {
-    if (choiceIndex !== selectedManualChoiceIndex) {
-      return [];
-    }
+  return getManualChoiceRouteWater(manualStage, selectedManualChoiceIndex);
+}
 
-    return getStageDigBoxes(choice);
-  });
-
-  return measureBoxWater(world, boxes);
+function getManualChoiceRouteWater(stage: SceneOpeningStage, choiceIndex: number): number {
+  const choice = getStageChoices(stage)[choiceIndex];
+  return choice ? measureBoxWater(world, getStageDigBoxes(choice)) : 0;
 }
 
 function getAvailableChoiceIndexes(stageIndex: number): number[] {
@@ -901,6 +902,7 @@ function animate(now: number): void {
     lastSimulationMs = performance.now() - simulationStartedAt;
   }
 
+  advanceClearedGameStages();
   decayFlowEvents();
   stableTicks = isStable() ? stableTicks + 1 : 0;
 

@@ -2,6 +2,7 @@ import { totalWater } from "../world/grid";
 import type { ScenePresetId } from "../world/createWorld";
 import type { ClearBox, SceneOpeningStage } from "../world/sceneTools";
 import type { VoxelWorld } from "../world/types";
+import { ROUTE_FLOW_STAGE_COMPLETE_WATER } from "./stageCompletion";
 
 export type GameLevel = {
   id: string;
@@ -25,6 +26,7 @@ export type StageProgress = {
   activeStageIsManual: boolean;
   selectedChoiceLabel: string | null;
   selectedRouteWater: number | null;
+  openedHazardCount: number;
 };
 
 export type LevelProgress = {
@@ -100,8 +102,9 @@ export function evaluateLevel(
   const safeWater = measureBoxWater(world, level.safeWaterBoxes);
   const currentTotalWater = totalWater(world);
   const wastedWater = Math.max(0, currentTotalWater - safeWater);
-  const failed = settled && wastedWater > level.maxWastedWater;
   const allStagesOpen = stageProgress.completedStages >= stageProgress.stageCount;
+  const hazardTriggered = stageProgress.openedHazardCount > 0;
+  const failed = settled && wastedWater > level.maxWastedWater && (allStagesOpen || hazardTriggered);
   const delivered = deliveredWater >= level.deliveryTargetWater;
   const complete = allStagesOpen && delivered && settled && !failed;
 
@@ -179,7 +182,7 @@ function getStatusText(
 }
 
 function hasRouteFlow(stageProgress: StageProgress): boolean {
-  return (stageProgress.selectedRouteWater ?? 0) >= 1;
+  return (stageProgress.selectedRouteWater ?? 0) >= ROUTE_FLOW_STAGE_COMPLETE_WATER;
 }
 
 function box(minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number): ClearBox {
