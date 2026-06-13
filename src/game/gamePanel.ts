@@ -34,6 +34,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
       <dt data-game-mode-label>Mode</dt><dd data-game-metric="mode">gate</dd>
       <dt data-game-risk-label>Risk</dt><dd data-game-metric="risk">none</dd>
       <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
+      <dt data-game-score-label>Score</dt><dd data-game-metric="score">-</dd>
     </dl>
     <div class="game-panel-status" data-game-status>In progress</div>
     <div class="game-panel-actions">
@@ -76,8 +77,11 @@ function updateGamePanel(
   const modeValue = panel.querySelector<HTMLElement>('[data-game-metric="mode"]');
   const riskLabel = panel.querySelector<HTMLElement>("[data-game-risk-label]");
   const riskValue = panel.querySelector<HTMLElement>('[data-game-metric="risk"]');
+  const scoreLabel = panel.querySelector<HTMLElement>("[data-game-score-label]");
+  const scoreValue = panel.querySelector<HTMLElement>('[data-game-metric="score"]');
   const hasRouteChoice = progress.stageProgress.selectedChoiceLabel !== null;
   const hasDeliveryTargets = progress.deliveryRequirements.length > 0;
+  const hasScore = progress.score !== null;
   const isManualStage = progress.stageProgress.activeStageIsManual;
   const hasHazards = progress.level.hazardStages.length > 0;
 
@@ -108,6 +112,7 @@ function updateGamePanel(
   setText(panel, '[data-game-metric="mode"]', isManualStage ? "manual carve" : "authored gate");
   setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
+  setText(panel, '[data-game-metric="score"]', formatScore(progress));
   setText(panel, "[data-game-status]", progress.status);
 
   if (routeLabel && routeValue) {
@@ -135,6 +140,11 @@ function updateGamePanel(
     riskValue.hidden = !hasHazards;
   }
 
+  if (scoreLabel && scoreValue) {
+    scoreLabel.hidden = !hasScore;
+    scoreValue.hidden = !hasScore;
+  }
+
   if (stageBar) {
     stageBar.style.width = `${stagePercent}%`;
   }
@@ -143,6 +153,7 @@ function updateGamePanel(
   panel.dataset.failed = String(progress.failed);
   panel.dataset.risk = hasHazards ? "hazard" : "none";
   panel.dataset.routeFlow = (progress.stageProgress.selectedRouteWater ?? 0) >= 1 ? "active" : "dry";
+  panel.dataset.grade = progress.score?.grade ?? "";
 
   if (resetButton) {
     resetButton.textContent = progress.failed ? "Retry level" : "Reset level";
@@ -165,6 +176,14 @@ function formatDeliveryTargets(progress: LevelProgress): string {
 
   const completeTargets = progress.deliveryRequirements.filter((requirement) => requirement.complete).length;
   return `${completeTargets}/${progress.deliveryRequirements.length} basins`;
+}
+
+function formatScore(progress: LevelProgress): string {
+  if (!progress.score) {
+    return "-";
+  }
+
+  return `${progress.score.grade} ${progress.score.total}`;
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {

@@ -93,7 +93,8 @@ dig only the cells hit by the player, without an authored collapse, and
 completion waits for water to enter the hand-cut tunnel. Opening a red hazard can route water into
 a waste pocket and fail the mission. The HUD tracks gate progress, selected
 route, water inside the selected path, delivered water, per-basin targets,
-wasted water, red-seam risk, settling state, failure, and level completion.
+wasted water, red-seam risk, settling state, failure, level completion, and a
+completion score for efficient routes.
 The debug panels are hidden on the root view by default; press F3 or backquote,
 or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
 start directly in the full sandbox/debug workflow.
@@ -155,6 +156,7 @@ storage.
 - Scene tool buttons for opening each scene's authored drain path
 - Progressive scene opening timeline for multi-stage scenarios
 - Runtime metrics for ticks, last moved volume, max water delta, idle ticks, and stable/moving state
+- Completion scoring that grades route efficiency, wasted water, and time to stable delivery
 - Headless screenshot comparison for all scenes with slice off/on, staged openings, and game screens
 - Durable screenshot baselines under `test/baselines/visual`, with generated actual/diff images under `.sim-build/screenshots`
 - Flow direction debug: recent downward and lateral flow glyphs in water debug mode
@@ -178,12 +180,12 @@ storage.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.
 - Renderer update timings are coarse browser-side measurements, not a profiler.
 - The failure loop is intentionally light; only the challenge levels have authored spill hazards.
-- There is no scoring, timer, or campaign persistence yet.
+- There is no campaign persistence yet.
 
 ## Recommended next steps
 
 - Add more branch-choice levels where safe cuts and risky shortcuts compete for the same water.
-- Add scoring for route efficiency, wasted water, and completion time.
+- Persist best completion scores per level.
 - Add greedy meshing only if a separate voxel picking path is introduced.
 - Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
 - Add more authored cave scenarios with distinct staged release patterns.

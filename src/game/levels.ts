@@ -15,8 +15,22 @@ export type GameLevel = {
   maxWastedWater: number;
   deliveryBoxes: ClearBox[];
   deliveryRequirements?: DeliveryRequirement[];
+  scoreParTicks?: number;
   safeWaterBoxes: ClearBox[];
   hazardStages: SceneOpeningStage[];
+};
+
+export type LevelScore = {
+  total: number;
+  grade: "S" | "A" | "B" | "C";
+  efficiency: number;
+  waste: number;
+  time: number;
+  ticks: number;
+};
+
+export type ScoreInput = {
+  ticks: number;
 };
 
 export type DeliveryRequirement = {
@@ -53,6 +67,7 @@ export type LevelProgress = {
   settled: boolean;
   failed: boolean;
   complete: boolean;
+  score: LevelScore | null;
   status: string;
 };
 
@@ -66,6 +81,7 @@ export const GAME_LEVELS: GameLevel[] = [
     failText: "Too much water escaped the route",
     deliveryTargetWater: 185,
     maxWastedWater: 70,
+    scoreParTicks: 900,
     deliveryBoxes: [box(21, 39, 1, 7, 20, 30)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
@@ -83,6 +99,7 @@ export const GAME_LEVELS: GameLevel[] = [
     failText: "Too much water escaped the fork",
     deliveryTargetWater: 150,
     maxWastedWater: 35,
+    scoreParTicks: 1300,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
@@ -110,6 +127,7 @@ export const GAME_LEVELS: GameLevel[] = [
     failText: "Too much water escaped the carved route",
     deliveryTargetWater: 145,
     maxWastedWater: 32,
+    scoreParTicks: 1300,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 24, 31),
@@ -133,6 +151,7 @@ export const GAME_LEVELS: GameLevel[] = [
     failText: "Too much water escaped the split route",
     deliveryTargetWater: 170,
     maxWastedWater: 38,
+    scoreParTicks: 1450,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 22), box(30, 40, 1, 8, 28, 34)],
     deliveryRequirements: [
       { label: "south basin", targetWater: 80, boxes: [box(30, 40, 1, 8, 16, 22)] },
@@ -163,6 +182,7 @@ export function evaluateLevel(
   level: GameLevel,
   stageProgress: StageProgress,
   settled: boolean,
+  scoreInput?: ScoreInput,
 ): LevelProgress {
   const deliveredWater = measureBoxWater(world, level.deliveryBoxes);
   const deliveryRequirements = getDeliveryRequirementProgress(world, level);
@@ -174,6 +194,7 @@ export function evaluateLevel(
   const failed = settled && wastedWater > level.maxWastedWater && (allStagesOpen || hazardTriggered);
   const delivered = deliveredWater >= level.deliveryTargetWater && deliveryRequirements.every((requirement) => requirement.complete);
   const complete = allStagesOpen && delivered && settled && !failed;
+  const score = complete && scoreInput ? scoreLevel(level, deliveredWater, wastedWater, scoreInput.ticks) : null;
 
   return {
     level,
@@ -185,8 +206,47 @@ export function evaluateLevel(
     settled,
     failed,
     complete,
+    score,
     status: getStatusText(level, stageProgress, allStagesOpen, delivered, settled, failed),
   };
+}
+
+export function scoreLevel(level: GameLevel, deliveredWater: number, wastedWater: number, ticks: number): LevelScore {
+  const safeTicks = Math.max(0, Math.floor(ticks));
+  const routeEfficiency = clamp01(level.deliveryTargetWater / Math.max(level.deliveryTargetWater, deliveredWater + wastedWater));
+  const wasteScore = clamp01(1 - wastedWater / Math.max(1, level.maxWastedWater));
+  const parTicks = level.scoreParTicks ?? 1200;
+  const timeScore = clamp01(1 - Math.max(0, safeTicks - parTicks) / parTicks);
+  const total = Math.round(routeEfficiency * 42 + wasteScore * 34 + timeScore * 24);
+
+  return {
+    total,
+    grade: getGrade(total),
+    efficiency: routeEfficiency,
+    waste: wasteScore,
+    time: timeScore,
+    ticks: safeTicks,
+  };
+}
+
+function getGrade(score: number): LevelScore["grade"] {
+  if (score >= 92) {
+    return "S";
+  }
+
+  if (score >= 82) {
+    return "A";
+  }
+
+  if (score >= 68) {
+    return "B";
+  }
+
+  return "C";
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 function getDeliveryRequirementProgress(world: VoxelWorld, level: GameLevel): DeliveryRequirementProgress[] {

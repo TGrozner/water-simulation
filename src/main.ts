@@ -95,7 +95,7 @@ let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneCont
 });
 const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
-let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
+let levelProgress: LevelProgress | null = null;
 const initialTuningPreset = getInitialTuningPreset();
 let currentTuningPreset: TuningPresetId | "custom" = initialTuningPreset;
 let activeTuning = cloneTuningPreset(initialTuningPreset);
@@ -120,6 +120,8 @@ let queuedStep = false;
 let movedLastFrame = 0;
 let lastSimulationMs = 0;
 let tickCount = 0;
+let scoreStartTick = 0;
+let completedAtTick: number | null = null;
 let maxVolumeDelta = 0;
 let stableTicks = 0;
 let fps = 0;
@@ -130,9 +132,8 @@ if (initialWarmupStableTicks > 0) {
   stableTicks = initialWarmupStableTicks;
 }
 baselineWaterVolume = totalWater(world);
-levelProgress = gameModeEnabled
-  ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), stableTicks >= STABLE_COMPLETE_TICKS)
-  : null;
+scoreStartTick = tickCount;
+levelProgress = evaluateCurrentLevelProgress(stableTicks >= STABLE_COMPLETE_TICKS);
 
 const overlay = createDebugOverlay();
 const gamePanel = createGamePanel({
@@ -558,11 +559,13 @@ function resetWorld(): void {
   hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
   openedStageCount = carveInitialManualStage(world, currentPreset, openedStageChoices, openedStageCount);
   inputState.sliceZ = Math.min(inputState.sliceZ, world.depth - 1);
-  baselineWaterVolume = totalWater(world);
-  levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
   tickCount = 0;
+  scoreStartTick = 0;
+  completedAtTick = null;
   maxVolumeDelta = 0;
   stableTicks = 0;
+  baselineWaterVolume = totalWater(world);
+  levelProgress = evaluateCurrentLevelProgress(false);
   recentFlows = new Map<number, RecentFlow>();
   terrainRenderer = createTerrainRenderer(sceneContext.scene, world);
   waterRenderer = createWaterRenderer(sceneContext.scene, world);
@@ -664,6 +667,27 @@ function getInitialLevelIndex(): number {
 
 function getCurrentLevel(): GameLevel {
   return GAME_LEVELS[currentLevelIndex] ?? GAME_LEVELS[0];
+}
+
+function evaluateCurrentLevelProgress(settled: boolean): LevelProgress | null {
+  if (!gameModeEnabled) {
+    return null;
+  }
+
+  const level = getCurrentLevel();
+  const stageProgress = getMissionStageProgress();
+  let progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() });
+
+  if (progress.complete && completedAtTick === null) {
+    completedAtTick = tickCount;
+    progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() });
+  }
+
+  return progress;
+}
+
+function getScoreTicks(): number {
+  return Math.max(0, (completedAtTick ?? tickCount) - scoreStartTick);
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
@@ -1045,9 +1069,7 @@ function animate(now: number): void {
   const volumeWarning = Math.abs(volumeDelta) > VOLUME_WARNING_TOLERANCE;
   const preset = SCENE_PRESET_DETAILS[currentPreset];
   const settledForMission = stableTicks >= STABLE_COMPLETE_TICKS;
-  levelProgress = gameModeEnabled
-    ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), settledForMission)
-    : null;
+  levelProgress = evaluateCurrentLevelProgress(settledForMission);
 
   updateDebugOverlay(overlay, {
     presetName: preset.name,

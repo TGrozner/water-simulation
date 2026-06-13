@@ -18,7 +18,7 @@ import {
   openSceneStage,
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
-import { evaluateLevel, GAME_LEVELS } from "../game/levels";
+import { evaluateLevel, GAME_LEVELS, scoreLevel } from "../game/levels";
 import {
   ROUTE_FLOW_STAGE_COMPLETE_WATER,
   STAGE_CLEAR_RATIO,
@@ -44,6 +44,7 @@ function runHarness(): void {
 
   runEdgeCaseHarness();
   assertStageCompletionRules();
+  assertLevelScoreRules();
   assertGameLevelsComplete();
 
   for (const preset of SCENE_PRESETS) {
@@ -128,12 +129,27 @@ function assertGameLevelsComplete(): void {
       level,
       makeProgress(stages, stages.length, "complete", 1, getScriptedSelectedChoiceLabel(stages)),
       true,
+      { ticks: level.scoreParTicks ?? MAX_TICKS },
     );
     assert(
       progress.complete,
       `game/${level.id}: expected scripted path to complete, got delivered=${progress.deliveredWater.toFixed(1)}/${level.deliveryTargetWater.toFixed(
         1,
       )} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${progress.status}`,
+    );
+    assert(
+      progress.score !== null &&
+        Number.isFinite(progress.score.total) &&
+        progress.score.total >= 0 &&
+        progress.score.total <= 100 &&
+        progress.score.efficiency >= 0 &&
+        progress.score.efficiency <= 1 &&
+        progress.score.waste >= 0 &&
+        progress.score.waste <= 1 &&
+        progress.score.time >= 0 &&
+        progress.score.time <= 1 &&
+        progress.score.ticks >= 0,
+      `game/${level.id}: completed level should produce a bounded score`,
     );
 
     for (let hazardIndex = 0; hazardIndex < level.hazardStages.length; hazardIndex += 1) {
@@ -159,6 +175,7 @@ function assertGameLevelsComplete(): void {
         level,
         makeProgress(stages, stages.length, "complete", 1, getScriptedSelectedChoiceLabel(stages)),
         true,
+        { ticks: level.scoreParTicks ?? MAX_TICKS },
       );
       assert(
         hazardProgress.failed && !hazardProgress.complete,
@@ -166,11 +183,29 @@ function assertGameLevelsComplete(): void {
           1,
         )} wasted=${hazardProgress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${hazardProgress.status}`,
       );
+      assert(hazardProgress.score === null, `game/${level.id}: failed hazard route should not produce a score`);
     }
 
     assertDeliveryRequirementsGateCompletion(level.scene, level);
     assertChoiceStagesCanComplete(level.scene, level);
     assertManualChoiceStagesCanComplete(level.scene, level);
+  }
+}
+
+function assertLevelScoreRules(): void {
+  for (const level of GAME_LEVELS) {
+    assert(level.scoreParTicks !== undefined && level.scoreParTicks > 0, `game/${level.id}: missing score par ticks`);
+
+    const parTicks = level.scoreParTicks;
+    const cleanFastScore = scoreLevel(level, level.deliveryTargetWater, 0, Math.max(1, parTicks - 1));
+    const wastedScore = scoreLevel(level, level.deliveryTargetWater, level.maxWastedWater, Math.max(1, parTicks - 1));
+    const slowScore = scoreLevel(level, level.deliveryTargetWater, 0, parTicks * 2);
+
+    assert(cleanFastScore.total >= wastedScore.total, `game/${level.id}: waste should not improve score`);
+    assert(cleanFastScore.waste > wastedScore.waste, `game/${level.id}: waste component should decline with spills`);
+    assert(cleanFastScore.total >= slowScore.total, `game/${level.id}: slow completion should not improve score`);
+    assert(cleanFastScore.time > slowScore.time, `game/${level.id}: time component should decline after par`);
+    assert(cleanFastScore.grade === "S", `game/${level.id}: clean par route should earn top grade`);
   }
 }
 

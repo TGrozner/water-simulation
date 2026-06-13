@@ -30,6 +30,10 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-tutorial.png",
   },
   {
+    url: `${BASE_URL}/?game=1&level=tutorial&openStages=2&warmupTicks=1800&camera=fps`,
+    filename: "game-tutorial-complete.png",
+  },
+  {
     url: `${BASE_URL}/?game=1&level=challenge&camera=fps`,
     filename: "game-challenge-start.png",
   },
