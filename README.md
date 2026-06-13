@@ -15,6 +15,16 @@ Build:
 npm run build
 ```
 
+## CI/CD and hosting
+
+Pushes to `main` run the GitHub Actions workflow, build the Vite app with the
+GitHub Pages base path, run the simulation harness, and deploy `dist` to GitHub
+Pages:
+
+https://tgrozner.github.io/water-simulation/
+
+Pull requests run the same build and simulation checks without deploying.
+
 Run the non-browser simulation harness:
 
 ```bash
