@@ -1,0 +1,183 @@
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #101318;
+  color: #eaf4ff;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+canvas {
+  display: block;
+  cursor: crosshair;
+}
+
+.debug-overlay {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 10;
+  width: min(360px, calc(100vw - 24px));
+  padding: 12px 14px;
+  border: 1px solid rgba(185, 215, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(10, 15, 20, 0.78);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  font-size: 13px;
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.debug-overlay h1 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.debug-overlay dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 3px 16px;
+  margin: 0 0 10px;
+}
+
+.debug-overlay dt {
+  color: #a9bad3;
+}
+
+.debug-overlay dd {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.debug-overlay .warning {
+  color: #ffcf5c;
+  font-weight: 700;
+}
+
+.debug-overlay .controls {
+  color: #c9d7e8;
+}
+
+.debug-panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 11;
+  display: grid;
+  width: min(280px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
+  gap: 7px;
+  padding: 10px;
+  overflow-y: auto;
+  border: 1px solid rgba(185, 215, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(10, 15, 20, 0.82);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(8px);
+  color: #eaf4ff;
+  font-size: 12px;
+}
+
+.debug-panel label {
+  display: grid;
+  gap: 3px;
+}
+
+.debug-panel select,
+.debug-panel button {
+  min-height: 32px;
+  border: 1px solid rgba(185, 215, 255, 0.24);
+  border-radius: 6px;
+  background: rgba(24, 35, 48, 0.95);
+  color: #eaf4ff;
+  font: inherit;
+}
+
+.debug-panel button {
+  cursor: pointer;
+}
+
+.debug-panel select,
+.debug-panel button {
+  min-height: 28px;
+}
+
+.debug-panel button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.debug-panel input[type="range"] {
+  width: 100%;
+}
+
+.debug-panel fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid rgba(185, 215, 255, 0.18);
+  border-radius: 6px;
+}
+
+.debug-panel legend {
+  padding: 0 4px;
+  color: #a9bad3;
+}
+
+.debug-panel-tuning {
+  display: grid;
+  gap: 5px;
+}
+
+.debug-panel-tuning b {
+  float: right;
+  color: #eaf4ff;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.debug-panel-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.debug-panel-metrics {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 12px;
+  margin: 0;
+  color: #c9d7e8;
+}
+
+.debug-panel-metrics dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.debug-panel .debug-panel-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .debug-panel {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+  }
+}

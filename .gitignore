@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.sim-build/
+.env*
+*.log
+coverage/
+.DS_Store
+.vscode/
+.idea/
