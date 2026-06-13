@@ -28,6 +28,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
     <dl class="game-panel-metrics">
       <dt>Delivered</dt><dd data-game-metric="delivered">0</dd>
       <dt>Wasted</dt><dd data-game-metric="wasted">0</dd>
+      <dt data-game-risk-label>Risk</dt><dd data-game-metric="risk">none</dd>
       <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
     </dl>
     <div class="game-panel-status" data-game-status>In progress</div>
@@ -61,6 +62,9 @@ function updateGamePanel(
   const resetButton = panel.querySelector<HTMLButtonElement>('[data-game-action="reset"]');
   const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
   const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
+  const riskLabel = panel.querySelector<HTMLElement>("[data-game-risk-label]");
+  const riskValue = panel.querySelector<HTMLElement>('[data-game-metric="risk"]');
+  const hasHazards = progress.level.hazardStages.length > 0;
 
   setText(panel, "[data-game-level-count]", `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
   setText(panel, "[data-game-title]", progress.level.name);
@@ -83,8 +87,14 @@ function updateGamePanel(
     '[data-game-metric="wasted"]',
     `${progress.wastedWater.toFixed(0)} / ${progress.level.maxWastedWater.toFixed(0)}`,
   );
+  setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
   setText(panel, "[data-game-status]", progress.status);
+
+  if (riskLabel && riskValue) {
+    riskLabel.hidden = !hasHazards;
+    riskValue.hidden = !hasHazards;
+  }
 
   if (stageBar) {
     stageBar.style.width = `${stagePercent}%`;
@@ -92,6 +102,7 @@ function updateGamePanel(
 
   panel.dataset.complete = String(progress.complete);
   panel.dataset.failed = String(progress.failed);
+  panel.dataset.risk = hasHazards ? "hazard" : "none";
 
   if (resetButton) {
     resetButton.textContent = progress.failed ? "Retry level" : "Reset level";

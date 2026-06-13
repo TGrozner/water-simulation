@@ -8,7 +8,18 @@ export type StageGuideRenderer = {
   dispose: () => void;
 };
 
-export function createStageGuideRenderer(scene: Scene, color = 0xffc247, opacity = 0.32): StageGuideRenderer {
+type StageGuideStyle = {
+  color?: number;
+  opacity?: number;
+  scale?: number;
+  wireframe?: boolean;
+};
+
+export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = {}): StageGuideRenderer {
+  const color = style.color ?? 0xffc247;
+  const opacity = style.opacity ?? 0.32;
+  const scale = style.scale ?? 1;
+  const wireframe = style.wireframe ?? true;
   const group = new Group();
   const meshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
   scene.add(group);
@@ -16,7 +27,7 @@ export function createStageGuideRenderer(scene: Scene, color = 0xffc247, opacity
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
-      ensureMeshCount(group, meshes, boxes.length, color, opacity);
+      ensureMeshCount(group, meshes, boxes.length, color, opacity, wireframe);
 
       for (let i = 0; i < meshes.length; i += 1) {
         const mesh = meshes[i];
@@ -26,7 +37,7 @@ export function createStageGuideRenderer(scene: Scene, color = 0xffc247, opacity
           continue;
         }
 
-        positionGuideMesh(mesh, world, box);
+        positionGuideMesh(mesh, world, box, scale);
       }
     },
     dispose: () => {
@@ -46,6 +57,7 @@ function ensureMeshCount(
   count: number,
   color: number,
   opacity: number,
+  wireframe: boolean,
 ): void {
   while (meshes.length < count) {
     const mesh = new Mesh(
@@ -54,7 +66,7 @@ function ensureMeshCount(
         color,
         transparent: true,
         opacity,
-        wireframe: true,
+        wireframe,
         depthTest: false,
         depthWrite: false,
       }),
@@ -73,7 +85,7 @@ function boxContainsSlice(box: ClearBox, sliceZ: number): boolean {
   return sliceZ >= box.minZ && sliceZ <= box.maxZ;
 }
 
-function positionGuideMesh(mesh: Mesh, world: VoxelWorld, box: ClearBox): void {
+function positionGuideMesh(mesh: Mesh, world: VoxelWorld, box: ClearBox, scale: number): void {
   const width = box.maxX - box.minX + 1;
   const height = box.maxY - box.minY + 1;
   const depth = box.maxZ - box.minZ + 1;
@@ -82,5 +94,5 @@ function positionGuideMesh(mesh: Mesh, world: VoxelWorld, box: ClearBox): void {
   const centerZ = box.minZ + depth / 2 - world.depth / 2;
 
   mesh.position.set(centerX, centerY, centerZ);
-  mesh.scale.set(width, height, depth);
+  mesh.scale.set(width, height, depth).multiplyScalar(scale);
 }

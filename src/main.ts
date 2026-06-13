@@ -39,9 +39,11 @@ import { createWorld, SCENE_PRESET_DETAILS, SCENE_PRESETS, type ScenePresetId } 
 import {
   countStageSolidCells,
   getSceneOpeningStages,
+  getStageDigBoxes,
   isCellInStage,
   openClearBox,
   openSceneStage,
+  type SceneOpeningStage,
 } from "./world/sceneTools";
 
 const app = document.querySelector<HTMLDivElement>("#app");
@@ -73,7 +75,12 @@ let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneConte
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
 let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
-let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, 0xff5f5f, 0.42);
+let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
+  color: 0xff4a3d,
+  opacity: 0.22,
+  scale: 1.06,
+  wireframe: false,
+});
 const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
 let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
@@ -511,7 +518,12 @@ function resetWorld(): void {
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
   stageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
-  hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, 0xff5f5f, 0.42);
+  hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
+    color: 0xff4a3d,
+    opacity: 0.22,
+    scale: 1.06,
+    wireframe: false,
+  });
   terrainRenderer.update(world, getRenderOptions());
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
@@ -799,11 +811,25 @@ function getVisibleHazardStage() {
     return null;
   }
 
-  return getCurrentLevel().hazardStages.find((_hazard, hazardIndex) => !openedHazards.has(hazardIndex)) ?? null;
+  const visibleHazards = getCurrentLevel().hazardStages.filter((_hazard, hazardIndex) => !openedHazards.has(hazardIndex));
+  if (visibleHazards.length === 0) {
+    return null;
+  }
+
+  return {
+    label: "Spill seams",
+    boxes: visibleHazards.flatMap((hazard) => hazard.boxes),
+    digBoxes: visibleHazards.flatMap((hazard) => getStageDigBoxes(hazard)),
+  } satisfies SceneOpeningStage;
 }
 
 function updateAimFeedback(): void {
-  document.body.classList.toggle("is-dig-target", firstPersonMode && digController.getPreviewCells().length > 0);
+  const previewCells = digController.getPreviewCells();
+  const hasDigTarget = firstPersonMode && previewCells.length > 0;
+  const hasHazardTarget = hasDigTarget && previewCells.some((cellIndex) => isCellInVisibleHazard(cellIndex));
+
+  document.body.classList.toggle("is-dig-target", hasDigTarget);
+  document.body.classList.toggle("is-hazard-target", hasHazardTarget);
 }
 
 function syncBodyModeClasses(): void {

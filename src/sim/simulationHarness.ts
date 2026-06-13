@@ -59,15 +59,21 @@ function assertGameLevelsComplete(): void {
     const earlyBaselineWater = totalWater(earlyWorld);
     openSceneStage(earlyWorld, level.scene, 0);
     runUntilStable(earlyWorld, tuning.waterConfig, earlyBaselineWater, MAX_TICKS, `game/${level.id}: first stage`);
-    assert(
-      !evaluateLevel(
-        earlyWorld,
-        level,
-        { completedStages: 1, stageCount: stages.length, activeStageLabel: stages[1]?.label ?? "complete", activeStageProgress: 0 },
-        true,
-      ).complete,
-      `game/${level.id}: first opening stage should not complete the level`,
+    const earlyProgress = evaluateLevel(
+      earlyWorld,
+      level,
+      { completedStages: 1, stageCount: stages.length, activeStageLabel: stages[1]?.label ?? "complete", activeStageProgress: 0 },
+      true,
     );
+    assert(!earlyProgress.complete, `game/${level.id}: first opening stage should not complete the level`);
+    if (level.id === "challenge") {
+      assert(
+        earlyProgress.deliveredWater < level.deliveryTargetWater * 0.5,
+        `game/${level.id}: first opening stage bypassed the fork gate with delivered=${earlyProgress.deliveredWater.toFixed(
+          1,
+        )}/${level.deliveryTargetWater.toFixed(1)}`,
+      );
+    }
 
     const world = createWorld(level.scene);
     const baselineWater = totalWater(world);
@@ -87,14 +93,20 @@ function assertGameLevelsComplete(): void {
       )} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${progress.status}`,
     );
 
-    if (level.hazardStages.length > 0) {
+    for (let hazardIndex = 0; hazardIndex < level.hazardStages.length; hazardIndex += 1) {
       const hazardWorld = createWorld(level.scene);
       const hazardBaselineWater = totalWater(hazardWorld);
       openSceneDrain(hazardWorld, level.scene);
-      for (const clearRegion of level.hazardStages[0].boxes) {
+      for (const clearRegion of level.hazardStages[hazardIndex].boxes) {
         openClearBox(hazardWorld, clearRegion);
       }
-      runUntilStable(hazardWorld, tuning.waterConfig, hazardBaselineWater, MAX_TICKS, `game/${level.id}: hazard`);
+      runUntilStable(
+        hazardWorld,
+        tuning.waterConfig,
+        hazardBaselineWater,
+        MAX_TICKS,
+        `game/${level.id}: hazard ${hazardIndex + 1}`,
+      );
 
       const hazardProgress = evaluateLevel(
         hazardWorld,
@@ -104,7 +116,7 @@ function assertGameLevelsComplete(): void {
       );
       assert(
         hazardProgress.failed && !hazardProgress.complete,
-        `game/${level.id}: expected authored hazard to fail, got delivered=${hazardProgress.deliveredWater.toFixed(
+        `game/${level.id}: expected authored hazard ${hazardIndex + 1} to fail, got delivered=${hazardProgress.deliveredWater.toFixed(
           1,
         )} wasted=${hazardProgress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${hazardProgress.status}`,
       );

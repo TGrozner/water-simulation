@@ -40,6 +40,12 @@ canvas {
   background: rgba(255, 194, 71, 0.95);
 }
 
+.is-hazard-target .fps-reticle::before,
+.is-hazard-target .fps-reticle::after {
+  background: rgba(255, 74, 61, 0.98);
+  box-shadow: 0 0 10px rgba(255, 74, 61, 0.72);
+}
+
 .fps-reticle::before {
   top: 7px;
   left: 2px;
@@ -325,6 +331,11 @@ canvas {
   margin: 0;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.game-panel [data-game-metric="risk"] {
+  color: #ffb0a8;
+  font-weight: 800;
 }
 
 .game-panel-bar {

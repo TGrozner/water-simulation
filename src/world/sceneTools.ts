@@ -24,7 +24,7 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
   ],
   splitter: [
     { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
-    { label: "Fork weak gate", boxes: [box(25, 30, 7, 12, 21, 29)], digBoxes: [box(26, 30, 8, 11, 23, 27)] },
+    { label: "Fork weak gate", boxes: [box(25, 30, 1, 15, 21, 29)], digBoxes: [box(26, 30, 8, 14, 23, 27)] },
   ],
 };
 

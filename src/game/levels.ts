@@ -58,11 +58,11 @@ export const GAME_LEVELS: GameLevel[] = [
     id: "challenge",
     name: "Split Basin Challenge",
     scene: "splitter",
-    brief: "Open the weak gates in order and shape the fork before the reservoir settles in the wrong pockets.",
+    brief: "Open the weak gates, split the flow into both basins, and avoid the red spill seams.",
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
     deliveryTargetWater: 175,
-    maxWastedWater: 45,
+    maxWastedWater: 30,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
@@ -70,9 +70,14 @@ export const GAME_LEVELS: GameLevel[] = [
     ],
     hazardStages: [
       {
-        label: "Spill breach",
+        label: "South spill seam",
         boxes: [box(34, 42, 2, 8, 10, 16)],
         digBoxes: [box(36, 40, 5, 8, 13, 15)],
+      },
+      {
+        label: "Fork floor sink",
+        boxes: [box(31, 39, 0, 2, 23, 27)],
+        digBoxes: [box(33, 38, 1, 3, 23, 27)],
       },
     ],
   },
@@ -92,7 +97,7 @@ export function evaluateLevel(
   const safeWater = measureBoxWater(world, level.safeWaterBoxes);
   const currentTotalWater = totalWater(world);
   const wastedWater = Math.max(0, currentTotalWater - safeWater);
-  const failed = wastedWater > level.maxWastedWater;
+  const failed = settled && wastedWater > level.maxWastedWater;
   const allStagesOpen = stageProgress.completedStages >= stageProgress.stageCount;
   const delivered = deliveredWater >= level.deliveryTargetWater;
   const complete = allStagesOpen && delivered && settled && !failed;
