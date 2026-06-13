@@ -4,6 +4,7 @@ import { createDebugPanel } from "./debug/debugPanel";
 import { createGamePanel } from "./game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, getLevel, type GameLevel, type LevelProgress } from "./game/levels";
 import { createCellInspector } from "./input/cellInspector";
+import { createFirstPersonController } from "./input/firstPersonController";
 import {
   bindKeyboardControls,
   configureOrbitControls,
@@ -52,6 +53,7 @@ const initialUrlParams = new URLSearchParams(window.location.search);
 let gameModeEnabled = getInitialGameModeEnabled();
 let currentLevelIndex = getInitialLevelIndex();
 let currentPreset: ScenePresetId = gameModeEnabled ? getCurrentLevel().scene : getInitialPreset();
+let firstPersonMode = getInitialFirstPersonEnabled();
 let world = createWorld(currentPreset);
 let openedStageCount = openInitialStages(world, currentPreset);
 let terrainRenderer: TerrainRenderer = createTerrainRenderer(sceneContext.scene, world);
@@ -97,12 +99,18 @@ const gamePanel = createGamePanel({
   resetLevel: resetCurrentLevel,
   nextLevel: advanceToNextLevel,
 });
+const firstPersonController = createFirstPersonController(sceneContext.renderer, sceneContext.camera, firstPersonMode);
+if (firstPersonMode) {
+  firstPersonController.reset(world);
+}
+sceneContext.controls.enabled = !firstPersonMode;
 const digController = createDigController(
   sceneContext.renderer,
   sceneContext.camera,
   () => world,
   () => terrainRenderer,
   inputState,
+  () => !firstPersonMode || firstPersonController.isPointerLocked(),
 );
 const cellInspector = createCellInspector(
   sceneContext.renderer,
@@ -170,26 +178,40 @@ bindKeyboardControls(inputState, {
   openAllScene: openAllSceneStages,
   selectPreset,
   renderOptionsChanged: markRenderOptionsChanged,
+  toggleFirstPerson: toggleFirstPersonMode,
 });
 
 function selectPreset(preset: ScenePresetId): void {
   gameModeEnabled = false;
   levelProgress = null;
+  setFirstPersonMode(false);
   currentPreset = preset;
   resetWorld();
 }
 
 function resetCurrentLevel(): void {
   gameModeEnabled = true;
+  setFirstPersonMode(true);
   currentPreset = getCurrentLevel().scene;
   resetWorld();
 }
 
 function advanceToNextLevel(): void {
   gameModeEnabled = true;
+  setFirstPersonMode(true);
   currentLevelIndex = currentLevelIndex >= GAME_LEVELS.length - 1 ? 0 : currentLevelIndex + 1;
   currentPreset = getCurrentLevel().scene;
   resetWorld();
+}
+
+function toggleFirstPersonMode(): void {
+  setFirstPersonMode(!firstPersonMode);
+}
+
+function setFirstPersonMode(enabled: boolean): void {
+  firstPersonMode = enabled;
+  firstPersonController.setEnabled(enabled);
+  sceneContext.controls.enabled = !enabled;
 }
 
 function setPaused(paused: boolean): void {
@@ -349,6 +371,9 @@ function resetWorld(): void {
   terrainRenderer.update(world, getRenderOptions());
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
+  if (firstPersonMode) {
+    firstPersonController.reset(world);
+  }
   inputState.forceWaterUpdate = true;
 }
 
@@ -380,6 +405,19 @@ function getInitialGameModeEnabled(): boolean {
   }
 
   return !initialUrlParams.has("scene");
+}
+
+function getInitialFirstPersonEnabled(): boolean {
+  const requestedCamera = initialUrlParams.get("camera");
+  if (requestedCamera === "fps") {
+    return true;
+  }
+
+  if (requestedCamera === "orbit") {
+    return false;
+  }
+
+  return gameModeEnabled;
 }
 
 function getInitialLevelIndex(): number {
@@ -439,6 +477,7 @@ function animate(now: number): void {
   lastTime = now;
 
   sceneContext.controls.update();
+  firstPersonController.update(world, deltaSeconds);
   digController.update();
   cellInspector.update();
   brushPreviewRenderer.update(world, digController.getPreviewCells(), getRenderOptions());

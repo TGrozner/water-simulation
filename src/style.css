@@ -17,6 +17,38 @@ canvas {
   cursor: crosshair;
 }
 
+.fps-reticle {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 14;
+  width: 16px;
+  height: 16px;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.fps-reticle::before,
+.fps-reticle::after {
+  position: absolute;
+  background: rgba(234, 244, 255, 0.86);
+  content: "";
+}
+
+.fps-reticle::before {
+  top: 7px;
+  left: 2px;
+  width: 12px;
+  height: 2px;
+}
+
+.fps-reticle::after {
+  top: 2px;
+  left: 7px;
+  width: 2px;
+  height: 12px;
+}
+
 .debug-overlay {
   position: fixed;
   top: 12px;
@@ -216,8 +248,8 @@ canvas {
 
 .game-panel {
   position: fixed;
+  right: 12px;
   bottom: 12px;
-  left: 50%;
   z-index: 12;
   display: grid;
   width: min(380px, calc(100vw - 24px));
@@ -231,7 +263,6 @@ canvas {
   color: #eaf4ff;
   font-size: 13px;
   line-height: 1.35;
-  transform: translateX(-50%);
 }
 
 .game-panel[hidden] {

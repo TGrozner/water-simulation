@@ -42,6 +42,8 @@ Useful URL parameters for repeatable captures:
 - `?game=1&level=challenge`
 - `?game=0&scene=sluice`
 - `?scene=splitter`
+- `?camera=fps`
+- `?camera=orbit`
 - `?openStages=2`
 - `?tuning=fast-drain`
 - `?debug=1&active=0&flow=0`
@@ -64,12 +66,17 @@ scene browsing.
 
 ## Controls
 
-- Left mouse: dig terrain
+- Left mouse: lock mouse in FPS mode and dig terrain
+- F: toggle FPS and orbit camera modes
+- W / A / S / D or Z / Q / S / D: move in FPS mode
+- Mouse: look around after pointer lock
+- Space: jump in FPS mode, pause/resume in orbit mode
+- Shift: sprint in FPS mode
 - Hover visible terrain or water: inspect the cell under the cursor
 - Hover empty space: inspect the first voxel hit by the 3D grid probe
 - Right mouse: orbit camera
 - Mouse wheel: zoom
-- Space: pause or resume simulation
+- Space: pause or resume simulation outside pointer-locked FPS
 - G: step one simulation tick while paused
 - D: toggle water debug display
 - V: toggle slice view
@@ -128,7 +135,7 @@ storage.
 - The renderer draws all visible water cells as simple translucent boxes.
 - Terrain rendering is face-culled but not greedy-merged; individual voxel picking is preserved.
 - Orbit uses right mouse so left mouse can stay dedicated to digging.
-- The sonar uses the orbit camera as a temporary player proxy until first-person movement exists.
+- The sonar uses the current camera as a lightweight player-position proxy.
 - The slice view currently cuts along z only.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.

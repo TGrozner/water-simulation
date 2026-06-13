@@ -24,6 +24,7 @@ export type InputCallbacks = {
   openAllScene: () => void;
   selectPreset: (preset: ScenePresetId) => void;
   renderOptionsChanged: () => void;
+  toggleFirstPerson: () => void;
 };
 
 export type DigController = {
@@ -46,6 +47,15 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
     }
 
     if (event.repeat) {
+      return;
+    }
+
+    if (document.pointerLockElement && isFirstPersonGameplayKey(event.code)) {
+      return;
+    }
+
+    if (event.code === "KeyF") {
+      callbacks.toggleFirstPerson();
       return;
     }
 
@@ -109,6 +119,20 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
   });
 }
 
+function isFirstPersonGameplayKey(code: string): boolean {
+  return (
+    code === "KeyW" ||
+    code === "KeyZ" ||
+    code === "KeyA" ||
+    code === "KeyQ" ||
+    code === "KeyS" ||
+    code === "KeyD" ||
+    code === "Space" ||
+    code === "ShiftLeft" ||
+    code === "ShiftRight"
+  );
+}
+
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -130,6 +154,7 @@ export function createDigController(
   worldProvider: () => VoxelWorld,
   terrainProvider: () => TerrainRenderer,
   state: InputState,
+  canDig = () => true,
 ): DigController {
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -147,8 +172,13 @@ export function createDigController(
       return;
     }
 
-    isDigging = true;
     lastPointerEvent = event;
+    hasPointer = true;
+    if (!canDig()) {
+      return;
+    }
+
+    isDigging = true;
     canvas.setPointerCapture(event.pointerId);
     digFromEvent(event);
   });
@@ -224,8 +254,12 @@ export function createDigController(
 
   function pickTerrainCell(event: PointerEvent): number | null {
     const rect = canvas.getBoundingClientRect();
-    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    if (document.pointerLockElement === canvas) {
+      pointer.set(0, 0);
+    } else {
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -(((event.clientY - rect.top) / rect.height) * 2 - 1);
+    }
     raycaster.setFromCamera(pointer, camera);
 
     const terrain = terrainProvider();
