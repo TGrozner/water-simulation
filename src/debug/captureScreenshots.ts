@@ -26,27 +26,33 @@ type GameCapture = {
 
 const GAME_CAPTURES: GameCapture[] = [
   {
-    url: `${BASE_URL}/?game=1&level=tutorial`,
+    url: `${BASE_URL}/?game=1&level=tutorial&camera=fps`,
     filename: "game-tutorial.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2`,
+    url: `${BASE_URL}/?game=1&level=challenge&camera=fps`,
+    filename: "game-challenge-start.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&camera=fps`,
     filename: "game-challenge-open-2.png",
+    timeoutMs: 350,
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north`,
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&camera=fps`,
     filename: "game-challenge-north.png",
+    timeoutMs: 350,
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&carveManual=1&warmupTicks=1800`,
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-challenge-route-south.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&carveManual=1&warmupTicks=1800`,
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-challenge-route-north.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800`,
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-challenge-hazard.png",
   },
 ];

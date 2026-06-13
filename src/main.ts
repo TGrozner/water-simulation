@@ -1,11 +1,12 @@
 import "./style.css";
+import { Vector3 } from "three";
 import { createDebugOverlay, updateDebugOverlay } from "./debug/debugOverlay";
 import { createDebugPanel } from "./debug/debugPanel";
 import { createGamePanel } from "./game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, getLevel, measureBoxWater, type GameLevel, type LevelProgress } from "./game/levels";
 import { STAGE_CLEAR_RATIO, isStageChoiceComplete } from "./game/stageCompletion";
 import { createCellInspector } from "./input/cellInspector";
-import { createFirstPersonController } from "./input/firstPersonController";
+import { createFirstPersonController, type SpawnPose } from "./input/firstPersonController";
 import {
   bindKeyboardControls,
   configureOrbitControls,
@@ -78,7 +79,14 @@ let waterRenderer: WaterRenderer = createWaterRenderer(sceneContext.scene, world
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
-let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
+let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
+  opacity: 0.13,
+  scale: 1.03,
+  wireframe: false,
+  outline: true,
+  outlineOpacity: 0.92,
+  outlineScale: 1.075,
+});
 let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
   color: 0xff4a3d,
   opacity: 0.22,
@@ -133,7 +141,7 @@ const gamePanel = createGamePanel({
 });
 const firstPersonController = createFirstPersonController(sceneContext.renderer, sceneContext.camera, firstPersonMode);
 if (firstPersonMode) {
-  firstPersonController.reset(world);
+  firstPersonController.reset(world, getFirstPersonSpawnPose());
 }
 sceneContext.controls.enabled = !firstPersonMode;
 const digController = createDigController(
@@ -254,7 +262,7 @@ function toggleFirstPersonMode(): void {
   const nextEnabled = !firstPersonMode;
   setFirstPersonMode(nextEnabled);
   if (nextEnabled) {
-    firstPersonController.reset(world);
+    firstPersonController.reset(world, getFirstPersonSpawnPose());
     firstPersonController.requestPointerLock();
   }
 }
@@ -561,7 +569,14 @@ function resetWorld(): void {
   activeCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
-  stageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
+  stageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
+    opacity: 0.13,
+    scale: 1.03,
+    wireframe: false,
+    outline: true,
+    outlineOpacity: 0.92,
+    outlineScale: 1.075,
+  });
   hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
     color: 0xff4a3d,
     opacity: 0.22,
@@ -572,7 +587,7 @@ function resetWorld(): void {
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
   if (firstPersonMode) {
-    firstPersonController.reset(world);
+    firstPersonController.reset(world, getFirstPersonSpawnPose());
   }
   inputState.forceWaterUpdate = true;
 }
@@ -649,6 +664,39 @@ function getInitialLevelIndex(): number {
 
 function getCurrentLevel(): GameLevel {
   return GAME_LEVELS[currentLevelIndex] ?? GAME_LEVELS[0];
+}
+
+function getFirstPersonSpawnPose(): SpawnPose | undefined {
+  if (currentPreset !== "splitter") {
+    return undefined;
+  }
+
+  if (initialUrlParams.get("spawn") === "overview") {
+    return {
+      position: new Vector3(-16.5, 26.75, 3.5),
+      lookAt: new Vector3(-2, 17, 2),
+    };
+  }
+
+  const selectedBranch = getSelectedRouteChoiceIndex();
+  if (openedStageCount >= 2 && selectedBranch === 1) {
+    return {
+      position: new Vector3(16.5, 2.75, 7.5),
+      lookAt: new Vector3(8.5, 3.4, 6.2),
+    };
+  }
+
+  if (openedStageCount >= 2) {
+    return {
+      position: new Vector3(16.5, 2.75, -4.5),
+      lookAt: new Vector3(8.5, 3.4, -3.2),
+    };
+  }
+
+  return {
+    position: new Vector3(15.5, 2.75, 1.5),
+    lookAt: new Vector3(8.5, 3.8, 0.5),
+  };
 }
 
 function getInitialTuningPreset(): TuningPresetId {

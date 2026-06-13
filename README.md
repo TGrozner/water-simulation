@@ -55,6 +55,7 @@ Useful URL parameters for repeatable captures:
 - `?game=0&scene=sluice`
 - `?camera=fps`
 - `?camera=orbit`
+- `?spawn=overview`
 - `?debugUi=1`
 - `?openStages=2`
 - `?openHazards=1`

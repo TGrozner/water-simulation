@@ -63,7 +63,7 @@ export const GAME_LEVELS: GameLevel[] = [
     id: "challenge",
     name: "Forked Cavern Challenge",
     scene: "splitter",
-    brief: "Mine into the forked cavern, cut a hand tunnel for the water, and avoid the red spill seams.",
+    brief: "Mine the fork plug, pick a basin branch, cut the low tunnel for the water, and avoid red spill seams.",
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
     deliveryTargetWater: 150,
@@ -163,15 +163,15 @@ function getStatusText(
   if (!allStagesOpen) {
     if (stageProgress.activeStageIsManual) {
       return hasRouteFlow(stageProgress)
-        ? `Water entering: ${stageProgress.activeStageLabel}`
-        : `Carve route: ${stageProgress.activeStageLabel}`;
+        ? `Water entering ${stageProgress.activeStageLabel}`
+        : `Carve ${stageProgress.activeStageLabel}`;
     }
 
     return `Cut weak rock: ${stageProgress.activeStageLabel}`;
   }
 
   if (!delivered) {
-    return hasRouteFlow(stageProgress) ? "Water is taking the carved route" : "Route more water into the lower cave";
+    return hasRouteFlow(stageProgress) ? "Water is taking the low tunnel" : "Route more water into the lower cave";
   }
 
   if (!settled) {

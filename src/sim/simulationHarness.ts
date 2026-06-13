@@ -303,7 +303,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        dryManualProgress.status === `Carve route: ${manualChoice.label}`,
+        dryManualProgress.status === `Carve ${manualChoice.label}`,
         `${preset}: dry manual status should ask for carving, got "${dryManualProgress.status}"`,
       );
       const wetManualProgress = evaluateLevel(
@@ -313,7 +313,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        wetManualProgress.status === `Water entering: ${manualChoice.label}`,
+        wetManualProgress.status === `Water entering ${manualChoice.label}`,
         `${preset}: wet manual status should report entering water, got "${wetManualProgress.status}"`,
       );
       const removed = clearStageDigBoxes(world, manualChoice);
@@ -339,7 +339,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        flowingProgress.status === "Water is taking the carved route",
+        flowingProgress.status === "Water is taking the low tunnel",
         `${preset}: routed water status should acknowledge carved flow, got "${flowingProgress.status}"`,
       );
     }

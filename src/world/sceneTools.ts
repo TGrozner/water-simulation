@@ -30,7 +30,7 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
   splitter: [
     { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
     {
-      label: "Choose fork branch",
+      label: "Cut fork plug",
       boxes: [box(25, 30, 1, 15, 17, 23)],
       digBoxes: [box(26, 30, 8, 14, 19, 23)],
       choices: [
@@ -47,18 +47,18 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
       ],
     },
     {
-      label: "Carve hand-cut tunnel",
+      label: "Carve low tunnel to basin",
       boxes: [],
       digBoxes: [box(31, 39, 1, 4, 19, 21)],
       autoOpen: false,
       choices: [
         {
-          label: "South hand-cut tunnel",
+          label: "Low south tunnel to basin",
           boxes: [],
           digBoxes: [box(31, 39, 1, 4, 19, 21)],
         },
         {
-          label: "North hand-cut tunnel",
+          label: "Low north tunnel to basin",
           boxes: [],
           digBoxes: [box(31, 39, 1, 4, 29, 31)],
         },

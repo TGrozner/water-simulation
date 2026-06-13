@@ -2,13 +2,18 @@ import { PerspectiveCamera, Vector3, WebGLRenderer } from "three";
 import { isSolid } from "../world/grid";
 import type { VoxelWorld } from "../world/types";
 
+export type SpawnPose = {
+  position: Vector3;
+  lookAt: Vector3;
+};
+
 export type FirstPersonController = {
   enabled: boolean;
   isPointerLocked: () => boolean;
   hasSceneAim: () => boolean;
   requestPointerLock: () => void;
   setEnabled: (enabled: boolean) => void;
-  reset: (world: VoxelWorld) => void;
+  reset: (world: VoxelWorld, spawnPose?: SpawnPose) => void;
   update: (world: VoxelWorld, deltaSeconds: number) => void;
   dispose: () => void;
 };
@@ -212,8 +217,8 @@ export function createFirstPersonController(
         syncFromCamera();
       }
     },
-    reset: (world) => {
-      setSpawn(camera, world);
+    reset: (world, spawnPose) => {
+      setSpawn(camera, world, spawnPose);
       syncFromCamera();
       applyRotation();
       keys.clear();
@@ -280,7 +285,13 @@ function isSceneMouseEvent(event: MouseEvent, canvas: HTMLCanvasElement): boolea
   return event.target === canvas || event.composedPath().includes(canvas);
 }
 
-function setSpawn(camera: PerspectiveCamera, world: VoxelWorld): void {
+function setSpawn(camera: PerspectiveCamera, world: VoxelWorld, spawnPose?: SpawnPose): void {
+  if (spawnPose && canOccupy(spawnPose.position, world)) {
+    camera.position.copy(spawnPose.position);
+    camera.lookAt(spawnPose.lookAt);
+    return;
+  }
+
   const spawnCandidates = [
     { position: new Vector3(-16.5, 26.75, 3.5), lookAt: new Vector3(-2, 17, 2) },
     { position: new Vector3(-14.5, 26.75, 3.5), lookAt: new Vector3(-2, 17, 2) },

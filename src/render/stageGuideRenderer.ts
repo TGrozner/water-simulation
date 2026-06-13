@@ -13,6 +13,10 @@ type StageGuideStyle = {
   opacity?: number;
   scale?: number;
   wireframe?: boolean;
+  outline?: boolean;
+  outlineColor?: number;
+  outlineOpacity?: number;
+  outlineScale?: number;
 };
 
 export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = {}): StageGuideRenderer {
@@ -20,33 +24,48 @@ export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = 
   const opacity = style.opacity ?? 0.32;
   const scale = style.scale ?? 1;
   const wireframe = style.wireframe ?? true;
+  const outline = style.outline ?? false;
+  const outlineColor = style.outlineColor ?? color;
+  const outlineOpacity = style.outlineOpacity ?? 0.88;
+  const outlineScale = style.outlineScale ?? scale * 1.02;
   const group = new Group();
-  const meshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
+  const fillMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
+  const outlineMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
   scene.add(group);
 
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
-      ensureMeshCount(group, meshes, boxes.length, color, opacity, wireframe);
+      ensureMeshCount(group, fillMeshes, boxes.length, color, opacity, wireframe);
+      ensureMeshCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity, true);
 
-      for (let i = 0; i < meshes.length; i += 1) {
-        const mesh = meshes[i];
+      for (let i = 0; i < fillMeshes.length; i += 1) {
+        const mesh = fillMeshes[i];
+        const outlineMesh = outlineMeshes[i];
         const box = boxes[i];
-        mesh.visible = Boolean(box) && (!options.slice.enabled || boxContainsSlice(box, options.slice.z));
+        const visible = Boolean(box) && (!options.slice.enabled || boxContainsSlice(box, options.slice.z));
+        mesh.visible = visible;
+        if (outlineMesh) {
+          outlineMesh.visible = visible;
+        }
         if (!box) {
           continue;
         }
 
         positionGuideMesh(mesh, world, box, scale);
+        if (outlineMesh) {
+          positionGuideMesh(outlineMesh, world, box, outlineScale);
+        }
       }
     },
     dispose: () => {
       scene.remove(group);
-      for (const mesh of meshes) {
+      for (const mesh of [...fillMeshes, ...outlineMeshes]) {
         mesh.geometry.dispose();
         mesh.material.dispose();
       }
-      meshes.length = 0;
+      fillMeshes.length = 0;
+      outlineMeshes.length = 0;
     },
   };
 }

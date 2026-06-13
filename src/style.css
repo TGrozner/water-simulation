@@ -326,11 +326,22 @@ canvas {
   color: #c9d7e8;
 }
 
+.game-panel-progress-row span,
+.game-panel-metrics dt,
+.game-panel-metrics dd {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .game-panel-progress-row strong,
 .game-panel-metrics dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.game-panel-metrics dd {
+  max-width: 150px;
 }
 
 .game-panel [data-game-metric="risk"] {
@@ -379,6 +390,7 @@ canvas {
   background: rgba(143, 179, 222, 0.12);
   color: #eaf4ff;
   font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .game-panel[data-route-flow="active"] .game-panel-status {
