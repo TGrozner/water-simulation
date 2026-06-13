@@ -86,6 +86,29 @@ export const GAME_LEVELS: GameLevel[] = [
       },
     ],
   },
+  {
+    id: "splitpath",
+    name: "Split Path Challenge",
+    scene: "braid",
+    brief: "Release the reservoir, then carve either lower branch yourself while keeping the center spill seam sealed.",
+    successText: "Player route stabilized",
+    failText: "Too much water escaped the carved route",
+    deliveryTargetWater: 145,
+    maxWastedWater: 32,
+    deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
+    safeWaterBoxes: [
+      box(7, 15, 14, 25, 24, 31),
+      box(13, 27, 8, 22, 18, 32),
+      box(24, 42, 1, 12, 16, 34),
+    ],
+    hazardStages: [
+      {
+        label: "Outer spill seams",
+        boxes: [box(34, 42, 1, 7, 11, 15), box(34, 42, 1, 7, 35, 38)],
+        digBoxes: [box(36, 40, 2, 6, 15, 17), box(36, 40, 2, 6, 33, 35)],
+      },
+    ],
+  },
 ];
 
 export function getLevel(id: string): GameLevel | null {

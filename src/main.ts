@@ -667,6 +667,27 @@ function getCurrentLevel(): GameLevel {
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
+  if (currentPreset === "braid") {
+    if (initialUrlParams.get("spawn") === "overview") {
+      return {
+        position: new Vector3(-13.5, 20.75, 3.5),
+        lookAt: new Vector3(5, 9, 1),
+      };
+    }
+
+    if (openedStageCount >= 1) {
+      return {
+        position: new Vector3(-8, 18, -2),
+        lookAt: new Vector3(8, 6, 0),
+      };
+    }
+
+    return {
+      position: new Vector3(0, 16, -2),
+      lookAt: new Vector3(-10, 18, 3),
+    };
+  }
+
   if (currentPreset !== "splitter") {
     return undefined;
   }
@@ -775,7 +796,9 @@ function carveInitialManualStage(
     return currentOpenedStageCount;
   }
 
-  const selectedRouteChoiceIndex = getInitialSelectedRouteChoiceIndex(stages, selectedChoices, manualStageIndex);
+  const selectedRouteChoiceIndex =
+    getInitialSelectedRouteChoiceIndex(stages, selectedChoices, manualStageIndex) ??
+    getInitialStageChoiceIndex(preset, manualStageIndex);
   const manualChoiceIndex = Math.min(selectedRouteChoiceIndex, manualChoices.length - 1);
   for (const clearRegion of getStageDigBoxes(manualChoices[manualChoiceIndex])) {
     openClearBox(initialWorld, clearRegion);
@@ -789,7 +812,7 @@ function getInitialSelectedRouteChoiceIndex(
   stages: ReturnType<typeof getSceneOpeningStages>,
   selectedChoices: number[],
   beforeStageIndex: number,
-): number {
+): number | null {
   for (let stageIndex = 0; stageIndex < beforeStageIndex; stageIndex += 1) {
     const stage = stages[stageIndex];
     if (isStageAutoOpen(stage) && getStageChoices(stage).length > 1) {
@@ -797,7 +820,7 @@ function getInitialSelectedRouteChoiceIndex(
     }
   }
 
-  return 0;
+  return null;
 }
 
 function getInitialStageChoiceIndex(preset: ScenePresetId, stageIndex: number): number {
@@ -808,7 +831,7 @@ function getInitialStageChoiceIndex(preset: ScenePresetId, stageIndex: number): 
   }
 
   const requestedBranch = initialUrlParams.get("branch")?.toLowerCase();
-  if (preset === "splitter" && stageIndex === 1 && requestedBranch) {
+  if (requestedBranch) {
     const branchChoiceIndex = choices.findIndex((choice) => choice.label.toLowerCase().startsWith(requestedBranch));
     if (branchChoiceIndex >= 0) {
       return branchChoiceIndex;
@@ -902,7 +925,7 @@ function getSelectedRouteChoiceIndex(): number | null {
   const stages = getSceneOpeningStages(currentPreset);
   for (let stageIndex = 0; stageIndex < Math.min(openedStageCount, stages.length); stageIndex += 1) {
     const stage = stages[stageIndex];
-    if (!isStageAutoOpen(stage) || getStageChoices(stage).length <= 1) {
+    if (getStageChoices(stage).length <= 1) {
       continue;
     }
 

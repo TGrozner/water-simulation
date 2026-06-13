@@ -17,7 +17,7 @@ const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
-const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter"];
+const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid"];
 type GameCapture = {
   url: string;
   filename: string;
@@ -54,6 +54,27 @@ const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-challenge-hazard.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitpath&camera=fps`,
+    filename: "game-splitpath-start.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&camera=fps`,
+    filename: "game-splitpath-open-1.png",
+    timeoutMs: 350,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
+    filename: "game-splitpath-route-south.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&choice2=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
+    filename: "game-splitpath-route-north.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
+    filename: "game-splitpath-hazard.png",
   },
 ];
 

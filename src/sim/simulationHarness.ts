@@ -169,6 +169,7 @@ function assertGameLevelsComplete(): void {
     }
 
     assertChoiceStagesCanComplete(level.scene, level);
+    assertManualChoiceStagesCanComplete(level.scene, level);
   }
 }
 
@@ -355,6 +356,69 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
     assert(
       progress.complete,
       `${preset}: choice ${choiceIndex + 1} (${choices[choiceIndex].label}) should complete, delivered=${progress.deliveredWater.toFixed(
+        1,
+      )}/${level.deliveryTargetWater.toFixed(1)} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)}`,
+    );
+  }
+}
+
+function assertManualChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAME_LEVELS)[number]): void {
+  const stages = getSceneOpeningStages(preset);
+  const manualStageIndex = stages.findIndex((stage) => !isStageAutoOpen(stage) && getStageChoices(stage).length > 1);
+  if (manualStageIndex < 0) {
+    return;
+  }
+
+  const previousChoiceStageIndex = stages.findIndex(
+    (stage, stageIndex) => stageIndex < manualStageIndex && isStageAutoOpen(stage) && getStageChoices(stage).length > 1,
+  );
+  if (previousChoiceStageIndex >= 0) {
+    return;
+  }
+
+  const choices = getStageChoices(stages[manualStageIndex]);
+  const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
+
+  for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
+    const world = createWorld(preset);
+    const baselineWater = totalWater(world);
+
+    for (let stageIndex = 0; stageIndex < manualStageIndex; stageIndex += 1) {
+      openSceneStage(world, preset, stageIndex);
+    }
+
+    const choice = choices[choiceIndex];
+    const initialSolids = countStageSolidCells(world, choice);
+    assert(
+      initialSolids >= 40,
+      `${preset}: manual choice ${choiceIndex + 1} (${choice.label}) should start as a meaningful route plug, got ${initialSolids}`,
+    );
+
+    const removed = clearStageDigBoxes(world, choice);
+    assert(removed > 0, `${preset}: manual choice ${choiceIndex + 1} (${choice.label}) removed no terrain`);
+
+    for (let otherChoiceIndex = 0; otherChoiceIndex < choices.length; otherChoiceIndex += 1) {
+      if (otherChoiceIndex === choiceIndex) {
+        continue;
+      }
+
+      assert(
+        countStageSolidCells(world, choices[otherChoiceIndex]) > 0,
+        `${preset}: manual choice ${choiceIndex + 1} unexpectedly cleared manual choice ${otherChoiceIndex + 1}`,
+      );
+    }
+
+    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: manual choice ${choiceIndex + 1}`);
+    const progress = evaluateLevel(
+      world,
+      level,
+      makeProgress(stages, stages.length, "complete", 1, choice.label),
+      true,
+    );
+
+    assert(
+      progress.complete,
+      `${preset}: manual choice ${choiceIndex + 1} (${choice.label}) should complete, delivered=${progress.deliveredWater.toFixed(
         1,
       )}/${level.deliveryTargetWater.toFixed(1)} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)}`,
     );

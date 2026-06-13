@@ -65,6 +65,27 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
       ],
     },
   ],
+  braid: [
+    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
+    {
+      label: "Split path",
+      boxes: [],
+      digBoxes: [box(25, 39, 2, 12, 18, 25), box(25, 39, 2, 12, 25, 32)],
+      autoOpen: false,
+      choices: [
+        {
+          label: "South split path",
+          boxes: [],
+          digBoxes: [box(25, 39, 2, 12, 18, 25)],
+        },
+        {
+          label: "North split path",
+          boxes: [],
+          digBoxes: [box(25, 39, 2, 12, 25, 32)],
+        },
+      ],
+    },
+  ],
 };
 
 export function getSceneOpeningStages(preset: ScenePresetId): SceneOpeningStage[] {
