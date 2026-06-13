@@ -22,6 +22,7 @@ export type GameLevel = {
   brief: string;
   successText: string;
   zones: ObjectiveZone[];
+  maxOutsideWater?: number;
   balance?: {
     zoneA: string;
     zoneB: string;
@@ -40,6 +41,7 @@ export type LevelProgress = {
   objectives: ObjectiveProgress[];
   balanceDifference: number | null;
   balanceComplete: boolean;
+  outsideComplete: boolean;
   complete: boolean;
   totalWater: number;
   targetWater: number;
@@ -51,19 +53,21 @@ export const GAME_LEVELS: GameLevel[] = [
     id: "tutorial",
     name: "Sluice Tutorial",
     scene: "sluice",
-    brief: "Open the gates and dig only as needed to fill the marked lower spillway.",
+    brief: "Open the two gates in order and keep the release inside the marked catch basin.",
     successText: "Cistern primed",
+    maxOutsideWater: 170,
     zones: [
       {
         id: "catch",
-        label: "Lower spillway",
-        minX: 0,
-        maxX: 23,
-        minY: 0,
-        maxY: 2,
-        minZ: 24,
-        maxZ: 39,
-        targetWater: 150,
+        label: "Catch basin",
+        minX: 25,
+        maxX: 35,
+        minY: 1,
+        maxY: 3,
+        minZ: 22,
+        maxZ: 28,
+        targetWater: 180,
+        maxWater: 260,
       },
     ],
   },
@@ -73,34 +77,37 @@ export const GAME_LEVELS: GameLevel[] = [
     scene: "splitter",
     brief: "Split the limited reservoir between both lower basins without starving either side.",
     successText: "Flow balanced",
+    maxOutsideWater: 110,
     zones: [
       {
-        id: "near",
-        label: "Near basin",
-        minX: 0,
-        maxX: 15,
-        minY: 0,
-        maxY: 2,
-        minZ: 24,
-        maxZ: 31,
-        targetWater: 50,
+        id: "left",
+        label: "Left basin",
+        minX: 33,
+        maxX: 39,
+        minY: 1,
+        maxY: 4,
+        minZ: 17,
+        maxZ: 22,
+        targetWater: 120,
+        maxWater: 190,
       },
       {
-        id: "far",
-        label: "Far basin",
-        minX: 0,
-        maxX: 15,
-        minY: 0,
-        maxY: 2,
-        minZ: 32,
-        maxZ: 39,
-        targetWater: 50,
+        id: "right",
+        label: "Right basin",
+        minX: 33,
+        maxX: 39,
+        minY: 1,
+        maxY: 4,
+        minZ: 28,
+        maxZ: 33,
+        targetWater: 120,
+        maxWater: 190,
       },
     ],
     balance: {
-      zoneA: "near",
-      zoneB: "far",
-      maxDifference: 20,
+      zoneA: "left",
+      zoneB: "right",
+      maxDifference: 30,
     },
   },
 ];
@@ -122,16 +129,20 @@ export function evaluateLevel(world: VoxelWorld, level: GameLevel): LevelProgres
   const balanceDifference = evaluateBalanceDifference(objectives, level);
   const balanceComplete = balanceDifference === null || balanceDifference <= (level.balance?.maxDifference ?? 0);
   const targetWater = objectives.reduce((sum, objective) => sum + objective.water, 0);
+  const currentTotalWater = totalWater(world);
+  const waterOutsideTargets = Math.max(0, currentTotalWater - targetWater);
+  const outsideComplete = level.maxOutsideWater === undefined || waterOutsideTargets <= level.maxOutsideWater;
 
   return {
     level,
     objectives,
     balanceDifference,
     balanceComplete,
-    complete: objectives.every((objective) => objective.complete) && balanceComplete,
-    totalWater: totalWater(world),
+    outsideComplete,
+    complete: objectives.every((objective) => objective.complete) && balanceComplete && outsideComplete,
+    totalWater: currentTotalWater,
     targetWater,
-    waterOutsideTargets: Math.max(0, totalWater(world) - targetWater),
+    waterOutsideTargets,
   };
 }
 

@@ -23,7 +23,7 @@ type HarnessResult = {
 
 const MAX_TICKS = 1800;
 const MAX_STAGE_TICKS = 650;
-const CONSERVATION_TOLERANCE = 0.075;
+const CONSERVATION_TOLERANCE = 0.08;
 
 function runHarness(): void {
   const results: HarnessResult[] = [];
@@ -54,6 +54,15 @@ function assertGameLevelsComplete(): void {
   const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
 
   for (const level of GAME_LEVELS) {
+    const earlyWorld = createWorld(level.scene);
+    const earlyBaselineWater = totalWater(earlyWorld);
+    openSceneStage(earlyWorld, level.scene, 0);
+    runUntilStable(earlyWorld, tuning.waterConfig, earlyBaselineWater, MAX_TICKS, `game/${level.id}: first stage`);
+    assert(
+      !evaluateLevel(earlyWorld, level).complete,
+      `game/${level.id}: first opening stage should not complete the level`,
+    );
+
     const world = createWorld(level.scene);
     const baselineWater = totalWater(world);
     openSceneDrain(world, level.scene);

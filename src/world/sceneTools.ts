@@ -19,7 +19,7 @@ export type SceneOpeningStage = {
 export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = {
   sluice: [
     { label: "Upper sluice", boxes: [box(12, 18, 14, 22, 24, 31)] },
-    { label: "Middle gate", boxes: [box(24, 30, 8, 13, 23, 28)] },
+    { label: "Middle gate", boxes: [box(21, 39, 8, 13, 20, 30)] },
   ],
   splitter: [
     { label: "Reservoir gate", boxes: [box(12, 18, 14, 22, 24, 31)] },

@@ -49,7 +49,6 @@ function createTerrainMass(world: VoxelWorld): void {
 
 function carveSharedCutaway(world: VoxelWorld): void {
   carveBox(world, 0, 0, 35, world.width - 1, world.height - 1, world.depth - 1);
-  carveBox(world, 4, 0, 24, world.width - 5, 23, 34);
 }
 
 function carveSluiceScene(world: VoxelWorld): void {
@@ -59,7 +58,7 @@ function carveSluiceScene(world: VoxelWorld): void {
   carveBox(world, 21, 3, 20, 39, 7, 30);
   carveBox(world, 25, 1, 22, 35, 2, 28);
   addSolidBox(world, 15, 13, 24, 20, 18, 31);
-  addSolidBox(world, 24, 8, 23, 30, 13, 28);
+  addSolidBox(world, 21, 8, 20, 39, 13, 30);
 
   addReservoirTank(world, 7, 15, 14, 24, 24, 31);
   fillWaterBox(world, 8, 14, 15, 23, 25, 30);
@@ -108,6 +107,8 @@ function addReservoirTank(
   minZ: number,
   maxZ: number,
 ): void {
+  carveBox(world, minX, floorY + 1, minZ, maxX, maxY, maxZ);
+
   for (let z = minZ; z <= maxZ; z += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       world.solid[index(world, x, floorY, z)] = 1;

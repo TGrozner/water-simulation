@@ -55,13 +55,19 @@ function updateGamePanel(
   setText(panel, "[data-game-title]", progress.level.name);
   setText(panel, "[data-game-brief]", progress.level.brief);
   setText(panel, '[data-game-metric="targetWater"]', progress.targetWater.toFixed(1));
-  setText(panel, '[data-game-metric="outsideWater"]', progress.waterOutsideTargets.toFixed(1));
   setText(
     panel,
     '[data-game-metric="balance"]',
     progress.balanceDifference === null
       ? "n/a"
       : `${progress.balanceDifference.toFixed(1)} / ${progress.level.balance?.maxDifference.toFixed(1)}`,
+  );
+  setText(
+    panel,
+    '[data-game-metric="outsideWater"]',
+    progress.level.maxOutsideWater === undefined
+      ? progress.waterOutsideTargets.toFixed(1)
+      : `${progress.waterOutsideTargets.toFixed(1)} / ${progress.level.maxOutsideWater.toFixed(1)}`,
   );
 
   const objectives = panel.querySelector<HTMLElement>(".game-panel-objectives");
@@ -78,7 +84,7 @@ function updateGamePanel(
       .join("");
   }
 
-  const status = progress.complete ? progress.level.successText : "Guide the water";
+  const status = getStatusText(progress);
   setText(panel, "[data-game-status]", status);
   panel.dataset.complete = String(progress.complete);
 
@@ -87,6 +93,26 @@ function updateGamePanel(
     nextButton.disabled = !progress.complete;
     nextButton.textContent = levelIndex >= GAME_LEVELS.length - 1 ? "Restart slice" : "Next level";
   }
+}
+
+function getStatusText(progress: LevelProgress): string {
+  if (progress.complete) {
+    return progress.level.successText;
+  }
+
+  if (!progress.objectives.every((objective) => objective.complete)) {
+    return "Guide the water";
+  }
+
+  if (!progress.balanceComplete) {
+    return "Balance the basins";
+  }
+
+  if (!progress.outsideComplete) {
+    return "Too much water outside targets";
+  }
+
+  return "Guide the water";
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {
