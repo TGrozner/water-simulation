@@ -490,7 +490,9 @@ function animate(now: number): void {
   fps = fps * 0.9 + (1 / deltaSeconds) * 0.1;
   lastTime = now;
 
-  sceneContext.controls.update();
+  if (sceneContext.controls.enabled) {
+    sceneContext.controls.update();
+  }
   firstPersonController.update(world, deltaSeconds);
   digController.update();
   cellInspector.update();
