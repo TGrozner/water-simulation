@@ -312,10 +312,11 @@ function advanceClearedGameStages(): void {
   while (openedStageCount < stages.length) {
     const stage = stages[openedStageCount];
     const choices = getStageChoices(stage);
+    const availableChoiceIndexes = getAvailableChoiceIndexes(openedStageCount);
     const initialChoiceSolids = stageInitialSolidCounts[openedStageCount] ?? [];
     let clearedChoiceIndex = -1;
 
-    for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
+    for (const choiceIndex of availableChoiceIndexes) {
       const initialSolids = initialChoiceSolids[choiceIndex] ?? 0;
       if (initialSolids <= 0) {
         clearedChoiceIndex = choiceIndex;
@@ -754,12 +755,18 @@ function getMissionStageProgress() {
   const stages = getSceneOpeningStages(currentPreset);
   const activeStage = stages[openedStageCount];
   const activeChoices = activeStage ? getStageChoices(activeStage) : [];
+  const availableChoiceIndexes = getAvailableChoiceIndexes(openedStageCount);
   const initialChoiceSolids = stageInitialSolidCounts[openedStageCount] ?? [];
+  const activeStageLabel =
+    activeStage && !isStageAutoOpen(activeStage) && availableChoiceIndexes.length === 1
+      ? activeChoices[availableChoiceIndexes[0]]?.label ?? activeStage.label
+      : activeStage?.label ?? "complete";
   const activeStageProgress =
     activeChoices.length === 0
       ? 1
       : Math.max(
-          ...activeChoices.map((choice, choiceIndex) => {
+          ...availableChoiceIndexes.map((choiceIndex) => {
+            const choice = activeChoices[choiceIndex];
             const initialSolids = initialChoiceSolids[choiceIndex] ?? 0;
             const remainingSolids = countStageSolidCells(world, choice);
             return initialSolids <= 0 ? 1 : Math.min(1, Math.max(0, 1 - remainingSolids / initialSolids));
@@ -769,7 +776,7 @@ function getMissionStageProgress() {
   return {
     completedStages: openedStageCount,
     stageCount: stages.length,
-    activeStageLabel: activeStage?.label ?? "complete",
+    activeStageLabel,
     activeStageProgress,
     activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel: getSelectedChoiceLabel(),
@@ -788,6 +795,37 @@ function getSelectedChoiceLabel(): string | null {
   }
 
   return null;
+}
+
+function getSelectedRouteChoiceIndex(): number | null {
+  const stages = getSceneOpeningStages(currentPreset);
+  for (let stageIndex = 0; stageIndex < Math.min(openedStageCount, stages.length); stageIndex += 1) {
+    const stage = stages[stageIndex];
+    if (!isStageAutoOpen(stage) || getStageChoices(stage).length <= 1) {
+      continue;
+    }
+
+    return openedStageChoices[stageIndex] ?? 0;
+  }
+
+  return null;
+}
+
+function getAvailableChoiceIndexes(stageIndex: number): number[] {
+  const stage = getSceneOpeningStages(currentPreset)[stageIndex];
+  const choices = stage ? getStageChoices(stage) : [];
+  if (choices.length === 0) {
+    return [];
+  }
+
+  if (!stage || isStageAutoOpen(stage) || choices.length <= 1) {
+    return choices.map((_choice, choiceIndex) => choiceIndex);
+  }
+
+  const selectedRouteChoiceIndex = getSelectedRouteChoiceIndex();
+  return selectedRouteChoiceIndex === null
+    ? choices.map((_choice, choiceIndex) => choiceIndex)
+    : [Math.min(selectedRouteChoiceIndex, choices.length - 1)];
 }
 
 function isStable(): boolean {
@@ -897,7 +935,18 @@ function getVisibleGuideStage() {
     return null;
   }
 
-  return getSceneOpeningStages(currentPreset)[openedStageCount] ?? null;
+  const stage = getSceneOpeningStages(currentPreset)[openedStageCount];
+  if (!stage || getStageChoices(stage).length <= 1) {
+    return stage ?? null;
+  }
+
+  const choices = getStageChoices(stage);
+  const visibleChoiceIndexes = getAvailableChoiceIndexes(openedStageCount);
+  return {
+    label: stage.label,
+    boxes: visibleChoiceIndexes.flatMap((choiceIndex) => choices[choiceIndex]?.boxes ?? []),
+    digBoxes: visibleChoiceIndexes.flatMap((choiceIndex) => getStageDigBoxes(choices[choiceIndex])),
+  } satisfies SceneOpeningStage;
 }
 
 function getVisibleHazardStage() {

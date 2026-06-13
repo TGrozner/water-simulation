@@ -242,9 +242,23 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
 
     if (manualStageIndex >= 0) {
       const manualChoices = getStageChoices(stages[manualStageIndex]);
-      const manualChoice = manualChoices[Math.min(choiceIndex, manualChoices.length - 1)];
+      const manualChoiceIndex = Math.min(choiceIndex, manualChoices.length - 1);
+      const manualChoice = manualChoices[manualChoiceIndex];
       const removed = clearStageDigBoxes(world, manualChoice);
       assert(removed > 0, `${preset}: manual carve choice ${choiceIndex + 1} removed no terrain`);
+
+      for (let otherManualChoiceIndex = 0; otherManualChoiceIndex < manualChoices.length; otherManualChoiceIndex += 1) {
+        if (otherManualChoiceIndex === manualChoiceIndex) {
+          continue;
+        }
+
+        assert(
+          countStageSolidCells(world, manualChoices[otherManualChoiceIndex]) > 0,
+          `${preset}: manual carve choice ${choiceIndex + 1} unexpectedly cleared manual choice ${
+            otherManualChoiceIndex + 1
+          }`,
+        );
+      }
     }
 
     runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1}`);

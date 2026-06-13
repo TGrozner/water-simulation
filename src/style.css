@@ -343,6 +343,11 @@ canvas {
   font-weight: 800;
 }
 
+.game-panel [data-game-metric="mode"] {
+  color: #ffd27d;
+  font-weight: 800;
+}
+
 .game-panel-bar {
   height: 7px;
   overflow: hidden;

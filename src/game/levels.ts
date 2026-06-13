@@ -60,7 +60,7 @@ export const GAME_LEVELS: GameLevel[] = [
     id: "challenge",
     name: "Split Basin Challenge",
     scene: "splitter",
-    brief: "Open the weak gates, split the flow into both basins, and avoid the red spill seams.",
+    brief: "Open the weak gates, route the flow through the selected basin, and avoid the red spill seams.",
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
     deliveryTargetWater: 175,
