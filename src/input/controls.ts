@@ -1,6 +1,6 @@
 import { MOUSE, PerspectiveCamera, Raycaster, Vector2, WebGLRenderer } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { collectDigCells, digSphere } from "../world/dig";
+import { collectDigCells, digSphere, type DigResult } from "../world/dig";
 import type { TerrainRenderer } from "../render/terrainRenderer";
 import type { VoxelWorld } from "../world/types";
 import { SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
@@ -174,6 +174,8 @@ export function createDigController(
   state: InputState,
   canDig = () => true,
   useCenteredAim = () => false,
+  canDigCell: (cellIndex: number) => boolean = () => true,
+  onDig: (result: DigResult) => void = () => {},
 ): DigController {
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -249,8 +251,9 @@ export function createDigController(
       return;
     }
 
-    previewCells = collectDigCells(worldProvider(), hitCell, state.digRadius).filter(
-      (cellIndex) => worldProvider().solid[cellIndex] === 1,
+    const world = worldProvider();
+    previewCells = collectDigCells(world, hitCell, state.digRadius).filter(
+      (cellIndex) => world.solid[cellIndex] === 1 && canDigCell(cellIndex),
     );
   }
 
@@ -261,7 +264,7 @@ export function createDigController(
     }
 
     const world = worldProvider();
-    const result = digSphere(world, cellIndex, state.digRadius);
+    const result = digSphere(world, cellIndex, state.digRadius, canDigCell);
     if (result.removed === 0) {
       return;
     }
@@ -269,6 +272,7 @@ export function createDigController(
     state.terrainDirty = true;
     state.forceWaterUpdate = true;
     lastDigTime = performance.now();
+    onDig(result);
   }
 
   function pickTerrainCell(event: PointerEvent): number | null {

@@ -1,5 +1,5 @@
 import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Scene } from "three";
-import type { ClearBox, SceneOpeningStage } from "../world/sceneTools";
+import { getStageDigBoxes, type ClearBox, type SceneOpeningStage } from "../world/sceneTools";
 import type { VoxelWorld } from "../world/types";
 import type { RenderOptions } from "./renderOptions";
 
@@ -15,7 +15,7 @@ export function createStageGuideRenderer(scene: Scene): StageGuideRenderer {
 
   return {
     update: (world, stage, options) => {
-      const boxes = stage?.boxes ?? [];
+      const boxes = stage ? getStageDigBoxes(stage) : [];
       ensureMeshCount(group, meshes, boxes.length);
 
       for (let i = 0; i < meshes.length; i += 1) {

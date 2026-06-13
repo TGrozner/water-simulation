@@ -18,11 +18,17 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
       <h2 data-game-title>Level</h2>
       <p data-game-brief></p>
     </div>
-    <div class="game-panel-objectives"></div>
+    <div class="game-panel-progress">
+      <div class="game-panel-progress-row">
+        <span data-game-stage-label>Weak rock</span>
+        <strong data-game-stage-percent>0%</strong>
+      </div>
+      <div class="game-panel-bar"><span data-game-stage-bar></span></div>
+    </div>
     <dl class="game-panel-metrics">
-      <dt>Water in targets</dt><dd data-game-metric="targetWater">0</dd>
-      <dt>Water outside</dt><dd data-game-metric="outsideWater">0</dd>
-      <dt>Balance</dt><dd data-game-metric="balance">n/a</dd>
+      <dt>Delivered</dt><dd data-game-metric="delivered">0</dd>
+      <dt>Wasted</dt><dd data-game-metric="wasted">0</dd>
+      <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
     </dl>
     <div class="game-panel-status" data-game-status>In progress</div>
     <div class="game-panel-actions">
@@ -51,68 +57,45 @@ function updateGamePanel(
     return;
   }
 
+  const stagePercent = Math.round(progress.stageProgress.activeStageProgress * 100);
+  const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
+  const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
+
   setText(panel, "[data-game-level-count]", `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
   setText(panel, "[data-game-title]", progress.level.name);
   setText(panel, "[data-game-brief]", progress.level.brief);
-  setText(panel, '[data-game-metric="targetWater"]', progress.targetWater.toFixed(1));
   setText(
     panel,
-    '[data-game-metric="balance"]',
-    progress.balanceDifference === null
-      ? "n/a"
-      : `${progress.balanceDifference.toFixed(1)} / ${progress.level.balance?.maxDifference.toFixed(1)}`,
+    "[data-game-stage-label]",
+    progress.stageProgress.completedStages >= progress.stageProgress.stageCount
+      ? "All weak gates open"
+      : progress.stageProgress.activeStageLabel,
+  );
+  setText(panel, "[data-game-stage-percent]", `${stagePercent}%`);
+  setText(
+    panel,
+    '[data-game-metric="delivered"]',
+    `${progress.deliveredWater.toFixed(0)} / ${progress.level.deliveryTargetWater.toFixed(0)}`,
   );
   setText(
     panel,
-    '[data-game-metric="outsideWater"]',
-    progress.level.maxOutsideWater === undefined
-      ? progress.waterOutsideTargets.toFixed(1)
-      : `${progress.waterOutsideTargets.toFixed(1)} / ${progress.level.maxOutsideWater.toFixed(1)}`,
+    '[data-game-metric="wasted"]',
+    `${progress.wastedWater.toFixed(0)} / ${progress.level.maxWastedWater.toFixed(0)}`,
   );
+  setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
+  setText(panel, "[data-game-status]", progress.status);
 
-  const objectives = panel.querySelector<HTMLElement>(".game-panel-objectives");
-  if (objectives) {
-    objectives.innerHTML = progress.objectives
-      .map(
-        (objective) => `
-          <div class="game-panel-objective" data-complete="${objective.complete ? "true" : "false"}">
-            <span>${objective.zone.label}</span>
-            <strong>${objective.water.toFixed(1)} / ${objective.zone.targetWater.toFixed(1)}</strong>
-          </div>
-        `,
-      )
-      .join("");
+  if (stageBar) {
+    stageBar.style.width = `${stagePercent}%`;
   }
 
-  const status = getStatusText(progress);
-  setText(panel, "[data-game-status]", status);
   panel.dataset.complete = String(progress.complete);
+  panel.dataset.failed = String(progress.failed);
 
-  const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
   if (nextButton) {
     nextButton.disabled = !progress.complete;
     nextButton.textContent = levelIndex >= GAME_LEVELS.length - 1 ? "Restart slice" : "Next level";
   }
-}
-
-function getStatusText(progress: LevelProgress): string {
-  if (progress.complete) {
-    return progress.level.successText;
-  }
-
-  if (!progress.objectives.every((objective) => objective.complete)) {
-    return "Guide the water";
-  }
-
-  if (!progress.balanceComplete) {
-    return "Balance the basins";
-  }
-
-  if (!progress.outsideComplete) {
-    return "Too much water outside targets";
-  }
-
-  return "Guide the water";
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {

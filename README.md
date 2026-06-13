@@ -31,7 +31,7 @@ Run the non-browser simulation harness:
 npm run test:sim
 ```
 
-Capture the tutorial/challenge scenes, staged-open states, and game screens:
+Capture the authored scenes, staged-open states, and game screens:
 
 ```bash
 npm run screenshots
@@ -48,33 +48,35 @@ images are written under `.sim-build/screenshots`.
 
 Useful URL parameters for repeatable captures:
 
+- `?scene=splitter`
 - `?game=1`
 - `?game=1&level=challenge`
 - `?game=1&debugUi=1`
 - `?game=0&scene=sluice`
-- `?scene=splitter`
 - `?camera=fps`
 - `?camera=orbit`
+- `?debugUi=1`
 - `?openStages=2`
 - `?tuning=fast-drain`
 - `?debug=1&active=0&flow=0`
 - `?slice=1&sliceZ=28`
 
-## Vertical slice
+## Vertical Slice
 
-The root URL starts in a small game-mode vertical slice. It reuses the same
-terrain destruction and grid-water simulation as the sandbox, then layers simple
-level goals on top:
+The root URL starts in a focused first-person game slice. It uses the same
+terrain destruction and grid-water simulation as the sandbox, then adds a
+lightweight mission loop on top:
 
-- **Sluice Tutorial**: open and dig through the sluice route to fill the marked lower spillway.
-- **Split Basin Challenge**: split a limited reservoir between two marked lower basins and keep them balanced.
+- **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
+- **Split Basin Challenge**: open the forked route and stabilize enough water in the lower basin network.
 
-The game HUD shows target fill amounts, water outside target zones, balance
-status, reset, and next-level controls. Sandbox debug panels are hidden by
-default in game mode; press F3 or backquote, or add `debugUi=1`, to bring them
-back. The translucent yellow or green boxes in the world mark objective volumes.
-Use `?scene=<name>` or `?game=0` to return to the full sandbox/debug workflow;
-the debug panel exposes **Return to game** after scene browsing.
+In game mode, digging is restricted to the currently highlighted weak-rock gate.
+Once the weak core is mostly destroyed, the gate collapses open and the next
+gate is highlighted. The HUD tracks gate progress, delivered water, wasted water,
+settling state, failure, and level completion. The debug panels are hidden on
+the root view by default; press F3 or backquote, or add `debugUi=1`, to bring
+them back. Use `?scene=<name>` or `?game=0` to start directly in the full
+sandbox/debug workflow.
 
 ## Controls
 
@@ -84,7 +86,7 @@ the debug panel exposes **Return to game** after scene browsing.
 - Mouse: look around in FPS mode; click the scene if the browser needs pointer lock
 - Space: jump in FPS mode, pause/resume in orbit mode
 - Shift: sprint in FPS mode
-- F3 or backquote: toggle sandbox/debug UI in game mode
+- F3 or backquote: toggle sandbox/debug UI
 - Hover visible terrain or water: inspect the cell under the cursor
 - Hover empty space: inspect the first voxel hit by the 3D grid probe
 - Right mouse: orbit camera
@@ -124,11 +126,11 @@ storage.
 - Water volume baseline and delta warning to catch conservation drift while iterating
 - Hover cell inspection for coordinates, solid/open state, water amount, active/sleep state, and hit source
 - Interactive debug panel for scene switching, pause/step/reset, water debug, and slice controls
-- Browser-free simulation harness covering both scenes across all tuning presets, staged openings, focused dig/opening edge cases, and scripted game completion
+- Browser-free simulation harness covering both scenes across all tuning presets, staged openings, game completion, and focused dig/opening edge cases
 - Active water cell outlines in water debug mode
 - Separate active-cell and flow-glyph debug toggles
 - Empty-space probing on the current z slice
-- Scene tool buttons for opening each level's authored drain path
+- Scene tool buttons for opening each scene's authored drain path
 - Progressive scene opening timeline for multi-stage scenarios
 - Runtime metrics for ticks, last moved volume, max water delta, idle ticks, and stable/moving state
 - Headless screenshot comparison for both scenes with slice off/on, staged openings, and game screens
@@ -139,7 +141,7 @@ storage.
 - Named tuning presets for fast drain, slow viscous, stable spread, and aggressive debug passes
 - Local-storage save/load/clear controls for one custom tuning profile
 - URL support for staged captures with `?openStages=N`
-- Thin game-mode vertical slice with two levels, target zones, limited-water scoring, reset, and next-level flow
+- First-person game slice with weak-rock-only digging, stage auto-advance, mission HUD, and completion/failure state
 
 ## Known limitations
 
@@ -153,13 +155,13 @@ storage.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.
 - Renderer update timings are coarse browser-side measurements, not a profiler.
-- Game objectives are volume-zone checks only; there is no timer, score economy, or campaign persistence yet.
+- The failure loop is intentionally light; the world still needs better containment and richer mission rules.
+- There is no scoring, timer, or campaign persistence yet.
 
 ## Recommended next steps
 
-- Add a real level-complete affordance in-world, such as gates unlocking after objectives fill.
-- Add fail/retry rules for wasting too much water outside targets.
-- Add one more challenge that requires digging a player-authored split path instead of mostly opening staged sluices.
+- Add one more challenge that requires digging a player-authored split path instead of mostly opening staged gates.
+- Add stronger cave containment so wasted-water failure is based on deliberate leaks, not world-edge spill.
 - Add greedy meshing only if a separate voxel picking path is introduced.
 - Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
-- Add more authored scenario goals, such as target fill volume or drain completion checks.
+- Add more authored cave scenarios with distinct staged release patterns.

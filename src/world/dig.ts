@@ -6,12 +6,17 @@ export type DigResult = {
   changedCells: number[];
 };
 
-export function digSphere(world: VoxelWorld, centerIndex: number, radius: number): DigResult {
+export function digSphere(
+  world: VoxelWorld,
+  centerIndex: number,
+  radius: number,
+  canDigCell: (cellIndex: number) => boolean = () => true,
+): DigResult {
   const candidateCells = collectDigCells(world, centerIndex, radius);
   const changedCells: number[] = [];
 
   for (const cellIndex of candidateCells) {
-    if (world.solid[cellIndex] === 0) {
+    if (world.solid[cellIndex] === 0 || !canDigCell(cellIndex)) {
       continue;
     }
 

@@ -14,7 +14,6 @@ import {
 import { createActiveCellRenderer, type ActiveCellRenderer } from "./render/activeCellRenderer";
 import { createBrushPreviewRenderer, type BrushPreviewRenderer } from "./render/brushPreviewRenderer";
 import { createFlowDebugRenderer, type FlowDebugRenderer, type RecentFlow } from "./render/flowDebugRenderer";
-import { createObjectiveRenderer, type ObjectiveRenderer } from "./render/objectiveRenderer";
 import { createSceneContext } from "./render/scene";
 import { createSonarRenderer } from "./render/sonarRenderer";
 import { createStageGuideRenderer, type StageGuideRenderer } from "./render/stageGuideRenderer";
@@ -37,7 +36,7 @@ import {
 } from "./sim/tuningPresets";
 import { totalWater } from "./world/grid";
 import { createWorld, SCENE_PRESET_DETAILS, SCENE_PRESETS, type ScenePresetId } from "./world/createWorld";
-import { getSceneOpeningStages, openSceneStage } from "./world/sceneTools";
+import { countStageSolidCells, getSceneOpeningStages, isCellInStage, openSceneStage } from "./world/sceneTools";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -49,6 +48,8 @@ configureOrbitControls(sceneContext.controls);
 
 const VOLUME_WARNING_TOLERANCE = 0.05;
 const FLOW_DEBUG_TTL = 16;
+const STABLE_COMPLETE_TICKS = 18;
+const STAGE_CLEAR_RATIO = 0.72;
 const initialUrlParams = new URLSearchParams(window.location.search);
 
 let gameModeEnabled = getInitialGameModeEnabled();
@@ -57,16 +58,16 @@ let currentPreset: ScenePresetId = gameModeEnabled ? getCurrentLevel().scene : g
 let firstPersonMode = getInitialFirstPersonEnabled();
 let world = createWorld(currentPreset);
 let openedStageCount = openInitialStages(world, currentPreset);
+let stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
 let terrainRenderer: TerrainRenderer = createTerrainRenderer(sceneContext.scene, world);
 let waterRenderer: WaterRenderer = createWaterRenderer(sceneContext.scene, world);
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
-let objectiveRenderer: ObjectiveRenderer = createObjectiveRenderer(sceneContext.scene);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
 let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
 const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
-let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel()) : null;
+let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
 const initialTuningPreset = getInitialTuningPreset();
 let currentTuningPreset: TuningPresetId | "custom" = initialTuningPreset;
 let activeTuning = cloneTuningPreset(initialTuningPreset);
@@ -113,8 +114,10 @@ const digController = createDigController(
   () => world,
   () => terrainRenderer,
   inputState,
-  () => !firstPersonMode || firstPersonController.hasSceneAim(),
+  () => canAcceptDigInput(),
   () => firstPersonMode && firstPersonController.hasSceneAim(),
+  (cellIndex) => canDigCell(cellIndex),
+  handleDig,
 );
 const cellInspector = createCellInspector(
   sceneContext.renderer,
@@ -128,8 +131,6 @@ const cellInspector = createCellInspector(
 const debugPanel = createDebugPanel({
   getSnapshot: () => ({
     preset: currentPreset,
-    gameModeEnabled,
-    currentLevelName: getCurrentLevel().name,
     paused: inputState.paused,
     debugWater: inputState.debugWater,
     showActiveCells: inputState.showActiveCells,
@@ -154,7 +155,6 @@ const debugPanel = createDebugPanel({
     waterConfig,
   }),
   setPreset: selectPreset,
-  returnToGame: resetCurrentLevel,
   setPaused: setPaused,
   step: queueStep,
   reset: resetWorld,
@@ -205,6 +205,10 @@ function resetCurrentLevel(): void {
 }
 
 function advanceToNextLevel(): void {
+  if (!levelProgress?.complete) {
+    return;
+  }
+
   gameModeEnabled = true;
   setFirstPersonMode(true);
   currentLevelIndex = currentLevelIndex >= GAME_LEVELS.length - 1 ? 0 : currentLevelIndex + 1;
@@ -244,6 +248,57 @@ function queueStep(): void {
 function toggleDebugUi(): void {
   debugUiVisible = !debugUiVisible;
   syncBodyModeClasses();
+}
+
+function canAcceptDigInput(): boolean {
+  if (firstPersonMode && !firstPersonController.hasSceneAim()) {
+    return false;
+  }
+
+  return !gameModeEnabled || (!levelProgress?.failed && !levelProgress?.complete);
+}
+
+function canDigCell(cellIndex: number): boolean {
+  if (levelProgress?.failed || levelProgress?.complete) {
+    return false;
+  }
+
+  if (!gameModeEnabled) {
+    return true;
+  }
+
+  const stage = getVisibleGuideStage();
+  return Boolean(stage && isCellInStage(world, stage, cellIndex));
+}
+
+function handleDig(): void {
+  advanceClearedGameStages();
+}
+
+function advanceClearedGameStages(): void {
+  if (!gameModeEnabled) {
+    return;
+  }
+
+  const stages = getSceneOpeningStages(currentPreset);
+  while (openedStageCount < stages.length) {
+    const initialSolids = stageInitialSolidCounts[openedStageCount] ?? 0;
+    if (initialSolids <= 0) {
+      openedStageCount += 1;
+      continue;
+    }
+
+    const remainingSolids = countStageSolidCells(world, stages[openedStageCount]);
+    const clearedRatio = 1 - remainingSolids / initialSolids;
+    if (clearedRatio < STAGE_CLEAR_RATIO) {
+      break;
+    }
+
+    openSceneStage(world, currentPreset, openedStageCount);
+    openedStageCount += 1;
+    markRenderOptionsChanged();
+    inputState.forceWaterUpdate = true;
+  }
 }
 
 function openCurrentScene(): void {
@@ -372,7 +427,6 @@ function resetWorld(): void {
   waterRenderer.dispose();
   activeCellRenderer.dispose();
   flowDebugRenderer.dispose();
-  objectiveRenderer.dispose();
   brushPreviewRenderer.dispose();
   stageGuideRenderer.dispose();
   if (gameModeEnabled) {
@@ -380,9 +434,11 @@ function resetWorld(): void {
   }
   world = createWorld(currentPreset);
   openedStageCount = 0;
+  openedStageCount = openInitialStages(world, currentPreset);
+  stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
   inputState.sliceZ = Math.min(inputState.sliceZ, world.depth - 1);
   baselineWaterVolume = totalWater(world);
-  levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel()) : null;
+  levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
   tickCount = 0;
   maxVolumeDelta = 0;
   stableTicks = 0;
@@ -391,7 +447,6 @@ function resetWorld(): void {
   waterRenderer = createWaterRenderer(sceneContext.scene, world);
   activeCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
-  objectiveRenderer = createObjectiveRenderer(sceneContext.scene);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
   stageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
   terrainRenderer.update(world, getRenderOptions());
@@ -503,6 +558,26 @@ function openInitialStages(initialWorld: typeof world, preset: ScenePresetId): n
   return stagesToOpen;
 }
 
+function getStageSolidCounts(targetWorld: typeof world, preset: ScenePresetId): number[] {
+  return getSceneOpeningStages(preset).map((stage) => countStageSolidCells(targetWorld, stage));
+}
+
+function getMissionStageProgress() {
+  const stages = getSceneOpeningStages(currentPreset);
+  const activeStage = stages[openedStageCount];
+  const initialSolids = stageInitialSolidCounts[openedStageCount] ?? 0;
+  const remainingSolids = activeStage ? countStageSolidCells(world, activeStage) : 0;
+  const activeStageProgress =
+    !activeStage || initialSolids <= 0 ? 1 : Math.min(1, Math.max(0, 1 - remainingSolids / initialSolids));
+
+  return {
+    completedStages: openedStageCount,
+    stageCount: stages.length,
+    activeStageLabel: activeStage?.label ?? "complete",
+    activeStageProgress,
+  };
+}
+
 function isStable(): boolean {
   return world.activeCells.size === 0 && movedLastFrame <= 0.0005;
 }
@@ -564,14 +639,14 @@ function animate(now: number): void {
   }
 
   const currentWaterVolume = totalWater(world);
-  levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel()) : null;
-  if (levelProgress) {
-    objectiveRenderer.update(world, getCurrentLevel(), levelProgress, getRenderOptions());
-  }
   const volumeDelta = currentWaterVolume - baselineWaterVolume;
   maxVolumeDelta = Math.max(maxVolumeDelta, Math.abs(volumeDelta));
   const volumeWarning = Math.abs(volumeDelta) > VOLUME_WARNING_TOLERANCE;
   const preset = SCENE_PRESET_DETAILS[currentPreset];
+  const settledForMission = stableTicks >= STABLE_COMPLETE_TICKS;
+  levelProgress = gameModeEnabled
+    ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), settledForMission)
+    : null;
 
   updateDebugOverlay(overlay, {
     presetName: preset.name,
@@ -605,7 +680,7 @@ function animate(now: number): void {
 }
 
 function getVisibleGuideStage() {
-  if (!gameModeEnabled || openedStageCount >= getSceneOpeningStages(currentPreset).length) {
+  if (openedStageCount >= getSceneOpeningStages(currentPreset).length) {
     return null;
   }
 
@@ -619,6 +694,7 @@ function updateAimFeedback(): void {
 function syncBodyModeClasses(): void {
   document.body.classList.toggle("game-mode", gameModeEnabled);
   document.body.classList.toggle("debug-ui-visible", debugUiVisible);
+  document.body.classList.toggle("debug-ui-hidden", !debugUiVisible);
 }
 
 requestAnimationFrame(animate);

@@ -4,8 +4,6 @@ import type { WaterSimulationConfig } from "../sim/waterSimulation";
 
 export type DebugPanelSnapshot = {
   preset: ScenePresetId;
-  gameModeEnabled: boolean;
-  currentLevelName: string;
   paused: boolean;
   debugWater: boolean;
   showActiveCells: boolean;
@@ -33,7 +31,6 @@ export type DebugPanelSnapshot = {
 export type DebugPanelActions = {
   getSnapshot: () => DebugPanelSnapshot;
   setPreset: (preset: ScenePresetId) => void;
-  returnToGame: () => void;
   setPaused: (paused: boolean) => void;
   step: () => void;
   reset: () => void;
@@ -66,7 +63,6 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
       <span>Scene</span>
       <select name="preset"></select>
     </label>
-    <button type="button" name="returnToGame">Return to game</button>
     <div class="debug-panel-row">
       <button type="button" name="pause"></button>
       <button type="button" name="step">Step</button>
@@ -152,7 +148,6 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
   }
 
   const pauseButton = panel.elements.namedItem("pause") as HTMLButtonElement;
-  const returnToGameButton = panel.elements.namedItem("returnToGame") as HTMLButtonElement;
   const stepButton = panel.elements.namedItem("step") as HTMLButtonElement;
   const resetButton = panel.elements.namedItem("reset") as HTMLButtonElement;
   const openSceneButton = panel.elements.namedItem("openScene") as HTMLButtonElement;
@@ -193,7 +188,6 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
   tuningPresetSelect.appendChild(customOption);
 
   presetSelect.addEventListener("change", () => actions.setPreset(presetSelect.value as ScenePresetId));
-  returnToGameButton.addEventListener("click", () => actions.returnToGame());
   tuningPresetSelect.addEventListener("change", () => actions.setTuningPreset(tuningPresetSelect.value as TuningPresetId));
   pauseButton.addEventListener("click", () => actions.setPaused(!actions.getSnapshot().paused));
   stepButton.addEventListener("click", () => actions.step());
@@ -218,8 +212,6 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
   function update(): void {
     const snapshot = actions.getSnapshot();
     presetSelect.value = snapshot.preset;
-    returnToGameButton.hidden = snapshot.gameModeEnabled;
-    returnToGameButton.textContent = `Return to ${snapshot.currentLevelName}`;
     pauseButton.textContent = snapshot.paused ? "Resume" : "Pause";
     openSceneButton.textContent =
       snapshot.openedStages >= snapshot.openingStages

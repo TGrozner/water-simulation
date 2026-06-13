@@ -107,8 +107,8 @@ canvas {
   color: #c9d7e8;
 }
 
-.game-mode:not(.debug-ui-visible) .debug-overlay,
-.game-mode:not(.debug-ui-visible) .debug-panel {
+.debug-ui-hidden .debug-overlay,
+.debug-ui-hidden .debug-panel {
   display: none;
 }
 
@@ -262,12 +262,12 @@ canvas {
   bottom: 12px;
   z-index: 12;
   display: grid;
-  width: min(320px, calc(100vw - 24px));
+  width: min(330px, calc(100vw - 24px));
   gap: 8px;
   padding: 10px;
   border: 1px solid rgba(185, 215, 255, 0.24);
   border-radius: 8px;
-  background: rgba(8, 13, 18, 0.84);
+  background: rgba(8, 13, 18, 0.86);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(8px);
   color: #eaf4ff;
@@ -281,55 +281,37 @@ canvas {
 
 .game-panel-heading {
   display: grid;
-  gap: 3px;
+  gap: 2px;
 }
 
 .game-panel-heading span {
-  color: #8fb3de;
+  color: #9bc4ff;
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.game-panel h2 {
+.game-panel h2,
+.game-panel p {
   margin: 0;
+}
+
+.game-panel h2 {
   font-size: 16px;
   line-height: 1.2;
 }
 
 .game-panel p {
-  margin: 0;
-  color: #c9d7e8;
+  color: #d7e5f5;
 }
 
-.game-panel-objectives {
+.game-panel-progress {
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
-.game-panel-objective {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: center;
-  min-height: 26px;
-  padding: 5px 7px;
-  border: 1px solid rgba(255, 214, 90, 0.28);
-  border-radius: 6px;
-  background: rgba(255, 214, 90, 0.08);
-}
-
-.game-panel-objective[data-complete="true"] {
-  border-color: rgba(98, 255, 139, 0.34);
-  background: rgba(98, 255, 139, 0.1);
-}
-
-.game-panel-objective strong {
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
+.game-panel-progress-row,
 .game-panel-metrics {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -338,10 +320,26 @@ canvas {
   color: #c9d7e8;
 }
 
+.game-panel-progress-row strong,
 .game-panel-metrics dd {
   margin: 0;
   font-variant-numeric: tabular-nums;
   text-align: right;
+}
+
+.game-panel-bar {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(143, 179, 222, 0.16);
+}
+
+.game-panel-bar span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: #ffc247;
 }
 
 .game-panel-status {
@@ -358,6 +356,11 @@ canvas {
   color: #9dffb5;
 }
 
+.game-panel[data-failed="true"] .game-panel-status {
+  background: rgba(255, 95, 95, 0.16);
+  color: #ffb0a8;
+}
+
 .game-panel-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -365,18 +368,18 @@ canvas {
 }
 
 .game-panel button {
-  min-height: 34px;
-  border: 1px solid rgba(185, 215, 255, 0.28);
+  min-height: 32px;
+  border: 1px solid rgba(185, 215, 255, 0.24);
   border-radius: 6px;
-  background: rgba(26, 40, 55, 0.95);
+  background: rgba(24, 35, 48, 0.95);
   color: #eaf4ff;
-  cursor: pointer;
   font: inherit;
+  cursor: pointer;
 }
 
 .game-panel button:disabled {
   cursor: not-allowed;
-  opacity: 0.45;
+  opacity: 0.42;
 }
 
 .sonar-panel {
@@ -445,14 +448,6 @@ canvas {
     top: auto;
     right: 12px;
     bottom: 12px;
-  }
-
-  .game-panel {
-    top: 12px;
-    bottom: auto;
-    right: 12px;
-    left: auto;
-    transform: none;
   }
 
   .sonar-panel {
