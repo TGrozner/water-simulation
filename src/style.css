@@ -338,6 +338,67 @@ canvas {
   opacity: 0.45;
 }
 
+.sonar-panel {
+  position: fixed;
+  bottom: 12px;
+  left: 12px;
+  z-index: 9;
+  width: min(240px, calc(100vw - 24px));
+  height: 190px;
+  overflow: hidden;
+  border: 1px solid rgba(111, 231, 255, 0.3);
+  border-radius: 8px;
+  background:
+    linear-gradient(rgba(111, 231, 255, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(111, 231, 255, 0.06) 1px, transparent 1px),
+    rgba(4, 12, 18, 0.84);
+  background-size: 18px 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+  pointer-events: none;
+}
+
+.sonar-panel::after {
+  position: absolute;
+  inset: 24px 0 0;
+  background: linear-gradient(180deg, transparent, rgba(111, 231, 255, 0.16), transparent);
+  content: "";
+  opacity: 0.48;
+  transform: translateY(-60%);
+  animation: sonar-sweep 3.2s linear infinite;
+}
+
+.sonar-panel-title {
+  position: relative;
+  z-index: 1;
+  height: 24px;
+  padding: 5px 8px 0;
+  color: #9ef1ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.sonar-panel canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: calc(100% - 24px);
+  cursor: default;
+}
+
+@keyframes sonar-sweep {
+  from {
+    transform: translateY(-80%);
+  }
+
+  to {
+    transform: translateY(80%);
+  }
+}
+
 @media (max-width: 760px) {
   .debug-panel {
     top: auto;
@@ -351,5 +412,9 @@ canvas {
     right: 12px;
     left: auto;
     transform: none;
+  }
+
+  .sonar-panel {
+    display: none;
   }
 }

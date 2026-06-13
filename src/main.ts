@@ -15,6 +15,7 @@ import { createBrushPreviewRenderer, type BrushPreviewRenderer } from "./render/
 import { createFlowDebugRenderer, type FlowDebugRenderer, type RecentFlow } from "./render/flowDebugRenderer";
 import { createObjectiveRenderer, type ObjectiveRenderer } from "./render/objectiveRenderer";
 import { createSceneContext } from "./render/scene";
+import { createSonarRenderer } from "./render/sonarRenderer";
 import { createTerrainRenderer, type TerrainRenderer } from "./render/terrainRenderer";
 import { createWaterRenderer, type WaterRenderer } from "./render/waterRenderer";
 import type { RenderOptions } from "./render/renderOptions";
@@ -59,6 +60,7 @@ let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneConte
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let objectiveRenderer: ObjectiveRenderer = createObjectiveRenderer(sceneContext.scene);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
+const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
 let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel()) : null;
 const initialTuningPreset = getInitialTuningPreset();
@@ -345,6 +347,8 @@ function resetWorld(): void {
   objectiveRenderer = createObjectiveRenderer(sceneContext.scene);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
   terrainRenderer.update(world, getRenderOptions());
+  sonarRenderer.updateTerrain(world);
+  sonarRenderer.updateWater(world);
   inputState.forceWaterUpdate = true;
 }
 
@@ -466,6 +470,7 @@ function animate(now: number): void {
 
   if (inputState.terrainDirty) {
     terrainRenderer.update(world, getRenderOptions());
+    sonarRenderer.updateTerrain(world);
     inputState.terrainDirty = false;
   }
 
@@ -473,6 +478,7 @@ function animate(now: number): void {
     waterRenderer.update(world, inputState.debugWater, getRenderOptions());
     activeCellRenderer.update(world, inputState.debugWater && inputState.showActiveCells, getRenderOptions());
     flowDebugRenderer.update(world, recentFlows, inputState.debugWater && inputState.showFlowDebug, getRenderOptions());
+    sonarRenderer.updateWater(world);
     inputState.forceWaterUpdate = false;
   }
 
@@ -513,6 +519,7 @@ function animate(now: number): void {
   debugPanel.update();
 
   sceneContext.renderer.render(sceneContext.scene, sceneContext.camera);
+  sonarRenderer.render(sceneContext.camera);
 }
 
 requestAnimationFrame(animate);

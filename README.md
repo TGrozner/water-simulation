@@ -98,6 +98,7 @@ storage.
 - Downward-first water movement, lateral spreading, sleeping active cells, and neighbor wake-up
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
+- Corner 3D cave sonar showing open cave contours, water pockets, and camera heading
 - Two authored scenes: a focused sluice tutorial and a split-basin challenge
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
@@ -127,6 +128,7 @@ storage.
 - The renderer draws all visible water cells as simple translucent boxes.
 - Terrain rendering is face-culled but not greedy-merged; individual voxel picking is preserved.
 - Orbit uses right mouse so left mouse can stay dedicated to digging.
+- The sonar uses the orbit camera as a temporary player proxy until first-person movement exists.
 - The slice view currently cuts along z only.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.
