@@ -11,10 +11,14 @@ export type ClearBox = {
   maxZ: number;
 };
 
-export type SceneOpeningStage = {
+export type SceneOpeningChoice = {
   label: string;
   boxes: ClearBox[];
   digBoxes?: ClearBox[];
+};
+
+export type SceneOpeningStage = SceneOpeningChoice & {
+  choices?: SceneOpeningChoice[];
 };
 
 export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = {
@@ -24,7 +28,23 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
   ],
   splitter: [
     { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
-    { label: "Fork weak gate", boxes: [box(25, 30, 1, 15, 21, 29)], digBoxes: [box(26, 30, 8, 14, 23, 27)] },
+    {
+      label: "Choose fork branch",
+      boxes: [box(25, 30, 1, 15, 17, 23)],
+      digBoxes: [box(26, 30, 8, 14, 19, 23)],
+      choices: [
+        {
+          label: "South basin branch",
+          boxes: [box(25, 30, 1, 15, 17, 23)],
+          digBoxes: [box(26, 30, 8, 14, 19, 23)],
+        },
+        {
+          label: "North basin branch",
+          boxes: [box(25, 30, 1, 15, 27, 33)],
+          digBoxes: [box(26, 30, 8, 14, 27, 31)],
+        },
+      ],
+    },
   ],
 };
 
@@ -40,7 +60,7 @@ export function isCellInStage(world: VoxelWorld, stage: SceneOpeningStage, cellI
   return getStageDigBoxes(stage).some((clearRegion) => isCellInBox(x, y, z, clearRegion));
 }
 
-export function countStageSolidCells(world: VoxelWorld, stage: SceneOpeningStage): number {
+export function countStageSolidCells(world: VoxelWorld, stage: SceneOpeningChoice): number {
   let count = 0;
 
   for (const clearRegion of getStageDigBoxes(stage)) {
@@ -60,13 +80,21 @@ export function countStageSolidCells(world: VoxelWorld, stage: SceneOpeningStage
   return count;
 }
 
-export function openSceneStage(world: VoxelWorld, preset: ScenePresetId, stageIndex: number): number {
+export function openSceneStage(world: VoxelWorld, preset: ScenePresetId, stageIndex: number, choiceIndex = 0): number {
   const stage = getSceneOpeningStages(preset)[stageIndex];
   if (!stage) {
     return 0;
   }
 
-  return stage.boxes.reduce((removed, clearRegion) => removed + clearBox(world, clearRegion), 0);
+  return openStageChoice(world, getStageChoices(stage)[choiceIndex] ?? getStageChoices(stage)[0]);
+}
+
+export function openStageChoice(world: VoxelWorld, choice: SceneOpeningChoice | undefined): number {
+  if (!choice) {
+    return 0;
+  }
+
+  return choice.boxes.reduce((removed, clearRegion) => removed + clearBox(world, clearRegion), 0);
 }
 
 export function openClearBox(world: VoxelWorld, clearRegion: ClearBox): number {
@@ -81,7 +109,15 @@ export function openSceneDrain(world: VoxelWorld, preset: ScenePresetId): number
 }
 
 export function getStageDigBoxes(stage: SceneOpeningStage): ClearBox[] {
+  if (stage.choices) {
+    return stage.choices.flatMap((choice) => choice.digBoxes ?? choice.boxes);
+  }
+
   return stage.digBoxes ?? stage.boxes;
+}
+
+export function getStageChoices(stage: SceneOpeningStage): SceneOpeningChoice[] {
+  return stage.choices ?? [stage];
 }
 
 function isCellInBox(x: number, y: number, z: number, clearRegion: ClearBox): boolean {

@@ -22,6 +22,7 @@ export type StageProgress = {
   stageCount: number;
   activeStageLabel: string;
   activeStageProgress: number;
+  selectedChoiceLabel: string | null;
 };
 
 export type LevelProgress = {

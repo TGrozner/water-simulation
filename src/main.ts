@@ -39,6 +39,7 @@ import { createWorld, SCENE_PRESET_DETAILS, SCENE_PRESETS, type ScenePresetId } 
 import {
   countStageSolidCells,
   getSceneOpeningStages,
+  getStageChoices,
   getStageDigBoxes,
   isCellInStage,
   openClearBox,
@@ -65,7 +66,8 @@ let currentLevelIndex = getInitialLevelIndex();
 let currentPreset: ScenePresetId = gameModeEnabled ? getCurrentLevel().scene : getInitialPreset();
 let firstPersonMode = getInitialFirstPersonEnabled();
 let world = createWorld(currentPreset);
-let openedStageCount = openInitialStages(world, currentPreset);
+let openedStageChoices: number[] = [];
+let openedStageCount = openInitialStages(world, currentPreset, openedStageChoices);
 let openedHazards = openInitialHazards(world, getCurrentLevel());
 let stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
 let hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
@@ -307,19 +309,37 @@ function advanceClearedGameStages(): void {
 
   const stages = getSceneOpeningStages(currentPreset);
   while (openedStageCount < stages.length) {
-    const initialSolids = stageInitialSolidCounts[openedStageCount] ?? 0;
-    if (initialSolids <= 0) {
+    const stage = stages[openedStageCount];
+    const choices = getStageChoices(stage);
+    const initialChoiceSolids = stageInitialSolidCounts[openedStageCount] ?? [];
+    let clearedChoiceIndex = -1;
+
+    for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
+      const initialSolids = initialChoiceSolids[choiceIndex] ?? 0;
+      if (initialSolids <= 0) {
+        clearedChoiceIndex = choiceIndex;
+        break;
+      }
+
+      const remainingSolids = countStageSolidCells(world, choices[choiceIndex]);
+      const clearedRatio = 1 - remainingSolids / initialSolids;
+      if (clearedRatio >= STAGE_CLEAR_RATIO) {
+        clearedChoiceIndex = choiceIndex;
+        break;
+      }
+    }
+
+    if (clearedChoiceIndex < 0) {
+      break;
+    }
+
+    if ((initialChoiceSolids[clearedChoiceIndex] ?? 0) <= 0) {
       openedStageCount += 1;
       continue;
     }
 
-    const remainingSolids = countStageSolidCells(world, stages[openedStageCount]);
-    const clearedRatio = 1 - remainingSolids / initialSolids;
-    if (clearedRatio < STAGE_CLEAR_RATIO) {
-      break;
-    }
-
-    openSceneStage(world, currentPreset, openedStageCount);
+    openedStageChoices[openedStageCount] = clearedChoiceIndex;
+    openSceneStage(world, currentPreset, openedStageCount, clearedChoiceIndex);
     openedStageCount += 1;
     markRenderOptionsChanged();
     inputState.forceWaterUpdate = true;
@@ -368,8 +388,10 @@ function openClearedHazards(): void {
 }
 
 function openCurrentScene(): void {
-  const removed = openSceneStage(world, currentPreset, openedStageCount);
+  const choiceIndex = getInitialStageChoiceIndex(currentPreset, openedStageCount);
+  const removed = openSceneStage(world, currentPreset, openedStageCount, choiceIndex);
   if (openedStageCount < getSceneOpeningStages(currentPreset).length) {
+    openedStageChoices[openedStageCount] = choiceIndex;
     openedStageCount += 1;
   }
   if (removed > 0) {
@@ -382,7 +404,9 @@ function openAllSceneStages(): void {
   const stageCount = getSceneOpeningStages(currentPreset).length;
 
   while (openedStageCount < stageCount) {
-    removed += openSceneStage(world, currentPreset, openedStageCount);
+    const choiceIndex = getInitialStageChoiceIndex(currentPreset, openedStageCount);
+    removed += openSceneStage(world, currentPreset, openedStageCount, choiceIndex);
+    openedStageChoices[openedStageCount] = choiceIndex;
     openedStageCount += 1;
   }
 
@@ -500,8 +524,9 @@ function resetWorld(): void {
     currentPreset = getCurrentLevel().scene;
   }
   world = createWorld(currentPreset);
+  openedStageChoices = [];
   openedStageCount = 0;
-  openedStageCount = openInitialStages(world, currentPreset);
+  openedStageCount = openInitialStages(world, currentPreset, openedStageChoices);
   openedHazards = openInitialHazards(world, getCurrentLevel());
   stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
   hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
@@ -643,16 +668,41 @@ function runInitialSimulationWarmup(): number {
   return idleTicks;
 }
 
-function openInitialStages(initialWorld: typeof world, preset: ScenePresetId): number {
+function openInitialStages(initialWorld: typeof world, preset: ScenePresetId, selectedChoices: number[]): number {
   const requestedStages = Number.parseInt(initialUrlParams.get("openStages") ?? "0", 10);
   const stageCount = getSceneOpeningStages(preset).length;
   const stagesToOpen = Number.isFinite(requestedStages) ? Math.min(stageCount, Math.max(0, requestedStages)) : 0;
 
   for (let stageIndex = 0; stageIndex < stagesToOpen; stageIndex += 1) {
-    openSceneStage(initialWorld, preset, stageIndex);
+    const choiceIndex = getInitialStageChoiceIndex(preset, stageIndex);
+    openSceneStage(initialWorld, preset, stageIndex, choiceIndex);
+    selectedChoices[stageIndex] = choiceIndex;
   }
 
   return stagesToOpen;
+}
+
+function getInitialStageChoiceIndex(preset: ScenePresetId, stageIndex: number): number {
+  const stage = getSceneOpeningStages(preset)[stageIndex];
+  const choices = stage ? getStageChoices(stage) : [];
+  if (choices.length <= 1) {
+    return 0;
+  }
+
+  const requestedBranch = initialUrlParams.get("branch")?.toLowerCase();
+  if (preset === "splitter" && stageIndex === 1 && requestedBranch) {
+    const branchChoiceIndex = choices.findIndex((choice) => choice.label.toLowerCase().startsWith(requestedBranch));
+    if (branchChoiceIndex >= 0) {
+      return branchChoiceIndex;
+    }
+  }
+
+  const requestedChoice = Number.parseInt(initialUrlParams.get(`choice${stageIndex + 1}`) ?? "", 10);
+  if (Number.isFinite(requestedChoice)) {
+    return Math.min(choices.length - 1, Math.max(0, requestedChoice));
+  }
+
+  return 0;
 }
 
 function openInitialHazards(initialWorld: typeof world, level: GameLevel): Set<number> {
@@ -672,8 +722,10 @@ function openInitialHazards(initialWorld: typeof world, level: GameLevel): Set<n
   return opened;
 }
 
-function getStageSolidCounts(targetWorld: typeof world, preset: ScenePresetId): number[] {
-  return getSceneOpeningStages(preset).map((stage) => countStageSolidCells(targetWorld, stage));
+function getStageSolidCounts(targetWorld: typeof world, preset: ScenePresetId): number[][] {
+  return getSceneOpeningStages(preset).map((stage) =>
+    getStageChoices(stage).map((choice) => countStageSolidCells(targetWorld, choice)),
+  );
 }
 
 function getHazardSolidCounts(targetWorld: typeof world, level: GameLevel): number[] {
@@ -683,17 +735,40 @@ function getHazardSolidCounts(targetWorld: typeof world, level: GameLevel): numb
 function getMissionStageProgress() {
   const stages = getSceneOpeningStages(currentPreset);
   const activeStage = stages[openedStageCount];
-  const initialSolids = stageInitialSolidCounts[openedStageCount] ?? 0;
-  const remainingSolids = activeStage ? countStageSolidCells(world, activeStage) : 0;
+  const activeChoices = activeStage ? getStageChoices(activeStage) : [];
+  const initialChoiceSolids = stageInitialSolidCounts[openedStageCount] ?? [];
   const activeStageProgress =
-    !activeStage || initialSolids <= 0 ? 1 : Math.min(1, Math.max(0, 1 - remainingSolids / initialSolids));
+    activeChoices.length === 0
+      ? 1
+      : Math.max(
+          ...activeChoices.map((choice, choiceIndex) => {
+            const initialSolids = initialChoiceSolids[choiceIndex] ?? 0;
+            const remainingSolids = countStageSolidCells(world, choice);
+            return initialSolids <= 0 ? 1 : Math.min(1, Math.max(0, 1 - remainingSolids / initialSolids));
+          }),
+        );
 
   return {
     completedStages: openedStageCount,
     stageCount: stages.length,
     activeStageLabel: activeStage?.label ?? "complete",
     activeStageProgress,
+    selectedChoiceLabel: getSelectedChoiceLabel(),
   };
+}
+
+function getSelectedChoiceLabel(): string | null {
+  const stages = getSceneOpeningStages(currentPreset);
+  for (let stageIndex = 0; stageIndex < Math.min(openedStageCount, stages.length); stageIndex += 1) {
+    const choices = getStageChoices(stages[stageIndex]);
+    if (choices.length <= 1) {
+      continue;
+    }
+
+    return choices[openedStageChoices[stageIndex] ?? 0]?.label ?? null;
+  }
+
+  return null;
 }
 
 function isStable(): boolean {

@@ -28,6 +28,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
     <dl class="game-panel-metrics">
       <dt>Delivered</dt><dd data-game-metric="delivered">0</dd>
       <dt>Wasted</dt><dd data-game-metric="wasted">0</dd>
+      <dt data-game-route-label>Route</dt><dd data-game-metric="route">unselected</dd>
       <dt data-game-risk-label>Risk</dt><dd data-game-metric="risk">none</dd>
       <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
     </dl>
@@ -62,8 +63,11 @@ function updateGamePanel(
   const resetButton = panel.querySelector<HTMLButtonElement>('[data-game-action="reset"]');
   const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
   const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
+  const routeLabel = panel.querySelector<HTMLElement>("[data-game-route-label]");
+  const routeValue = panel.querySelector<HTMLElement>('[data-game-metric="route"]');
   const riskLabel = panel.querySelector<HTMLElement>("[data-game-risk-label]");
   const riskValue = panel.querySelector<HTMLElement>('[data-game-metric="risk"]');
+  const hasRouteChoice = progress.stageProgress.selectedChoiceLabel !== null;
   const hasHazards = progress.level.hazardStages.length > 0;
 
   setText(panel, "[data-game-level-count]", `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
@@ -87,9 +91,15 @@ function updateGamePanel(
     '[data-game-metric="wasted"]',
     `${progress.wastedWater.toFixed(0)} / ${progress.level.maxWastedWater.toFixed(0)}`,
   );
+  setText(panel, '[data-game-metric="route"]', progress.stageProgress.selectedChoiceLabel ?? "unselected");
   setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
   setText(panel, "[data-game-status]", progress.status);
+
+  if (routeLabel && routeValue) {
+    routeLabel.hidden = !hasRouteChoice;
+    routeValue.hidden = !hasRouteChoice;
+  }
 
   if (riskLabel && riskValue) {
     riskLabel.hidden = !hasHazards;

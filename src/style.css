@@ -338,6 +338,11 @@ canvas {
   font-weight: 800;
 }
 
+.game-panel [data-game-metric="route"] {
+  color: #9dffb5;
+  font-weight: 800;
+}
+
 .game-panel-bar {
   height: 7px;
   overflow: hidden;

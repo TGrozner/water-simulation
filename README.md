@@ -58,6 +58,7 @@ Useful URL parameters for repeatable captures:
 - `?debugUi=1`
 - `?openStages=2`
 - `?openHazards=1`
+- `?branch=north` or `?branch=south`
 - `?warmupTicks=1800`
 - `?tuning=fast-drain`
 - `?debug=1&active=0&flow=0`
@@ -70,13 +71,15 @@ terrain destruction and grid-water simulation as the sandbox, then adds a
 lightweight mission loop on top:
 
 - **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
-- **Split Basin Challenge**: open the forked route, split enough water into both lower basins, and avoid red spill seams.
+- **Split Basin Challenge**: open the forked route through either branch, stabilize enough water in the lower basins, and avoid red spill seams.
 
 In game mode, digging is restricted to the currently highlighted weak-rock gate
 plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
-collapses open and the next gate is highlighted. Opening a red hazard can route
-water into a waste pocket and fail the mission. The HUD tracks gate progress,
-delivered water, wasted water, red-seam risk, settling state, failure, and level completion.
+collapses open and the next gate is highlighted. Some gates are branch choices:
+clear either highlighted route and only that route opens. Opening a red hazard
+can route water into a waste pocket and fail the mission. The HUD tracks gate
+progress, selected route, delivered water, wasted water, red-seam risk,
+settling state, failure, and level completion.
 The debug panels are hidden on the root view by default; press F3 or backquote,
 or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
 start directly in the full sandbox/debug workflow.
@@ -144,7 +147,7 @@ storage.
 - Named tuning presets for fast drain, slow viscous, stable spread, and aggressive debug passes
 - Local-storage save/load/clear controls for one custom tuning profile
 - URL support for staged captures with `?openStages=N`
-- First-person game slice with weak-rock-only digging, red spill hazards, a blocked fork gate, stage auto-advance, mission HUD, and completion/failure state
+- First-person game slice with weak-rock-only digging, red spill hazards, a blocked fork choice, stage auto-advance, mission HUD, and completion/failure state
 
 ## Known limitations
 

@@ -7,7 +7,14 @@ import {
 } from "./tuningPresets";
 import { coords, createEmptyWorld, index, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
 import { createWorld, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
-import { getSceneOpeningStages, openClearBox, openSceneDrain, openSceneStage } from "../world/sceneTools";
+import {
+  countStageSolidCells,
+  getSceneOpeningStages,
+  getStageChoices,
+  openClearBox,
+  openSceneDrain,
+  openSceneStage,
+} from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { evaluateLevel, GAME_LEVELS } from "../game/levels";
 
@@ -62,7 +69,13 @@ function assertGameLevelsComplete(): void {
     const earlyProgress = evaluateLevel(
       earlyWorld,
       level,
-      { completedStages: 1, stageCount: stages.length, activeStageLabel: stages[1]?.label ?? "complete", activeStageProgress: 0 },
+      {
+        completedStages: 1,
+        stageCount: stages.length,
+        activeStageLabel: stages[1]?.label ?? "complete",
+        activeStageProgress: 0,
+        selectedChoiceLabel: null,
+      },
       true,
     );
     assert(!earlyProgress.complete, `game/${level.id}: first opening stage should not complete the level`);
@@ -83,7 +96,13 @@ function assertGameLevelsComplete(): void {
     const progress = evaluateLevel(
       world,
       level,
-      { completedStages: stages.length, stageCount: stages.length, activeStageLabel: "complete", activeStageProgress: 1 },
+      {
+        completedStages: stages.length,
+        stageCount: stages.length,
+        activeStageLabel: "complete",
+        activeStageProgress: 1,
+        selectedChoiceLabel: getScriptedSelectedChoiceLabel(stages),
+      },
       true,
     );
     assert(
@@ -111,7 +130,13 @@ function assertGameLevelsComplete(): void {
       const hazardProgress = evaluateLevel(
         hazardWorld,
         level,
-        { completedStages: stages.length, stageCount: stages.length, activeStageLabel: "complete", activeStageProgress: 1 },
+        {
+          completedStages: stages.length,
+          stageCount: stages.length,
+          activeStageLabel: "complete",
+          activeStageProgress: 1,
+          selectedChoiceLabel: getScriptedSelectedChoiceLabel(stages),
+        },
         true,
       );
       assert(
@@ -121,6 +146,72 @@ function assertGameLevelsComplete(): void {
         )} wasted=${hazardProgress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${hazardProgress.status}`,
       );
     }
+
+    assertChoiceStagesCanComplete(level.scene, level);
+  }
+}
+
+function getScriptedSelectedChoiceLabel(stages: ReturnType<typeof getSceneOpeningStages>): string | null {
+  for (const stage of stages) {
+    const choices = getStageChoices(stage);
+    if (choices.length > 1) {
+      return choices[0].label;
+    }
+  }
+
+  return null;
+}
+
+function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAME_LEVELS)[number]): void {
+  const stages = getSceneOpeningStages(preset);
+  const choiceStageIndex = stages.findIndex((stage) => getStageChoices(stage).length > 1);
+  if (choiceStageIndex < 0) {
+    return;
+  }
+
+  const choices = getStageChoices(stages[choiceStageIndex]);
+  const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
+
+  for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
+    const world = createWorld(preset);
+    const baselineWater = totalWater(world);
+    for (let stageIndex = 0; stageIndex < choiceStageIndex; stageIndex += 1) {
+      openSceneStage(world, preset, stageIndex);
+    }
+    const removed = openSceneStage(world, preset, choiceStageIndex, choiceIndex);
+    assert(removed > 0, `${preset}: choice ${choiceIndex + 1} (${choices[choiceIndex].label}) removed no terrain`);
+
+    for (let otherChoiceIndex = 0; otherChoiceIndex < choices.length; otherChoiceIndex += 1) {
+      if (otherChoiceIndex === choiceIndex) {
+        continue;
+      }
+
+      assert(
+        countStageSolidCells(world, choices[otherChoiceIndex]) > 0,
+        `${preset}: choice ${choiceIndex + 1} unexpectedly cleared choice ${otherChoiceIndex + 1}`,
+      );
+    }
+
+    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1}`);
+    const progress = evaluateLevel(
+      world,
+      level,
+      {
+        completedStages: stages.length,
+        stageCount: stages.length,
+        activeStageLabel: "complete",
+        activeStageProgress: 1,
+        selectedChoiceLabel: choices[choiceIndex].label,
+      },
+      true,
+    );
+
+    assert(
+      progress.complete,
+      `${preset}: choice ${choiceIndex + 1} (${choices[choiceIndex].label}) should complete, delivered=${progress.deliveredWater.toFixed(
+        1,
+      )}/${level.deliveryTargetWater.toFixed(1)} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)}`,
+    );
   }
 }
 
