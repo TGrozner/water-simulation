@@ -72,6 +72,7 @@ let openedStageCount = openInitialStages(world, currentPreset, openedStageChoice
 let openedHazards = openInitialHazards(world, getCurrentLevel());
 let stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
 let hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
+openedStageCount = carveInitialManualStage(world, currentPreset, openedStageChoices, openedStageCount);
 let terrainRenderer: TerrainRenderer = createTerrainRenderer(sceneContext.scene, world);
 let waterRenderer: WaterRenderer = createWaterRenderer(sceneContext.scene, world);
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
@@ -547,6 +548,7 @@ function resetWorld(): void {
   openedHazards = openInitialHazards(world, getCurrentLevel());
   stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
   hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
+  openedStageCount = carveInitialManualStage(world, currentPreset, openedStageChoices, openedStageCount);
   inputState.sliceZ = Math.min(inputState.sliceZ, world.depth - 1);
   baselineWaterVolume = totalWater(world);
   levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
@@ -702,6 +704,52 @@ function openInitialStages(initialWorld: typeof world, preset: ScenePresetId, se
   }
 
   return stagesToOpen;
+}
+
+function carveInitialManualStage(
+  initialWorld: typeof world,
+  preset: ScenePresetId,
+  selectedChoices: number[],
+  currentOpenedStageCount: number,
+): number {
+  if (initialUrlParams.get("carveManual") !== "1") {
+    return currentOpenedStageCount;
+  }
+
+  const stages = getSceneOpeningStages(preset);
+  const manualStageIndex = stages.findIndex((stage) => !isStageAutoOpen(stage));
+  if (manualStageIndex < 0 || currentOpenedStageCount !== manualStageIndex) {
+    return currentOpenedStageCount;
+  }
+
+  const manualChoices = getStageChoices(stages[manualStageIndex]);
+  if (manualChoices.length === 0) {
+    return currentOpenedStageCount;
+  }
+
+  const selectedRouteChoiceIndex = getInitialSelectedRouteChoiceIndex(stages, selectedChoices, manualStageIndex);
+  const manualChoiceIndex = Math.min(selectedRouteChoiceIndex, manualChoices.length - 1);
+  for (const clearRegion of getStageDigBoxes(manualChoices[manualChoiceIndex])) {
+    openClearBox(initialWorld, clearRegion);
+  }
+
+  selectedChoices[manualStageIndex] = manualChoiceIndex;
+  return manualStageIndex + 1;
+}
+
+function getInitialSelectedRouteChoiceIndex(
+  stages: ReturnType<typeof getSceneOpeningStages>,
+  selectedChoices: number[],
+  beforeStageIndex: number,
+): number {
+  for (let stageIndex = 0; stageIndex < beforeStageIndex; stageIndex += 1) {
+    const stage = stages[stageIndex];
+    if (isStageAutoOpen(stage) && getStageChoices(stage).length > 1) {
+      return selectedChoices[stageIndex] ?? 0;
+    }
+  }
+
+  return 0;
 }
 
 function getInitialStageChoiceIndex(preset: ScenePresetId, stageIndex: number): number {

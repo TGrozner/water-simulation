@@ -38,6 +38,14 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-challenge-north.png",
   },
   {
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&carveManual=1&warmupTicks=1800`,
+    filename: "game-challenge-route-south.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&carveManual=1&warmupTicks=1800`,
+    filename: "game-challenge-route-north.png",
+  },
+  {
     url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800`,
     filename: "game-challenge-hazard.png",
   },

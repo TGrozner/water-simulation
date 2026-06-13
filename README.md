@@ -58,6 +58,7 @@ Useful URL parameters for repeatable captures:
 - `?debugUi=1`
 - `?openStages=2`
 - `?openHazards=1`
+- `?carveManual=1`
 - `?branch=north` or `?branch=south`
 - `?warmupTicks=1800`
 - `?tuning=fast-drain`
