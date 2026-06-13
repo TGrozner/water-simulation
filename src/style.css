@@ -373,8 +373,17 @@ canvas {
   font-weight: 900;
 }
 
+.game-panel [data-game-metric="best"] {
+  color: #9bc4ff;
+  font-weight: 900;
+}
+
 .game-panel[data-grade="S"] [data-game-metric="score"],
 .game-panel[data-grade="A"] [data-game-metric="score"] {
+  color: #9dffb5;
+}
+
+.game-panel[data-new-best="true"] [data-game-metric="best"] {
   color: #9dffb5;
 }
 

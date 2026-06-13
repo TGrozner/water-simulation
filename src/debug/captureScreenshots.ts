@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { get } from "node:http";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -13,6 +13,7 @@ const BASELINE_DIR = "test/baselines/visual";
 const OUTPUT_ROOT = ".sim-build/screenshots";
 const ACTUAL_DIR = `${OUTPUT_ROOT}/actual`;
 const DIFF_DIR = `${OUTPUT_ROOT}/diff`;
+const CHROME_PROFILE_DIR = `${OUTPUT_ROOT}/chrome-profile`;
 const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
@@ -32,6 +33,14 @@ const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=tutorial&openStages=2&warmupTicks=1800&camera=fps`,
     filename: "game-tutorial-complete.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=tutorial&camera=fps`,
+    filename: "game-tutorial-best-start.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=tutorial&openStages=2&warmupTicks=1800&camera=fps`,
+    filename: "game-tutorial-repeat-complete.png",
   },
   {
     url: `${BASE_URL}/?game=1&level=challenge&camera=fps`,
@@ -102,6 +111,7 @@ const GAME_CAPTURES: GameCapture[] = [
 async function run(): Promise<void> {
   const updateBaseline = process.argv.includes("--update-baseline");
   await mkdir(BASELINE_DIR, { recursive: true });
+  await rm(CHROME_PROFILE_DIR, { recursive: true, force: true });
   await mkdir(ACTUAL_DIR, { recursive: true });
   await mkdir(DIFF_DIR, { recursive: true });
 
@@ -275,6 +285,7 @@ function capture(chrome: string, url: string, outputPath: string, timeoutMs = 15
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--no-sandbox",
+    `--user-data-dir=${CHROME_PROFILE_DIR}`,
     "--window-size=1280,720",
     `--timeout=${timeoutMs}`,
     `--screenshot=${outputPath}`,

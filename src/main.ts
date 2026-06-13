@@ -2,6 +2,13 @@ import "./style.css";
 import { Vector3 } from "three";
 import { createDebugOverlay, updateDebugOverlay } from "./debug/debugOverlay";
 import { createDebugPanel } from "./debug/debugPanel";
+import {
+  getBestScore,
+  loadBestScores,
+  mergeBestScore,
+  saveBestScores,
+  type BestScoresByLevel,
+} from "./game/bestScoreStorage";
 import { createGamePanel } from "./game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, getLevel, measureBoxWater, type GameLevel, type LevelProgress } from "./game/levels";
 import { STAGE_CLEAR_RATIO, isStageChoiceComplete } from "./game/stageCompletion";
@@ -102,6 +109,7 @@ let activeTuning = cloneTuningPreset(initialTuningPreset);
 let waterConfig: WaterSimulationConfig = { ...activeTuning.waterConfig };
 let simStepsPerFrame = activeTuning.simStepsPerFrame;
 let hasSavedCustomTuning = loadStoredCustomTuning() !== null;
+let bestScores: BestScoresByLevel = loadBestScores();
 let recentFlows = new Map<number, RecentFlow>();
 
 const inputState: InputState = {
@@ -122,6 +130,8 @@ let lastSimulationMs = 0;
 let tickCount = 0;
 let scoreStartTick = 0;
 let completedAtTick: number | null = null;
+let completedScoreRecorded = false;
+let currentScoreIsNewBest = false;
 let maxVolumeDelta = 0;
 let stableTicks = 0;
 let fps = 0;
@@ -562,6 +572,8 @@ function resetWorld(): void {
   tickCount = 0;
   scoreStartTick = 0;
   completedAtTick = null;
+  completedScoreRecorded = false;
+  currentScoreIsNewBest = false;
   maxVolumeDelta = 0;
   stableTicks = 0;
   baselineWaterVolume = totalWater(world);
@@ -683,11 +695,25 @@ function evaluateCurrentLevelProgress(settled: boolean): LevelProgress | null {
     progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() });
   }
 
+  if (progress.complete && progress.score && !completedScoreRecorded) {
+    const update = mergeBestScore(bestScores, level.id, progress.score);
+    if (update.improved) {
+      bestScores = update.scores;
+      saveBestScores(bestScores);
+    }
+    currentScoreIsNewBest = update.improved;
+    completedScoreRecorded = true;
+  }
+
   return progress;
 }
 
 function getScoreTicks(): number {
   return Math.max(0, (completedAtTick ?? tickCount) - scoreStartTick);
+}
+
+function getCurrentBestScore() {
+  return getBestScore(bestScores, getCurrentLevel().id);
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
@@ -1094,7 +1120,7 @@ function animate(now: number): void {
     waterUpdateMs: waterRenderer.stats.updateMs,
     simulationUpdateMs: lastSimulationMs,
   });
-  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled);
+  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled, getCurrentBestScore(), currentScoreIsNewBest);
   debugPanel.update();
   syncBodyModeClasses();
 

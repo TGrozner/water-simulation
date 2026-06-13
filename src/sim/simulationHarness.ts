@@ -18,6 +18,7 @@ import {
   openSceneStage,
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
+import { getBestScore, isBetterScore, mergeBestScore, parseStoredBestScores } from "../game/bestScoreStorage";
 import { evaluateLevel, GAME_LEVELS, scoreLevel } from "../game/levels";
 import {
   ROUTE_FLOW_STAGE_COMPLETE_WATER,
@@ -45,6 +46,7 @@ function runHarness(): void {
   runEdgeCaseHarness();
   assertStageCompletionRules();
   assertLevelScoreRules();
+  assertBestScoreRules();
   assertGameLevelsComplete();
 
   for (const preset of SCENE_PRESETS) {
@@ -207,6 +209,53 @@ function assertLevelScoreRules(): void {
     assert(cleanFastScore.time > slowScore.time, `game/${level.id}: time component should decline after par`);
     assert(cleanFastScore.grade === "S", `game/${level.id}: clean par route should earn top grade`);
   }
+}
+
+function assertBestScoreRules(): void {
+  const level = GAME_LEVELS[0];
+  const firstScore = scoreLevel(level, level.deliveryTargetWater, 0, level.scoreParTicks ?? MAX_TICKS);
+  const lowerScore = { ...firstScore, total: Math.max(0, firstScore.total - 1), ticks: firstScore.ticks - 10 };
+  const fasterTieScore = { ...firstScore, ticks: Math.max(0, firstScore.ticks - 1) };
+  const slowerTieScore = { ...firstScore, ticks: firstScore.ticks + 1 };
+  const invalidGradeScore = { ...firstScore, grade: "Z" };
+  const invalidRatioScore = { ...firstScore, efficiency: 2 };
+
+  assert(isBetterScore(firstScore, null), "best-score: first valid score should be accepted");
+
+  const initialUpdate = mergeBestScore({}, level.id, firstScore);
+  assert(initialUpdate.improved, "best-score: first merge should improve empty score table");
+  assert(getBestScore(initialUpdate.scores, level.id) === firstScore, "best-score: first score should be stored");
+
+  const lowerUpdate = mergeBestScore(initialUpdate.scores, level.id, lowerScore);
+  assert(!lowerUpdate.improved, "best-score: lower total should not replace current best");
+  assert(getBestScore(lowerUpdate.scores, level.id) === firstScore, "best-score: lower total should keep current best");
+
+  const higherUpdate = mergeBestScore({ [level.id]: lowerScore }, level.id, firstScore);
+  assert(higherUpdate.improved, "best-score: higher total should replace current best");
+  assert(getBestScore(higherUpdate.scores, level.id) === firstScore, "best-score: higher total should be stored");
+
+  const slowerTieUpdate = mergeBestScore({ [level.id]: firstScore }, level.id, slowerTieScore);
+  assert(!slowerTieUpdate.improved, "best-score: slower equal score should not replace current best");
+
+  const fasterTieUpdate = mergeBestScore({ [level.id]: firstScore }, level.id, fasterTieScore);
+  assert(fasterTieUpdate.improved, "best-score: faster equal score should replace current best");
+  assert(getBestScore(fasterTieUpdate.scores, level.id) === fasterTieScore, "best-score: faster tie should be stored");
+
+  const parsedScores = parseStoredBestScores({
+    version: 1,
+    scores: {
+      [level.id]: firstScore,
+      unknownLevel: firstScore,
+      invalidGrade: invalidGradeScore,
+      invalidRatio: invalidRatioScore,
+    },
+  });
+  assert(getBestScore(parsedScores, level.id)?.total === firstScore.total, "best-score: valid stored score should parse");
+  assert(getBestScore(parsedScores, "unknownLevel") === null, "best-score: unknown level id should be ignored");
+  assert(getBestScore(parsedScores, "invalidGrade") === null, "best-score: invalid grade should be ignored");
+  assert(getBestScore(parsedScores, "invalidRatio") === null, "best-score: invalid ratio should be ignored");
+  assert(Object.keys(parseStoredBestScores({ version: 2, scores: { [level.id]: firstScore } })).length === 0, "best-score: unknown version should be ignored");
+  assert(Object.keys(parseStoredBestScores(null)).length === 0, "best-score: corrupt stored value should be ignored");
 }
 
 function makeProgress(

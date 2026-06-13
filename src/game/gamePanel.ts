@@ -1,4 +1,4 @@
-import { GAME_LEVELS, type LevelProgress } from "./levels";
+import { GAME_LEVELS, type LevelProgress, type LevelScore } from "./levels";
 
 export type GamePanelActions = {
   resetLevel: () => void;
@@ -6,7 +6,13 @@ export type GamePanelActions = {
 };
 
 export type GamePanel = {
-  update: (progress: LevelProgress | null, levelIndex: number, enabled: boolean) => void;
+  update: (
+    progress: LevelProgress | null,
+    levelIndex: number,
+    enabled: boolean,
+    bestScore: LevelScore | null,
+    scoreIsNewBest: boolean,
+  ) => void;
 };
 
 export function createGamePanel(actions: GamePanelActions): GamePanel {
@@ -35,6 +41,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
       <dt data-game-risk-label>Risk</dt><dd data-game-metric="risk">none</dd>
       <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
       <dt data-game-score-label>Score</dt><dd data-game-metric="score">-</dd>
+      <dt data-game-best-label>Best</dt><dd data-game-metric="best">-</dd>
     </dl>
     <div class="game-panel-status" data-game-status>In progress</div>
     <div class="game-panel-actions">
@@ -48,7 +55,8 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
   document.body.appendChild(panel);
 
   return {
-    update: (progress, levelIndex, enabled) => updateGamePanel(panel, progress, levelIndex, enabled),
+    update: (progress, levelIndex, enabled, bestScore, scoreIsNewBest) =>
+      updateGamePanel(panel, progress, levelIndex, enabled, bestScore, scoreIsNewBest),
   };
 }
 
@@ -57,6 +65,8 @@ function updateGamePanel(
   progress: LevelProgress | null,
   levelIndex: number,
   enabled: boolean,
+  bestScore: LevelScore | null,
+  scoreIsNewBest: boolean,
 ): void {
   panel.hidden = !enabled || progress === null;
   if (!enabled || progress === null) {
@@ -79,9 +89,12 @@ function updateGamePanel(
   const riskValue = panel.querySelector<HTMLElement>('[data-game-metric="risk"]');
   const scoreLabel = panel.querySelector<HTMLElement>("[data-game-score-label]");
   const scoreValue = panel.querySelector<HTMLElement>('[data-game-metric="score"]');
+  const bestLabel = panel.querySelector<HTMLElement>("[data-game-best-label]");
+  const bestValue = panel.querySelector<HTMLElement>('[data-game-metric="best"]');
   const hasRouteChoice = progress.stageProgress.selectedChoiceLabel !== null;
   const hasDeliveryTargets = progress.deliveryRequirements.length > 0;
   const hasScore = progress.score !== null;
+  const hasBestScore = bestScore !== null;
   const isManualStage = progress.stageProgress.activeStageIsManual;
   const hasHazards = progress.level.hazardStages.length > 0;
 
@@ -113,6 +126,7 @@ function updateGamePanel(
   setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
   setText(panel, '[data-game-metric="score"]', formatScore(progress));
+  setText(panel, '[data-game-metric="best"]', formatBestScore(bestScore, scoreIsNewBest));
   setText(panel, "[data-game-status]", progress.status);
 
   if (routeLabel && routeValue) {
@@ -145,6 +159,11 @@ function updateGamePanel(
     scoreValue.hidden = !hasScore;
   }
 
+  if (bestLabel && bestValue) {
+    bestLabel.hidden = !hasBestScore;
+    bestValue.hidden = !hasBestScore;
+  }
+
   if (stageBar) {
     stageBar.style.width = `${stagePercent}%`;
   }
@@ -154,6 +173,7 @@ function updateGamePanel(
   panel.dataset.risk = hasHazards ? "hazard" : "none";
   panel.dataset.routeFlow = (progress.stageProgress.selectedRouteWater ?? 0) >= 1 ? "active" : "dry";
   panel.dataset.grade = progress.score?.grade ?? "";
+  panel.dataset.newBest = String(scoreIsNewBest);
 
   if (resetButton) {
     resetButton.textContent = progress.failed ? "Retry level" : "Reset level";
@@ -184,6 +204,15 @@ function formatScore(progress: LevelProgress): string {
   }
 
   return `${progress.score.grade} ${progress.score.total}`;
+}
+
+function formatBestScore(score: LevelScore | null, isNewBest: boolean): string {
+  if (!score) {
+    return "-";
+  }
+
+  const prefix = isNewBest ? "new " : "";
+  return `${prefix}${score.grade} ${score.total}`;
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {
