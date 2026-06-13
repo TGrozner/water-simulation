@@ -168,6 +168,7 @@ function assertGameLevelsComplete(): void {
       );
     }
 
+    assertDeliveryRequirementsGateCompletion(level.scene, level);
     assertChoiceStagesCanComplete(level.scene, level);
     assertManualChoiceStagesCanComplete(level.scene, level);
   }
@@ -423,6 +424,60 @@ function assertManualChoiceStagesCanComplete(preset: ScenePresetId, level: (type
       )}/${level.deliveryTargetWater.toFixed(1)} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)}`,
     );
   }
+}
+
+function assertDeliveryRequirementsGateCompletion(preset: ScenePresetId, level: (typeof GAME_LEVELS)[number]): void {
+  if (!level.deliveryRequirements || level.deliveryRequirements.length === 0) {
+    return;
+  }
+
+  const stages = getSceneOpeningStages(preset);
+  const manualStageIndex = getManualStageIndex(stages);
+  assert(manualStageIndex >= 0, `${preset}: delivery requirements need a manual split stage`);
+
+  const manualStage = stages[manualStageIndex];
+  const routeBoxes = getStageDigBoxes(manualStage);
+  assert(
+    routeBoxes.length >= level.deliveryRequirements.length,
+    `${preset}: expected at least one route box per delivery requirement`,
+  );
+
+  const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
+
+  for (let routeIndex = 0; routeIndex < level.deliveryRequirements.length; routeIndex += 1) {
+    const world = createWorld(preset);
+    const baselineWater = totalWater(world);
+    for (let stageIndex = 0; stageIndex < manualStageIndex; stageIndex += 1) {
+      openSceneStage(world, preset, stageIndex);
+    }
+    openClearBox(world, routeBoxes[routeIndex]);
+    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: single basin route ${routeIndex + 1}`);
+
+    const progress = evaluateLevel(world, level, makeProgress(stages, stages.length, "complete", 1, null), true);
+    assert(!progress.complete, `${preset}: single route ${routeIndex + 1} should not satisfy all delivery requirements`);
+    assert(
+      progress.deliveryRequirements.some((requirement) => !requirement.complete),
+      `${preset}: single route ${routeIndex + 1} unexpectedly completed every delivery requirement`,
+    );
+  }
+
+  const world = createWorld(preset);
+  const baselineWater = totalWater(world);
+  for (let stageIndex = 0; stageIndex < manualStageIndex; stageIndex += 1) {
+    openSceneStage(world, preset, stageIndex);
+  }
+  for (const routeBox of routeBoxes.slice(0, level.deliveryRequirements.length)) {
+    openClearBox(world, routeBox);
+  }
+  runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: all delivery routes`);
+
+  const progress = evaluateLevel(world, level, makeProgress(stages, stages.length, "complete", 1, null), true);
+  assert(
+    progress.complete,
+    `${preset}: all delivery routes should complete every requirement, got ${progress.deliveryRequirements
+      .map((requirement) => `${requirement.label}=${requirement.water.toFixed(1)}/${requirement.targetWater.toFixed(1)}`)
+      .join(", ")}`,
+  );
 }
 
 function assertUnfinishedManualRouteDoesNotFail(

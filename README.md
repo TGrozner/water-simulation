@@ -50,9 +50,11 @@ Useful URL parameters for repeatable captures:
 
 - `?scene=splitter`
 - `?scene=braid`
+- `?scene=divide`
 - `?game=1`
 - `?game=1&level=challenge`
 - `?game=1&level=splitpath`
+- `?game=1&level=splitbasin`
 - `?game=1&debugUi=1`
 - `?game=0&scene=sluice`
 - `?camera=fps`
@@ -81,6 +83,7 @@ lightweight mission loop on top:
 - **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
 - **Forked Cavern Challenge**: mine into a forked cave network, hand-carve the final water route, and avoid red spill seams.
 - **Split Path Challenge**: open the reservoir, then choose and carve one of two lower branches without relying on an authored fork gate.
+- **Split Basin Challenge**: carve two outlets from one release chamber and fill both lower basins before the route settles.
 
 In game mode, digging is restricted to the currently highlighted weak-rock gate
 plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
@@ -89,8 +92,8 @@ clear either highlighted route and only that route opens. Manual carve zones
 dig only the cells hit by the player, without an authored collapse, and
 completion waits for water to enter the hand-cut tunnel. Opening a red hazard can route water into
 a waste pocket and fail the mission. The HUD tracks gate progress, selected
-route, water inside the selected path, delivered water, wasted water, red-seam
-risk, settling state, failure, and level completion.
+route, water inside the selected path, delivered water, per-basin targets,
+wasted water, red-seam risk, settling state, failure, and level completion.
 The debug panels are hidden on the root view by default; press F3 or backquote,
 or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
 start directly in the full sandbox/debug workflow.
@@ -118,6 +121,7 @@ start directly in the full sandbox/debug workflow.
 - 1: Sluice Tutorial / Sluice Gates scene
 - 2: Forked Cavern Challenge / Forked Cavern scene
 - 3: Split Path Challenge / Split Path Cavern scene
+- 4: Split Basin Challenge / Twin Basin Divide scene
 - R: reset the world
 
 The debug panel also provides scene selection, pause/step/reset, **Open next**,
@@ -139,12 +143,12 @@ storage.
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
 - Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
-- Three authored scenes: a focused sluice tutorial, a forked cavern challenge, and a split-path manual carve challenge
+- Four authored scenes: a focused sluice tutorial, a forked cavern challenge, a split-path manual carve challenge, and a twin-basin split challenge
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
 - Hover cell inspection for coordinates, solid/open state, water amount, active/sleep state, and hit source
 - Interactive debug panel for scene switching, pause/step/reset, water debug, and slice controls
-- Browser-free simulation harness covering all scenes across all tuning presets, staged openings, game completion, manual route choices, and focused dig/opening edge cases
+- Browser-free simulation harness covering all scenes across all tuning presets, staged openings, game completion, manual route choices, per-basin delivery targets, and focused dig/opening edge cases
 - Active water cell outlines in water debug mode
 - Separate active-cell and flow-glyph debug toggles
 - Empty-space probing on the current z slice
@@ -159,7 +163,7 @@ storage.
 - Named tuning presets for fast drain, slow viscous, stable spread, and aggressive debug passes
 - Local-storage save/load/clear controls for one custom tuning profile
 - URL support for staged captures with `?openStages=N`
-- First-person game slice with weak-rock-only digging, red spill hazards, fork choices, manual carve routes, mission HUD, and completion/failure state
+- First-person game slice with weak-rock-only digging, red spill hazards, fork choices, manual carve routes, per-basin delivery goals, mission HUD, and completion/failure state
 
 ## Known limitations
 
@@ -179,7 +183,7 @@ storage.
 ## Recommended next steps
 
 - Add more branch-choice levels where safe cuts and risky shortcuts compete for the same water.
-- Add a challenge that requires splitting water across two basins instead of choosing one branch.
+- Add scoring for route efficiency, wasted water, and completion time.
 - Add greedy meshing only if a separate voxel picking path is introduced.
 - Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
 - Add more authored cave scenarios with distinct staged release patterns.

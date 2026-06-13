@@ -17,7 +17,7 @@ const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
-const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid"];
+const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid", "divide"];
 type GameCapture = {
   url: string;
   filename: string;
@@ -75,6 +75,23 @@ const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-splitpath-hazard.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitbasin&camera=fps`,
+    filename: "game-splitbasin-start.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&camera=fps`,
+    filename: "game-splitbasin-open-1.png",
+    timeoutMs: 350,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
+    filename: "game-splitbasin-both-routes.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
+    filename: "game-splitbasin-hazard.png",
   },
 ];
 

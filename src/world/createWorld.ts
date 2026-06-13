@@ -1,7 +1,7 @@
 import { createEmptyWorld, index, setWater, wakeCell } from "./grid";
 import { WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH, type VoxelWorld } from "./types";
 
-export const SCENE_PRESETS = ["sluice", "splitter", "braid"] as const;
+export const SCENE_PRESETS = ["sluice", "splitter", "braid", "divide"] as const;
 
 export type ScenePresetId = (typeof SCENE_PRESETS)[number];
 
@@ -33,6 +33,11 @@ export const SCENE_PRESET_DETAILS: Record<ScenePresetId, ScenePreset> = {
     name: "Split Path Cavern",
     description: "Release the reservoir, then hand-carve either low branch into a lower basin.",
   },
+  divide: {
+    id: "divide",
+    name: "Twin Basin Divide",
+    description: "Carve two outlets from one release chamber so water reaches both lower basins.",
+  },
 };
 
 export function createWorld(preset: ScenePresetId = "sluice"): VoxelWorld {
@@ -43,6 +48,8 @@ export function createWorld(preset: ScenePresetId = "sluice"): VoxelWorld {
     carveSplitterScene(world);
   } else if (preset === "braid") {
     carveBraidScene(world);
+  } else if (preset === "divide") {
+    carveDivideScene(world);
   } else {
     carveSluiceScene(world);
   }
@@ -146,6 +153,11 @@ function carveBraidScene(world: VoxelWorld): void {
   addSolidBox(world, 25, 1, 16, 39, 13, 25);
   addSolidBox(world, 25, 1, 25, 39, 13, 34);
   addSolidBox(world, 32, 1, 23, 42, 7, 27);
+}
+
+function carveDivideScene(world: VoxelWorld): void {
+  carveBraidScene(world);
+  addSolidBox(world, 30, 1, 23, 40, 9, 27);
 }
 
 function fillWaterBox(

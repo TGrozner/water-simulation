@@ -86,6 +86,15 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
       ],
     },
   ],
+  divide: [
+    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
+    {
+      label: "Twin basin outlets",
+      boxes: [],
+      digBoxes: [box(25, 39, 2, 12, 18, 22), box(25, 39, 2, 12, 28, 32)],
+      autoOpen: false,
+    },
+  ],
 };
 
 export function getSceneOpeningStages(preset: ScenePresetId): SceneOpeningStage[] {

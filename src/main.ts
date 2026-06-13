@@ -667,7 +667,7 @@ function getCurrentLevel(): GameLevel {
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
-  if (currentPreset === "braid") {
+  if (currentPreset === "braid" || currentPreset === "divide") {
     if (initialUrlParams.get("spawn") === "overview") {
       return {
         position: new Vector3(-13.5, 20.75, 3.5),

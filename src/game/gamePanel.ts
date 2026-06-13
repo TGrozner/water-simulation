@@ -27,6 +27,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
     </div>
     <dl class="game-panel-metrics">
       <dt>Delivered</dt><dd data-game-metric="delivered">0</dd>
+      <dt data-game-targets-label>Targets</dt><dd data-game-metric="targets">0/0</dd>
       <dt>Wasted</dt><dd data-game-metric="wasted">0</dd>
       <dt data-game-route-label>Route</dt><dd data-game-metric="route">unselected</dd>
       <dt data-game-path-water-label>Path water</dt><dd data-game-metric="pathWater">0</dd>
@@ -69,11 +70,14 @@ function updateGamePanel(
   const routeValue = panel.querySelector<HTMLElement>('[data-game-metric="route"]');
   const pathWaterLabel = panel.querySelector<HTMLElement>("[data-game-path-water-label]");
   const pathWaterValue = panel.querySelector<HTMLElement>('[data-game-metric="pathWater"]');
+  const targetsLabel = panel.querySelector<HTMLElement>("[data-game-targets-label]");
+  const targetsValue = panel.querySelector<HTMLElement>('[data-game-metric="targets"]');
   const modeLabel = panel.querySelector<HTMLElement>("[data-game-mode-label]");
   const modeValue = panel.querySelector<HTMLElement>('[data-game-metric="mode"]');
   const riskLabel = panel.querySelector<HTMLElement>("[data-game-risk-label]");
   const riskValue = panel.querySelector<HTMLElement>('[data-game-metric="risk"]');
   const hasRouteChoice = progress.stageProgress.selectedChoiceLabel !== null;
+  const hasDeliveryTargets = progress.deliveryRequirements.length > 0;
   const isManualStage = progress.stageProgress.activeStageIsManual;
   const hasHazards = progress.level.hazardStages.length > 0;
 
@@ -93,6 +97,7 @@ function updateGamePanel(
     '[data-game-metric="delivered"]',
     `${progress.deliveredWater.toFixed(0)} / ${progress.level.deliveryTargetWater.toFixed(0)}`,
   );
+  setText(panel, '[data-game-metric="targets"]', formatDeliveryTargets(progress));
   setText(
     panel,
     '[data-game-metric="wasted"]',
@@ -113,6 +118,11 @@ function updateGamePanel(
   if (pathWaterLabel && pathWaterValue) {
     pathWaterLabel.hidden = !hasRouteChoice;
     pathWaterValue.hidden = !hasRouteChoice;
+  }
+
+  if (targetsLabel && targetsValue) {
+    targetsLabel.hidden = !hasDeliveryTargets;
+    targetsValue.hidden = !hasDeliveryTargets;
   }
 
   if (modeLabel && modeValue) {
@@ -146,6 +156,15 @@ function updateGamePanel(
 
 function formatWater(value: number | null): string {
   return value === null ? "-" : value.toFixed(1);
+}
+
+function formatDeliveryTargets(progress: LevelProgress): string {
+  if (progress.deliveryRequirements.length === 0) {
+    return "-";
+  }
+
+  const completeTargets = progress.deliveryRequirements.filter((requirement) => requirement.complete).length;
+  return `${completeTargets}/${progress.deliveryRequirements.length} basins`;
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {

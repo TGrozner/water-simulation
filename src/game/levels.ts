@@ -14,8 +14,22 @@ export type GameLevel = {
   deliveryTargetWater: number;
   maxWastedWater: number;
   deliveryBoxes: ClearBox[];
+  deliveryRequirements?: DeliveryRequirement[];
   safeWaterBoxes: ClearBox[];
   hazardStages: SceneOpeningStage[];
+};
+
+export type DeliveryRequirement = {
+  label: string;
+  targetWater: number;
+  boxes: ClearBox[];
+};
+
+export type DeliveryRequirementProgress = {
+  label: string;
+  water: number;
+  targetWater: number;
+  complete: boolean;
 };
 
 export type StageProgress = {
@@ -33,6 +47,7 @@ export type LevelProgress = {
   level: GameLevel;
   stageProgress: StageProgress;
   deliveredWater: number;
+  deliveryRequirements: DeliveryRequirementProgress[];
   wastedWater: number;
   totalWater: number;
   settled: boolean;
@@ -109,6 +124,34 @@ export const GAME_LEVELS: GameLevel[] = [
       },
     ],
   },
+  {
+    id: "splitbasin",
+    name: "Split Basin Challenge",
+    scene: "divide",
+    brief: "Open the reservoir, then carve both lower outlets so each basin gets enough water before the flow settles.",
+    successText: "Both basins stabilized",
+    failText: "Too much water escaped the split route",
+    deliveryTargetWater: 170,
+    maxWastedWater: 38,
+    deliveryBoxes: [box(30, 40, 1, 8, 16, 22), box(30, 40, 1, 8, 28, 34)],
+    deliveryRequirements: [
+      { label: "south basin", targetWater: 80, boxes: [box(30, 40, 1, 8, 16, 22)] },
+      { label: "north basin", targetWater: 80, boxes: [box(30, 40, 1, 8, 28, 34)] },
+    ],
+    safeWaterBoxes: [
+      box(7, 15, 14, 25, 24, 31),
+      box(13, 27, 8, 22, 18, 32),
+      box(24, 42, 1, 12, 16, 22),
+      box(24, 42, 1, 12, 28, 34),
+    ],
+    hazardStages: [
+      {
+        label: "Center spill seam",
+        boxes: [box(34, 42, 1, 7, 23, 27)],
+        digBoxes: [box(36, 40, 2, 6, 23, 27)],
+      },
+    ],
+  },
 ];
 
 export function getLevel(id: string): GameLevel | null {
@@ -122,19 +165,21 @@ export function evaluateLevel(
   settled: boolean,
 ): LevelProgress {
   const deliveredWater = measureBoxWater(world, level.deliveryBoxes);
+  const deliveryRequirements = getDeliveryRequirementProgress(world, level);
   const safeWater = measureBoxWater(world, level.safeWaterBoxes);
   const currentTotalWater = totalWater(world);
   const wastedWater = Math.max(0, currentTotalWater - safeWater);
   const allStagesOpen = stageProgress.completedStages >= stageProgress.stageCount;
   const hazardTriggered = stageProgress.openedHazardCount > 0;
   const failed = settled && wastedWater > level.maxWastedWater && (allStagesOpen || hazardTriggered);
-  const delivered = deliveredWater >= level.deliveryTargetWater;
+  const delivered = deliveredWater >= level.deliveryTargetWater && deliveryRequirements.every((requirement) => requirement.complete);
   const complete = allStagesOpen && delivered && settled && !failed;
 
   return {
     level,
     stageProgress,
     deliveredWater,
+    deliveryRequirements,
     wastedWater,
     totalWater: currentTotalWater,
     settled,
@@ -142,6 +187,18 @@ export function evaluateLevel(
     complete,
     status: getStatusText(level, stageProgress, allStagesOpen, delivered, settled, failed),
   };
+}
+
+function getDeliveryRequirementProgress(world: VoxelWorld, level: GameLevel): DeliveryRequirementProgress[] {
+  return (level.deliveryRequirements ?? []).map((requirement) => {
+    const water = measureBoxWater(world, requirement.boxes);
+    return {
+      label: requirement.label,
+      water,
+      targetWater: requirement.targetWater,
+      complete: water >= requirement.targetWater,
+    };
+  });
 }
 
 export function measureBoxWater(world: VoxelWorld, boxes: ClearBox[]): number {
@@ -194,6 +251,15 @@ function getStatusText(
   }
 
   if (!delivered) {
+    const unmetRequirement = level.deliveryRequirements
+      ? stageProgress.completedStages >= stageProgress.stageCount
+        ? "Fill every basin"
+        : null
+      : null;
+    if (unmetRequirement) {
+      return unmetRequirement;
+    }
+
     return hasRouteFlow(stageProgress) ? "Water is taking the low tunnel" : "Route more water into the lower cave";
   }
 
