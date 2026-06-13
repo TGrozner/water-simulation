@@ -64,16 +64,17 @@ export function createCellInspector(
 
     const source = waterDistance <= terrainDistance ? "water" : "terrain";
     const hit = source === "water" ? waterHit : terrainHit;
-    if (!hit || hit.instanceId === undefined) {
+    if (!hit) {
       inspectedCell = null;
       return;
     }
 
     const world = worldProvider();
-    const cellIndex =
-      source === "water"
-        ? waterProvider().instanceToCell[hit.instanceId]
-        : terrainProvider().instanceToCell[hit.instanceId];
+    const cellIndex = getHitCellIndex(source, hit);
+    if (cellIndex === null) {
+      inspectedCell = null;
+      return;
+    }
     const cell = coords(world, cellIndex);
 
     inspectedCell = {
@@ -83,6 +84,14 @@ export function createCellInspector(
       active: world.activeCells.has(cellIndex),
       source,
     };
+  }
+
+  function getHitCellIndex(source: "terrain" | "water", hit: { instanceId?: number; faceIndex?: number | null }): number | null {
+    if (source === "water") {
+      return hit.instanceId === undefined ? null : waterProvider().instanceToCell[hit.instanceId];
+    }
+
+    return hit.faceIndex === undefined || hit.faceIndex === null ? null : terrainProvider().faceToCell[hit.faceIndex];
   }
 
   function inspectRaymarchedCell(): InspectedCell {

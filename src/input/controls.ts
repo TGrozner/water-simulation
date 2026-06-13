@@ -8,6 +8,8 @@ import { SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
 export type InputState = {
   paused: boolean;
   debugWater: boolean;
+  showActiveCells: boolean;
+  showFlowDebug: boolean;
   terrainDirty: boolean;
   forceWaterUpdate: boolean;
   sliceEnabled: boolean;
@@ -18,6 +20,8 @@ export type InputState = {
 export type InputCallbacks = {
   reset: () => void;
   step: () => void;
+  openScene: () => void;
+  openAllScene: () => void;
   selectPreset: (preset: ScenePresetId) => void;
   renderOptionsChanged: () => void;
 };
@@ -85,6 +89,16 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
       return;
     }
 
+    if (event.code === "KeyO") {
+      if (event.shiftKey) {
+        callbacks.openAllScene();
+        return;
+      }
+
+      callbacks.openScene();
+      return;
+    }
+
     if (event.code.startsWith("Digit")) {
       const presetIndex = Number.parseInt(event.code.replace("Digit", ""), 10) - 1;
       const preset = SCENE_PRESETS[presetIndex];
@@ -105,7 +119,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
     target instanceof HTMLInputElement ||
     target instanceof HTMLSelectElement ||
     target instanceof HTMLTextAreaElement ||
-    Boolean(target.closest(".debug-panel"))
+    Boolean(target.closest(".debug-panel")) ||
+    Boolean(target.closest(".game-panel"))
   );
 }
 
@@ -215,11 +230,11 @@ export function createDigController(
 
     const terrain = terrainProvider();
     const hit = raycaster.intersectObject(terrain.mesh, false)[0];
-    if (!hit || hit.instanceId === undefined) {
+    if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) {
       return null;
     }
 
-    return terrain.instanceToCell[hit.instanceId];
+    return terrain.faceToCell[hit.faceIndex];
   }
 
   return {

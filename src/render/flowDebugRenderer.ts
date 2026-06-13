@@ -91,6 +91,10 @@ function updateDirectionMesh(
   const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
 
   if (!enabled) {
+    if (entry.mesh.count === 0) {
+      return;
+    }
+
     for (let i = 0; i < entry.mesh.count; i += 1) {
       entry.mesh.setMatrixAt(i, hiddenMatrix);
     }
@@ -100,6 +104,11 @@ function updateDirectionMesh(
   }
 
   let instanceCount = 0;
+  if (flows.size === 0) {
+    entry.mesh.count = 0;
+    entry.mesh.instanceMatrix.needsUpdate = true;
+    return;
+  }
 
   for (const [cellIndex, flow] of flows) {
     if (flow.direction !== entry.direction || world.solid[cellIndex] === 1) {
@@ -133,7 +142,6 @@ function updateDirectionMesh(
 
   entry.mesh.count = instanceCount;
   entry.mesh.instanceMatrix.needsUpdate = true;
-  entry.mesh.computeBoundingSphere();
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

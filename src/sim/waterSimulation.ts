@@ -23,6 +23,13 @@ const LATERAL_DIRECTIONS: CellCoords[] = [
   { x: 0, y: 0, z: -1 },
 ];
 
+type LateralCandidate = {
+  direction: CellCoords;
+  target: CellCoords;
+  targetWater: number;
+  belowCapacity: number;
+};
+
 export type WaterSimulationConfig = {
   downFlowRate: number;
   sideFlowRate: number;
@@ -91,16 +98,12 @@ export function stepWaterSimulation(
       wakeNeighbors(world, cell.x, cell.y - 1, cell.z, nextActiveCells);
     }
 
-    for (const direction of LATERAL_DIRECTIONS) {
+    for (const candidate of getLateralCandidates(world, cell)) {
       if (world.water[cellIndex] <= EPSILON) {
         break;
       }
 
-      const target = {
-        x: cell.x + direction.x,
-        y: cell.y,
-        z: cell.z + direction.z,
-      };
+      const { direction, target } = candidate;
       const lateralTransfer = transferLateralWater(world, cell, target, config);
 
       if (lateralTransfer > EPSILON) {
@@ -137,6 +140,46 @@ export function stepWaterSimulation(
     changedCells,
     flowEvents,
   };
+}
+
+function getLateralCandidates(world: VoxelWorld, cell: CellCoords): LateralCandidate[] {
+  return LATERAL_DIRECTIONS.map((direction) => {
+    const target = {
+      x: cell.x + direction.x,
+      y: cell.y,
+      z: cell.z + direction.z,
+    };
+
+    return {
+      direction,
+      target,
+      targetWater:
+        inBounds(world, target.x, target.y, target.z) && !isSolid(world, target.x, target.y, target.z)
+          ? world.water[index(world, target.x, target.y, target.z)]
+          : Number.POSITIVE_INFINITY,
+      belowCapacity: getCapacity(world, target.x, target.y - 1, target.z),
+    };
+  }).sort((a, b) => {
+    const waterDelta = a.targetWater - b.targetWater;
+    if (Math.abs(waterDelta) > EPSILON) {
+      return waterDelta;
+    }
+
+    const capacityDelta = b.belowCapacity - a.belowCapacity;
+    if (Math.abs(capacityDelta) > EPSILON) {
+      return capacityDelta;
+    }
+
+    return compareDirections(a.direction, b.direction);
+  });
+}
+
+function compareDirections(a: CellCoords, b: CellCoords): number {
+  if (a.x !== b.x) {
+    return b.x - a.x;
+  }
+
+  return b.z - a.z;
 }
 
 function canStillFlow(world: VoxelWorld, cell: CellCoords, config: WaterSimulationConfig): boolean {

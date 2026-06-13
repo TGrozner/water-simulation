@@ -8,10 +8,12 @@ import {
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
+import { createRendererStats, type RendererStats } from "./renderStats";
 
 export type WaterRenderer = {
   mesh: InstancedMesh;
   instanceToCell: Int32Array;
+  stats: RendererStats;
   update: (world: VoxelWorld, debugMode: boolean, options?: RenderOptions) => void;
   dispose: () => void;
 };
@@ -28,6 +30,7 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
   });
   const mesh = new InstancedMesh(geometry, material, world.water.length);
   const instanceToCell = new Int32Array(world.water.length);
+  const stats = createRendererStats(world.water.length);
 
   mesh.frustumCulled = false;
   scene.add(mesh);
@@ -35,6 +38,7 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
   const waterRenderer: WaterRenderer = {
     mesh,
     instanceToCell,
+    stats,
     update: (nextWorld, debugMode, options = defaultRenderOptions(nextWorld)) =>
       updateWaterMesh(waterRenderer, nextWorld, debugMode, options),
     dispose: () => {
@@ -55,6 +59,7 @@ function updateWaterMesh(
   debugMode: boolean,
   options: RenderOptions,
 ): void {
+  const startedAt = performance.now();
   let instanceCount = 0;
   const material = renderer.mesh.material as MeshBasicMaterial;
   material.color.set(debugMode ? 0x5ef0ff : 0x36a4ff);
@@ -85,6 +90,8 @@ function updateWaterMesh(
   renderer.mesh.count = instanceCount;
   renderer.mesh.instanceMatrix.needsUpdate = true;
   renderer.mesh.computeBoundingSphere();
+  renderer.stats.instances = instanceCount;
+  renderer.stats.updateMs = performance.now() - startedAt;
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

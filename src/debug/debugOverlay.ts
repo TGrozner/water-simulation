@@ -17,6 +17,11 @@ export type DebugOverlayStats = {
   tickCount: number;
   stableTicks: number;
   stable: boolean;
+  terrainInstances: number;
+  waterInstances: number;
+  terrainUpdateMs: number;
+  waterUpdateMs: number;
+  simulationUpdateMs: number;
 };
 
 export function createDebugOverlay(): HTMLElement {
@@ -43,11 +48,15 @@ export function updateDebugOverlay(overlay: HTMLElement, stats: DebugOverlayStat
       <dt>Ticks</dt><dd>${stats.tickCount}</dd>
       <dt>Status</dt><dd>${stats.stable ? `stable ${stats.stableTicks}` : "moving"}</dd>
       <dt>FPS</dt><dd>${Math.round(stats.fps)}</dd>
+      <dt>Render geometry</dt><dd>${stats.terrainInstances} faces / ${stats.waterInstances} water</dd>
+      <dt>Render update</dt><dd>${stats.terrainUpdateMs.toFixed(1)}ms / ${stats.waterUpdateMs.toFixed(1)}ms</dd>
+      <dt>Sim update</dt><dd>${stats.simulationUpdateMs.toFixed(1)}ms</dd>
     </dl>
     <div class="controls">
       Left mouse dig<br />
       Right mouse orbit, wheel zoom<br />
-      1-7 scenes, V slice, [ ] move slice<br />
+      1 tutorial, 2 challenge, O open next, Shift+O open all<br />
+      V slice, [ ] move slice<br />
       Space pause, G step, D water debug, R reset
     </div>
   `;

@@ -3,7 +3,8 @@ import { get } from "node:http";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { PNG } from "pngjs";
-import { SCENE_PRESETS } from "../world/createWorld";
+import { SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
+import { getSceneOpeningStages } from "../world/sceneTools";
 
 const HOST = "127.0.0.1";
 const PORT = 4175;
@@ -16,6 +17,17 @@ const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
+const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter"];
+const GAME_CAPTURES = [
+  {
+    url: `${BASE_URL}/?game=1&level=tutorial&debug=1`,
+    filename: "game-tutorial.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&debug=1`,
+    filename: "game-challenge-open-2.png",
+  },
+];
 
 async function run(): Promise<void> {
   const updateBaseline = process.argv.includes("--update-baseline");
@@ -39,6 +51,18 @@ async function run(): Promise<void> {
         `${ACTUAL_DIR}/${preset}-slice.png`,
       );
       await compareOrUpdateBaseline(`${preset}-slice.png`, updateBaseline);
+    }
+
+    for (const preset of STAGED_CAPTURE_PRESETS) {
+      const stages = getSceneOpeningStages(preset);
+      for (let openStages = 1; openStages <= stages.length; openStages += 1) {
+        const filename = `${preset}-open-${openStages}.png`;
+        await captureAndCompare(chrome, `${BASE_URL}/?scene=${preset}&openStages=${openStages}&debug=1`, filename, updateBaseline);
+      }
+    }
+
+    for (const gameCapture of GAME_CAPTURES) {
+      await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline);
     }
   } finally {
     await stopProcess(server);

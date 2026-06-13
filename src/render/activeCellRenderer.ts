@@ -44,6 +44,10 @@ function updateActiveCells(renderer: ActiveCellRenderer, world: VoxelWorld, enab
   const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
 
   if (!enabled) {
+    if (renderer.mesh.count === 0) {
+      return;
+    }
+
     for (let i = 0; i < renderer.mesh.count; i += 1) {
       renderer.mesh.setMatrixAt(i, hiddenMatrix);
     }
@@ -79,7 +83,6 @@ function updateActiveCells(renderer: ActiveCellRenderer, world: VoxelWorld, enab
 
   renderer.mesh.count = instanceCount;
   renderer.mesh.instanceMatrix.needsUpdate = true;
-  renderer.mesh.computeBoundingSphere();
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {
