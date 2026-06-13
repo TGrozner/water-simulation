@@ -9,6 +9,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   Object3D,
+  OrthographicCamera,
   PerspectiveCamera,
   Scene,
   SphereGeometry,
@@ -28,7 +29,12 @@ const terrainDummy = new Object3D();
 const waterDummy = new Object3D();
 const cameraDirection = new Vector3();
 const clampedCameraPosition = new Vector3();
-const mapTarget = new Vector3(0, 9, 0);
+const mapCameraPosition = new Vector3();
+const mapTarget = new Vector3();
+const mapUp = new Vector3();
+
+const SONAR_RADIUS = 18;
+const SONAR_CAMERA_HEIGHT = 72;
 
 export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): SonarRenderer {
   const panel = document.createElement("section");
@@ -39,17 +45,15 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
   const scene = new Scene();
   scene.background = new Color(0x071018);
 
-  const camera = new PerspectiveCamera(42, 1, 0.1, 200);
-  camera.position.set(38, 34, 38);
-  camera.lookAt(mapTarget);
+  const camera = new OrthographicCamera(-SONAR_RADIUS, SONAR_RADIUS, SONAR_RADIUS, -SONAR_RADIUS, 0.1, 200);
+  camera.position.set(0, SONAR_CAMERA_HEIGHT, 0);
+  camera.lookAt(0, 0, 0);
 
   const renderer = new WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   panel.appendChild(renderer.domElement);
 
   const root = new Group();
-  root.scale.setScalar(0.72);
-  root.position.set(0, -2, 0);
   scene.add(root);
 
   const terrainGeometry = new BoxGeometry(0.82, 0.82, 0.82);
@@ -87,7 +91,11 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
     const bounds = panel.getBoundingClientRect();
     const width = Math.max(1, Math.floor(bounds.width));
     const height = Math.max(1, Math.floor(bounds.height - 24));
-    camera.aspect = width / height;
+    const aspect = width / height;
+    camera.left = -SONAR_RADIUS * aspect;
+    camera.right = SONAR_RADIUS * aspect;
+    camera.top = SONAR_RADIUS;
+    camera.bottom = -SONAR_RADIUS;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height, false);
   };
@@ -101,6 +109,7 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
     updateWater: (nextWorld) => updateWaterMesh(waterMesh, nextWorld),
     render: (sourceCamera) => {
       updateCameraMarker(playerMarker, directionLine, sourceCamera, world);
+      updateMapCamera(camera, sourceCamera, world);
       renderer.render(scene, camera);
     },
     dispose: () => {
@@ -122,6 +131,24 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
   sonarRenderer.updateWater(world);
 
   return sonarRenderer;
+}
+
+function updateMapCamera(
+  mapCamera: OrthographicCamera,
+  sourceCamera: PerspectiveCamera,
+  world: VoxelWorld,
+): void {
+  const playerPosition = getClampedCameraPosition(sourceCamera, world);
+  const playerForward = getFlatCameraDirection(sourceCamera);
+
+  mapCameraPosition.set(playerPosition.x, playerPosition.y + SONAR_CAMERA_HEIGHT, playerPosition.z);
+  mapTarget.set(playerPosition.x, playerPosition.y, playerPosition.z);
+  mapUp.copy(playerForward);
+
+  mapCamera.position.copy(mapCameraPosition);
+  mapCamera.up.copy(mapUp);
+  mapCamera.lookAt(mapTarget);
+  mapCamera.updateMatrixWorld();
 }
 
 function updateTerrainMesh(mesh: InstancedMesh, world: VoxelWorld): void {
@@ -181,18 +208,10 @@ function updateCameraMarker(
   sourceCamera: PerspectiveCamera,
   world: VoxelWorld,
 ): void {
-  clampedCameraPosition.copy(sourceCamera.position);
-  clampedCameraPosition.x = Math.min(world.width / 2, Math.max(-world.width / 2, clampedCameraPosition.x));
-  clampedCameraPosition.y = Math.min(world.height, Math.max(0, clampedCameraPosition.y));
-  clampedCameraPosition.z = Math.min(world.depth / 2, Math.max(-world.depth / 2, clampedCameraPosition.z));
+  clampedCameraPosition.copy(getClampedCameraPosition(sourceCamera, world));
   marker.position.copy(clampedCameraPosition);
 
-  sourceCamera.getWorldDirection(cameraDirection);
-  cameraDirection.y = 0;
-  if (cameraDirection.lengthSq() < 0.0001) {
-    cameraDirection.set(0, 0, -1);
-  }
-  cameraDirection.normalize();
+  cameraDirection.copy(getFlatCameraDirection(sourceCamera));
 
   const positions = directionLine.geometry.attributes.position;
   positions.setXYZ(0, clampedCameraPosition.x, clampedCameraPosition.y, clampedCameraPosition.z);
@@ -203,6 +222,23 @@ function updateCameraMarker(
     clampedCameraPosition.z + cameraDirection.z * 5,
   );
   positions.needsUpdate = true;
+}
+
+function getClampedCameraPosition(sourceCamera: PerspectiveCamera, world: VoxelWorld): Vector3 {
+  clampedCameraPosition.copy(sourceCamera.position);
+  clampedCameraPosition.x = Math.min(world.width / 2, Math.max(-world.width / 2, clampedCameraPosition.x));
+  clampedCameraPosition.y = Math.min(world.height, Math.max(0, clampedCameraPosition.y));
+  clampedCameraPosition.z = Math.min(world.depth / 2, Math.max(-world.depth / 2, clampedCameraPosition.z));
+  return clampedCameraPosition;
+}
+
+function getFlatCameraDirection(sourceCamera: PerspectiveCamera): Vector3 {
+  sourceCamera.getWorldDirection(cameraDirection);
+  cameraDirection.y = 0;
+  if (cameraDirection.lengthSq() < 0.0001) {
+    cameraDirection.set(0, 0, -1);
+  }
+  return cameraDirection.normalize();
 }
 
 function isSonarOpenCell(world: VoxelWorld, x: number, y: number, z: number, cellIndex: number): boolean {

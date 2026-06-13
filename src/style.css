@@ -35,6 +35,11 @@ canvas {
   content: "";
 }
 
+.is-dig-target .fps-reticle::before,
+.is-dig-target .fps-reticle::after {
+  background: rgba(255, 194, 71, 0.95);
+}
+
 .fps-reticle::before {
   top: 7px;
   left: 2px;
@@ -100,6 +105,11 @@ canvas {
 
 .debug-overlay .controls {
   color: #c9d7e8;
+}
+
+.game-mode:not(.debug-ui-visible) .debug-overlay,
+.game-mode:not(.debug-ui-visible) .debug-panel {
+  display: none;
 }
 
 .debug-panel {
@@ -252,16 +262,16 @@ canvas {
   bottom: 12px;
   z-index: 12;
   display: grid;
-  width: min(380px, calc(100vw - 24px));
-  gap: 10px;
-  padding: 12px;
+  width: min(320px, calc(100vw - 24px));
+  gap: 8px;
+  padding: 10px;
   border: 1px solid rgba(185, 215, 255, 0.24);
   border-radius: 8px;
   background: rgba(8, 13, 18, 0.84);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.38);
   backdrop-filter: blur(8px);
   color: #eaf4ff;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.35;
 }
 
@@ -284,7 +294,7 @@ canvas {
 
 .game-panel h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1.2;
 }
 
@@ -303,8 +313,8 @@ canvas {
   grid-template-columns: 1fr auto;
   gap: 8px;
   align-items: center;
-  min-height: 30px;
-  padding: 6px 8px;
+  min-height: 26px;
+  padding: 5px 7px;
   border: 1px solid rgba(255, 214, 90, 0.28);
   border-radius: 6px;
   background: rgba(255, 214, 90, 0.08);
@@ -374,8 +384,8 @@ canvas {
   bottom: 12px;
   left: 12px;
   z-index: 9;
-  width: min(240px, calc(100vw - 24px));
-  height: 190px;
+  width: min(260px, calc(100vw - 24px));
+  height: 210px;
   overflow: hidden;
   border: 1px solid rgba(111, 231, 255, 0.3);
   border-radius: 8px;

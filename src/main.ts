@@ -17,6 +17,7 @@ import { createFlowDebugRenderer, type FlowDebugRenderer, type RecentFlow } from
 import { createObjectiveRenderer, type ObjectiveRenderer } from "./render/objectiveRenderer";
 import { createSceneContext } from "./render/scene";
 import { createSonarRenderer } from "./render/sonarRenderer";
+import { createStageGuideRenderer, type StageGuideRenderer } from "./render/stageGuideRenderer";
 import { createTerrainRenderer, type TerrainRenderer } from "./render/terrainRenderer";
 import { createWaterRenderer, type WaterRenderer } from "./render/waterRenderer";
 import type { RenderOptions } from "./render/renderOptions";
@@ -62,6 +63,7 @@ let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneConte
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let objectiveRenderer: ObjectiveRenderer = createObjectiveRenderer(sceneContext.scene);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
+let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
 const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
 let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel()) : null;
@@ -93,6 +95,7 @@ let maxVolumeDelta = 0;
 let stableTicks = 0;
 let fps = 0;
 let lastTime = performance.now();
+let debugUiVisible = getInitialDebugUiVisible();
 
 const overlay = createDebugOverlay();
 const gamePanel = createGamePanel({
@@ -181,6 +184,8 @@ bindKeyboardControls(inputState, {
   renderOptionsChanged: markRenderOptionsChanged,
   toggleFirstPerson: toggleFirstPersonMode,
   isFirstPersonActive: () => firstPersonMode,
+  toggleDebugUi: toggleDebugUi,
+  allowSandboxShortcuts: () => !gameModeEnabled || debugUiVisible,
 });
 
 function selectPreset(preset: ScenePresetId): void {
@@ -234,6 +239,11 @@ function setPaused(paused: boolean): void {
 
 function queueStep(): void {
   queuedStep = true;
+}
+
+function toggleDebugUi(): void {
+  debugUiVisible = !debugUiVisible;
+  syncBodyModeClasses();
 }
 
 function openCurrentScene(): void {
@@ -364,6 +374,7 @@ function resetWorld(): void {
   flowDebugRenderer.dispose();
   objectiveRenderer.dispose();
   brushPreviewRenderer.dispose();
+  stageGuideRenderer.dispose();
   if (gameModeEnabled) {
     currentPreset = getCurrentLevel().scene;
   }
@@ -382,6 +393,7 @@ function resetWorld(): void {
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   objectiveRenderer = createObjectiveRenderer(sceneContext.scene);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
+  stageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
   terrainRenderer.update(world, getRenderOptions());
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
@@ -419,6 +431,18 @@ function getInitialGameModeEnabled(): boolean {
   }
 
   return !initialUrlParams.has("scene");
+}
+
+function getInitialDebugUiVisible(): boolean {
+  if (initialUrlParams.get("debugUi") === "1") {
+    return true;
+  }
+
+  if (initialUrlParams.get("debugUi") === "0") {
+    return false;
+  }
+
+  return !gameModeEnabled;
 }
 
 function getInitialFirstPersonEnabled(): boolean {
@@ -497,6 +521,8 @@ function animate(now: number): void {
   digController.update();
   cellInspector.update();
   brushPreviewRenderer.update(world, digController.getPreviewCells(), getRenderOptions());
+  stageGuideRenderer.update(world, getVisibleGuideStage(), getRenderOptions());
+  updateAimFeedback();
   movedLastFrame = 0;
 
   if (!inputState.paused || queuedStep) {
@@ -530,7 +556,7 @@ function animate(now: number): void {
   }
 
   if (inputState.forceWaterUpdate) {
-    waterRenderer.update(world, inputState.debugWater, getRenderOptions());
+    waterRenderer.update(world, inputState.debugWater, getRenderOptions(), gameModeEnabled);
     activeCellRenderer.update(world, inputState.debugWater && inputState.showActiveCells, getRenderOptions());
     flowDebugRenderer.update(world, recentFlows, inputState.debugWater && inputState.showFlowDebug, getRenderOptions());
     sonarRenderer.updateWater(world);
@@ -572,9 +598,27 @@ function animate(now: number): void {
   });
   gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled);
   debugPanel.update();
+  syncBodyModeClasses();
 
   sceneContext.renderer.render(sceneContext.scene, sceneContext.camera);
   sonarRenderer.render(sceneContext.camera);
+}
+
+function getVisibleGuideStage() {
+  if (!gameModeEnabled || openedStageCount >= getSceneOpeningStages(currentPreset).length) {
+    return null;
+  }
+
+  return getSceneOpeningStages(currentPreset)[openedStageCount] ?? null;
+}
+
+function updateAimFeedback(): void {
+  document.body.classList.toggle("is-dig-target", firstPersonMode && digController.getPreviewCells().length > 0);
+}
+
+function syncBodyModeClasses(): void {
+  document.body.classList.toggle("game-mode", gameModeEnabled);
+  document.body.classList.toggle("debug-ui-visible", debugUiVisible);
 }
 
 requestAnimationFrame(animate);

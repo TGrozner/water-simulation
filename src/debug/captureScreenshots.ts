@@ -20,11 +20,11 @@ const CAPTURE_TIMEOUT_MS = 90_000;
 const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter"];
 const GAME_CAPTURES = [
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&debug=1`,
+    url: `${BASE_URL}/?game=1&level=tutorial`,
     filename: "game-tutorial.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&debug=1`,
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2`,
     filename: "game-challenge-open-2.png",
   },
 ];

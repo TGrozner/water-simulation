@@ -2,7 +2,7 @@ import { index, inBounds, wakeNeighbors } from "./grid";
 import type { ScenePresetId } from "./createWorld";
 import type { VoxelWorld } from "./types";
 
-type ClearBox = {
+export type ClearBox = {
   minX: number;
   maxX: number;
   minY: number;

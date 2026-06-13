@@ -50,6 +50,7 @@ Useful URL parameters for repeatable captures:
 
 - `?game=1`
 - `?game=1&level=challenge`
+- `?game=1&debugUi=1`
 - `?game=0&scene=sluice`
 - `?scene=splitter`
 - `?camera=fps`
@@ -69,10 +70,11 @@ level goals on top:
 - **Split Basin Challenge**: split a limited reservoir between two marked lower basins and keep them balanced.
 
 The game HUD shows target fill amounts, water outside target zones, balance
-status, reset, and next-level controls. The translucent yellow or green boxes in
-the world mark objective volumes. Use `?scene=<name>` or `?game=0` to return to
-the full sandbox/debug workflow; the debug panel exposes **Return to game** after
-scene browsing.
+status, reset, and next-level controls. Sandbox debug panels are hidden by
+default in game mode; press F3 or backquote, or add `debugUi=1`, to bring them
+back. The translucent yellow or green boxes in the world mark objective volumes.
+Use `?scene=<name>` or `?game=0` to return to the full sandbox/debug workflow;
+the debug panel exposes **Return to game** after scene browsing.
 
 ## Controls
 
@@ -82,6 +84,7 @@ scene browsing.
 - Mouse: look around in FPS mode; click the scene if the browser needs pointer lock
 - Space: jump in FPS mode, pause/resume in orbit mode
 - Shift: sprint in FPS mode
+- F3 or backquote: toggle sandbox/debug UI in game mode
 - Hover visible terrain or water: inspect the cell under the cursor
 - Hover empty space: inspect the first voxel hit by the 3D grid probe
 - Right mouse: orbit camera
@@ -115,7 +118,7 @@ storage.
 - Downward-first water movement, lateral spreading, sleeping active cells, and neighbor wake-up
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
-- Corner 3D cave sonar showing open cave contours, water pockets, and camera heading
+- Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
 - Two authored scenes: a focused sluice tutorial and a split-basin challenge
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
@@ -145,7 +148,7 @@ storage.
 - The renderer draws all visible water cells as simple translucent boxes.
 - Terrain rendering is face-culled but not greedy-merged; individual voxel picking is preserved.
 - Orbit uses right mouse so left mouse can stay dedicated to digging.
-- The sonar uses the current camera as a lightweight player-position proxy.
+- The sonar is player/camera centered and top-down; it is a readability aid, not a full minimap.
 - The slice view currently cuts along z only.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.

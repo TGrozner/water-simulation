@@ -282,9 +282,9 @@ function isSceneMouseEvent(event: MouseEvent, canvas: HTMLCanvasElement): boolea
 
 function setSpawn(camera: PerspectiveCamera, world: VoxelWorld): void {
   const spawnCandidates = [
-    { position: new Vector3(-8.5, 26.75, 3.5), lookAt: new Vector3(-12, 23.2, 3.5) },
-    { position: new Vector3(-8.5, 26.75, 6.5), lookAt: new Vector3(-12, 23.2, 4.5) },
-    { position: new Vector3(-7.5, 25.75, 3.5), lookAt: new Vector3(-12.5, 23.5, 4.5) },
+    { position: new Vector3(-16.5, 26.75, 3.5), lookAt: new Vector3(-2, 17, 2) },
+    { position: new Vector3(-14.5, 26.75, 3.5), lookAt: new Vector3(-2, 17, 2) },
+    { position: new Vector3(-11.5, 26.75, 3.5), lookAt: new Vector3(-8, 19, 3) },
     { position: new Vector3(-5, 15.4, -4.5), lookAt: new Vector3(9, 15.4, -4.5) },
     { position: new Vector3(4, 15.4, -5), lookAt: new Vector3(10, 15.4, 4) },
     { position: new Vector3(8, 15.4, -2), lookAt: new Vector3(-4, 15.4, -4) },

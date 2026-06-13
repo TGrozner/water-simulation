@@ -58,7 +58,7 @@ export function updateDebugOverlay(overlay: HTMLElement, stats: DebugOverlayStat
       Right mouse orbit, wheel zoom<br />
       1 tutorial, 2 challenge, O open next, Shift+O open all<br />
       V slice, [ ] move slice<br />
-      Space pause, G step, D water debug, R reset
+      Space pause, G step, D water debug, F3 debug UI, R reset
     </div>
   `;
 }

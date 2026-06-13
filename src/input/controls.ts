@@ -26,6 +26,8 @@ export type InputCallbacks = {
   renderOptionsChanged: () => void;
   toggleFirstPerson: () => void;
   isFirstPersonActive: () => boolean;
+  toggleDebugUi: () => void;
+  allowSandboxShortcuts: () => boolean;
 };
 
 export type DigController = {
@@ -56,6 +58,12 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
       return;
     }
 
+    if (event.code === "F3" || event.code === "Backquote") {
+      event.preventDefault();
+      callbacks.toggleDebugUi();
+      return;
+    }
+
     if (callbacks.isFirstPersonActive() && isFirstPersonGameplayKey(event)) {
       return;
     }
@@ -63,6 +71,13 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
     if (event.code === "Space") {
       event.preventDefault();
       state.paused = !state.paused;
+      return;
+    }
+
+    if (!callbacks.allowSandboxShortcuts()) {
+      if (event.code === "KeyR") {
+        callbacks.reset();
+      }
       return;
     }
 
