@@ -36,7 +36,13 @@ import {
 } from "./sim/tuningPresets";
 import { totalWater } from "./world/grid";
 import { createWorld, SCENE_PRESET_DETAILS, SCENE_PRESETS, type ScenePresetId } from "./world/createWorld";
-import { countStageSolidCells, getSceneOpeningStages, isCellInStage, openSceneStage } from "./world/sceneTools";
+import {
+  countStageSolidCells,
+  getSceneOpeningStages,
+  isCellInStage,
+  openClearBox,
+  openSceneStage,
+} from "./world/sceneTools";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -58,13 +64,16 @@ let currentPreset: ScenePresetId = gameModeEnabled ? getCurrentLevel().scene : g
 let firstPersonMode = getInitialFirstPersonEnabled();
 let world = createWorld(currentPreset);
 let openedStageCount = openInitialStages(world, currentPreset);
+let openedHazards = openInitialHazards(world, getCurrentLevel());
 let stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
+let hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
 let terrainRenderer: TerrainRenderer = createTerrainRenderer(sceneContext.scene, world);
 let waterRenderer: WaterRenderer = createWaterRenderer(sceneContext.scene, world);
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
 let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
+let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, 0xff5f5f, 0.42);
 const sonarRenderer = createSonarRenderer(document.body, world);
 let baselineWaterVolume = totalWater(world);
 let levelProgress: LevelProgress | null = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
@@ -97,6 +106,14 @@ let stableTicks = 0;
 let fps = 0;
 let lastTime = performance.now();
 let debugUiVisible = getInitialDebugUiVisible();
+const initialWarmupStableTicks = runInitialSimulationWarmup();
+if (initialWarmupStableTicks > 0) {
+  stableTicks = initialWarmupStableTicks;
+}
+baselineWaterVolume = totalWater(world);
+levelProgress = gameModeEnabled
+  ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), stableTicks >= STABLE_COMPLETE_TICKS)
+  : null;
 
 const overlay = createDebugOverlay();
 const gamePanel = createGamePanel({
@@ -268,11 +285,12 @@ function canDigCell(cellIndex: number): boolean {
   }
 
   const stage = getVisibleGuideStage();
-  return Boolean(stage && isCellInStage(world, stage, cellIndex));
+  return Boolean(stage && isCellInStage(world, stage, cellIndex)) || isCellInVisibleHazard(cellIndex);
 }
 
 function handleDig(): void {
   advanceClearedGameStages();
+  openClearedHazards();
 }
 
 function advanceClearedGameStages(): void {
@@ -298,6 +316,47 @@ function advanceClearedGameStages(): void {
     openedStageCount += 1;
     markRenderOptionsChanged();
     inputState.forceWaterUpdate = true;
+  }
+}
+
+function isCellInVisibleHazard(cellIndex: number): boolean {
+  if (!gameModeEnabled) {
+    return false;
+  }
+
+  return getCurrentLevel().hazardStages.some(
+    (hazard, hazardIndex) => !openedHazards.has(hazardIndex) && isCellInStage(world, hazard, cellIndex),
+  );
+}
+
+function openClearedHazards(): void {
+  if (!gameModeEnabled) {
+    return;
+  }
+
+  for (let hazardIndex = 0; hazardIndex < getCurrentLevel().hazardStages.length; hazardIndex += 1) {
+    if (openedHazards.has(hazardIndex)) {
+      continue;
+    }
+
+    const hazard = getCurrentLevel().hazardStages[hazardIndex];
+    const initialSolids = hazardInitialSolidCounts[hazardIndex] ?? 0;
+    if (initialSolids <= 0) {
+      openedHazards.add(hazardIndex);
+      continue;
+    }
+
+    const remainingSolids = countStageSolidCells(world, hazard);
+    const clearedRatio = 1 - remainingSolids / initialSolids;
+    if (clearedRatio < STAGE_CLEAR_RATIO) {
+      continue;
+    }
+
+    for (const clearRegion of hazard.boxes) {
+      openClearBox(world, clearRegion);
+    }
+    openedHazards.add(hazardIndex);
+    markRenderOptionsChanged();
   }
 }
 
@@ -429,13 +488,16 @@ function resetWorld(): void {
   flowDebugRenderer.dispose();
   brushPreviewRenderer.dispose();
   stageGuideRenderer.dispose();
+  hazardGuideRenderer.dispose();
   if (gameModeEnabled) {
     currentPreset = getCurrentLevel().scene;
   }
   world = createWorld(currentPreset);
   openedStageCount = 0;
   openedStageCount = openInitialStages(world, currentPreset);
+  openedHazards = openInitialHazards(world, getCurrentLevel());
   stageInitialSolidCounts = getStageSolidCounts(world, currentPreset);
+  hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
   inputState.sliceZ = Math.min(inputState.sliceZ, world.depth - 1);
   baselineWaterVolume = totalWater(world);
   levelProgress = gameModeEnabled ? evaluateLevel(world, getCurrentLevel(), getMissionStageProgress(), false) : null;
@@ -449,6 +511,7 @@ function resetWorld(): void {
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
   stageGuideRenderer = createStageGuideRenderer(sceneContext.scene);
+  hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, 0xff5f5f, 0.42);
   terrainRenderer.update(world, getRenderOptions());
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
@@ -546,6 +609,28 @@ function getInitialSliceZ(): number {
   return Number.isFinite(requestedSlice) ? requestedSlice : 31;
 }
 
+function runInitialSimulationWarmup(): number {
+  const requestedTicks = Number.parseInt(initialUrlParams.get("warmupTicks") ?? "0", 10);
+  const warmupTicks = Number.isFinite(requestedTicks) ? Math.min(3000, Math.max(0, requestedTicks)) : 0;
+  let idleTicks = 0;
+
+  for (let i = 0; i < warmupTicks; i += 1) {
+    stepWaterSimulation(world, waterConfig);
+    tickCount += 1;
+    if (world.activeCells.size === 0) {
+      idleTicks += 1;
+    } else {
+      idleTicks = 0;
+    }
+  }
+
+  if (warmupTicks > 0) {
+    inputState.forceWaterUpdate = true;
+  }
+
+  return idleTicks;
+}
+
 function openInitialStages(initialWorld: typeof world, preset: ScenePresetId): number {
   const requestedStages = Number.parseInt(initialUrlParams.get("openStages") ?? "0", 10);
   const stageCount = getSceneOpeningStages(preset).length;
@@ -558,8 +643,29 @@ function openInitialStages(initialWorld: typeof world, preset: ScenePresetId): n
   return stagesToOpen;
 }
 
+function openInitialHazards(initialWorld: typeof world, level: GameLevel): Set<number> {
+  const requestedHazards = Number.parseInt(initialUrlParams.get("openHazards") ?? "0", 10);
+  const hazardsToOpen = Number.isFinite(requestedHazards)
+    ? Math.min(level.hazardStages.length, Math.max(0, requestedHazards))
+    : 0;
+  const opened = new Set<number>();
+
+  for (let hazardIndex = 0; hazardIndex < hazardsToOpen; hazardIndex += 1) {
+    for (const clearRegion of level.hazardStages[hazardIndex].boxes) {
+      openClearBox(initialWorld, clearRegion);
+    }
+    opened.add(hazardIndex);
+  }
+
+  return opened;
+}
+
 function getStageSolidCounts(targetWorld: typeof world, preset: ScenePresetId): number[] {
   return getSceneOpeningStages(preset).map((stage) => countStageSolidCells(targetWorld, stage));
+}
+
+function getHazardSolidCounts(targetWorld: typeof world, level: GameLevel): number[] {
+  return level.hazardStages.map((hazard) => countStageSolidCells(targetWorld, hazard));
 }
 
 function getMissionStageProgress() {
@@ -597,6 +703,7 @@ function animate(now: number): void {
   cellInspector.update();
   brushPreviewRenderer.update(world, digController.getPreviewCells(), getRenderOptions());
   stageGuideRenderer.update(world, getVisibleGuideStage(), getRenderOptions());
+  hazardGuideRenderer.update(world, getVisibleHazardStage(), getRenderOptions());
   updateAimFeedback();
   movedLastFrame = 0;
 
@@ -685,6 +792,14 @@ function getVisibleGuideStage() {
   }
 
   return getSceneOpeningStages(currentPreset)[openedStageCount] ?? null;
+}
+
+function getVisibleHazardStage() {
+  if (!gameModeEnabled) {
+    return null;
+  }
+
+  return getCurrentLevel().hazardStages.find((_hazard, hazardIndex) => !openedHazards.has(hazardIndex)) ?? null;
 }
 
 function updateAimFeedback(): void {

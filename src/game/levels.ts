@@ -1,6 +1,6 @@
 import { totalWater } from "../world/grid";
 import type { ScenePresetId } from "../world/createWorld";
-import type { ClearBox } from "../world/sceneTools";
+import type { ClearBox, SceneOpeningStage } from "../world/sceneTools";
 import type { VoxelWorld } from "../world/types";
 
 export type GameLevel = {
@@ -14,6 +14,7 @@ export type GameLevel = {
   maxWastedWater: number;
   deliveryBoxes: ClearBox[];
   safeWaterBoxes: ClearBox[];
+  hazardStages: SceneOpeningStage[];
 };
 
 export type StageProgress = {
@@ -51,6 +52,7 @@ export const GAME_LEVELS: GameLevel[] = [
       box(13, 36, 8, 20, 18, 32),
       box(20, 40, 1, 12, 19, 31),
     ],
+    hazardStages: [],
   },
   {
     id: "challenge",
@@ -60,11 +62,18 @@ export const GAME_LEVELS: GameLevel[] = [
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
     deliveryTargetWater: 175,
-    maxWastedWater: 170,
+    maxWastedWater: 45,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
       box(14, 42, 1, 17, 14, 34),
+    ],
+    hazardStages: [
+      {
+        label: "Spill breach",
+        boxes: [box(34, 42, 2, 8, 10, 16)],
+        digBoxes: [box(36, 40, 5, 8, 13, 15)],
+      },
     ],
   },
 ];

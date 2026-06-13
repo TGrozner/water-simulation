@@ -57,6 +57,8 @@ Useful URL parameters for repeatable captures:
 - `?camera=orbit`
 - `?debugUi=1`
 - `?openStages=2`
+- `?openHazards=1`
+- `?warmupTicks=1800`
 - `?tuning=fast-drain`
 - `?debug=1&active=0&flow=0`
 - `?slice=1&sliceZ=28`
@@ -70,13 +72,14 @@ lightweight mission loop on top:
 - **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
 - **Split Basin Challenge**: open the forked route and stabilize enough water in the lower basin network.
 
-In game mode, digging is restricted to the currently highlighted weak-rock gate.
-Once the weak core is mostly destroyed, the gate collapses open and the next
-gate is highlighted. The HUD tracks gate progress, delivered water, wasted water,
-settling state, failure, and level completion. The debug panels are hidden on
-the root view by default; press F3 or backquote, or add `debugUi=1`, to bring
-them back. Use `?scene=<name>` or `?game=0` to start directly in the full
-sandbox/debug workflow.
+In game mode, digging is restricted to the currently highlighted weak-rock gate
+plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
+collapses open and the next gate is highlighted. Opening a red hazard can route
+water into a waste pocket and fail the mission. The HUD tracks gate progress,
+delivered water, wasted water, settling state, failure, and level completion.
+The debug panels are hidden on the root view by default; press F3 or backquote,
+or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
+start directly in the full sandbox/debug workflow.
 
 ## Controls
 
@@ -141,7 +144,7 @@ storage.
 - Named tuning presets for fast drain, slow viscous, stable spread, and aggressive debug passes
 - Local-storage save/load/clear controls for one custom tuning profile
 - URL support for staged captures with `?openStages=N`
-- First-person game slice with weak-rock-only digging, stage auto-advance, mission HUD, and completion/failure state
+- First-person game slice with weak-rock-only digging, red spill hazards, stage auto-advance, mission HUD, and completion/failure state
 
 ## Known limitations
 
@@ -155,13 +158,13 @@ storage.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.
 - Renderer update timings are coarse browser-side measurements, not a profiler.
-- The failure loop is intentionally light; the world still needs better containment and richer mission rules.
+- The failure loop is intentionally light; only the split-basin level has an authored spill hazard.
 - There is no scoring, timer, or campaign persistence yet.
 
 ## Recommended next steps
 
 - Add one more challenge that requires digging a player-authored split path instead of mostly opening staged gates.
-- Add stronger cave containment so wasted-water failure is based on deliberate leaks, not world-edge spill.
+- Add more authored spill hazards and better in-world signposting around risky rock.
 - Add greedy meshing only if a separate voxel picking path is introduced.
 - Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
 - Add more authored cave scenarios with distinct staged release patterns.

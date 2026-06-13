@@ -8,7 +8,7 @@ export type StageGuideRenderer = {
   dispose: () => void;
 };
 
-export function createStageGuideRenderer(scene: Scene): StageGuideRenderer {
+export function createStageGuideRenderer(scene: Scene, color = 0xffc247, opacity = 0.32): StageGuideRenderer {
   const group = new Group();
   const meshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
   scene.add(group);
@@ -16,7 +16,7 @@ export function createStageGuideRenderer(scene: Scene): StageGuideRenderer {
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
-      ensureMeshCount(group, meshes, boxes.length);
+      ensureMeshCount(group, meshes, boxes.length, color, opacity);
 
       for (let i = 0; i < meshes.length; i += 1) {
         const mesh = meshes[i];
@@ -40,14 +40,20 @@ export function createStageGuideRenderer(scene: Scene): StageGuideRenderer {
   };
 }
 
-function ensureMeshCount(group: Group, meshes: Mesh<BoxGeometry, MeshBasicMaterial>[], count: number): void {
+function ensureMeshCount(
+  group: Group,
+  meshes: Mesh<BoxGeometry, MeshBasicMaterial>[],
+  count: number,
+  color: number,
+  opacity: number,
+): void {
   while (meshes.length < count) {
     const mesh = new Mesh(
       new BoxGeometry(1, 1, 1),
       new MeshBasicMaterial({
-        color: 0xffc247,
+        color,
         transparent: true,
-        opacity: 0.32,
+        opacity,
         wireframe: true,
         depthTest: false,
         depthWrite: false,

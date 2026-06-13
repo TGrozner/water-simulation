@@ -69,6 +69,10 @@ export function openSceneStage(world: VoxelWorld, preset: ScenePresetId, stageIn
   return stage.boxes.reduce((removed, clearRegion) => removed + clearBox(world, clearRegion), 0);
 }
 
+export function openClearBox(world: VoxelWorld, clearRegion: ClearBox): number {
+  return clearBox(world, clearRegion);
+}
+
 export function openSceneDrain(world: VoxelWorld, preset: ScenePresetId): number {
   return getSceneOpeningStages(preset).reduce(
     (removed, _stage, stageIndex) => removed + openSceneStage(world, preset, stageIndex),

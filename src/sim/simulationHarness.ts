@@ -7,7 +7,7 @@ import {
 } from "./tuningPresets";
 import { coords, createEmptyWorld, index, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
 import { createWorld, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
-import { getSceneOpeningStages, openSceneDrain, openSceneStage } from "../world/sceneTools";
+import { getSceneOpeningStages, openClearBox, openSceneDrain, openSceneStage } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { evaluateLevel, GAME_LEVELS } from "../game/levels";
 
@@ -86,6 +86,29 @@ function assertGameLevelsComplete(): void {
         1,
       )} wasted=${progress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${progress.status}`,
     );
+
+    if (level.hazardStages.length > 0) {
+      const hazardWorld = createWorld(level.scene);
+      const hazardBaselineWater = totalWater(hazardWorld);
+      openSceneDrain(hazardWorld, level.scene);
+      for (const clearRegion of level.hazardStages[0].boxes) {
+        openClearBox(hazardWorld, clearRegion);
+      }
+      runUntilStable(hazardWorld, tuning.waterConfig, hazardBaselineWater, MAX_TICKS, `game/${level.id}: hazard`);
+
+      const hazardProgress = evaluateLevel(
+        hazardWorld,
+        level,
+        { completedStages: stages.length, stageCount: stages.length, activeStageLabel: "complete", activeStageProgress: 1 },
+        true,
+      );
+      assert(
+        hazardProgress.failed && !hazardProgress.complete,
+        `game/${level.id}: expected authored hazard to fail, got delivered=${hazardProgress.deliveredWater.toFixed(
+          1,
+        )} wasted=${hazardProgress.wastedWater.toFixed(1)}/${level.maxWastedWater.toFixed(1)} status=${hazardProgress.status}`,
+      );
+    }
   }
 }
 

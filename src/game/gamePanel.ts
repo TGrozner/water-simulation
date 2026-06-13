@@ -58,6 +58,7 @@ function updateGamePanel(
   }
 
   const stagePercent = Math.round(progress.stageProgress.activeStageProgress * 100);
+  const resetButton = panel.querySelector<HTMLButtonElement>('[data-game-action="reset"]');
   const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
   const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
 
@@ -91,6 +92,10 @@ function updateGamePanel(
 
   panel.dataset.complete = String(progress.complete);
   panel.dataset.failed = String(progress.failed);
+
+  if (resetButton) {
+    resetButton.textContent = progress.failed ? "Retry level" : "Reset level";
+  }
 
   if (nextButton) {
     nextButton.disabled = !progress.complete;

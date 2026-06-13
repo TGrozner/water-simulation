@@ -18,7 +18,13 @@ const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
 const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter"];
-const GAME_CAPTURES = [
+type GameCapture = {
+  url: string;
+  filename: string;
+  timeoutMs?: number;
+};
+
+const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=tutorial`,
     filename: "game-tutorial.png",
@@ -26,6 +32,10 @@ const GAME_CAPTURES = [
   {
     url: `${BASE_URL}/?game=1&level=challenge&openStages=2`,
     filename: "game-challenge-open-2.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800`,
+    filename: "game-challenge-hazard.png",
   },
 ];
 
@@ -62,7 +72,7 @@ async function run(): Promise<void> {
     }
 
     for (const gameCapture of GAME_CAPTURES) {
-      await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline);
+      await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline, gameCapture.timeoutMs);
     }
   } finally {
     await stopProcess(server);
@@ -74,8 +84,9 @@ async function captureAndCompare(
   url: string,
   filename: string,
   updateBaseline: boolean,
+  timeoutMs?: number,
 ): Promise<void> {
-  await capture(chrome, url, `${ACTUAL_DIR}/${filename}`);
+  await capture(chrome, url, `${ACTUAL_DIR}/${filename}`, timeoutMs);
   await compareOrUpdateBaseline(filename, updateBaseline);
 }
 
@@ -197,14 +208,14 @@ function findChromeCommand(): string {
   return process.env.CHROME_BIN || CHROME_CANDIDATES[0];
 }
 
-function capture(chrome: string, url: string, outputPath: string): Promise<void> {
+function capture(chrome: string, url: string, outputPath: string, timeoutMs = 1500): Promise<void> {
   const args = [
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--no-sandbox",
     "--window-size=1280,720",
-    "--timeout=1500",
+    `--timeout=${timeoutMs}`,
     `--screenshot=${outputPath}`,
     url,
   ];
