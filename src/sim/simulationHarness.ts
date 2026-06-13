@@ -78,6 +78,7 @@ function assertGameLevelsComplete(): void {
         activeStageProgress: 0,
         activeStageIsManual: stages[1] ? !isStageAutoOpen(stages[1]) : false,
         selectedChoiceLabel: null,
+        selectedRouteWater: null,
       },
       true,
     );
@@ -95,14 +96,13 @@ function assertGameLevelsComplete(): void {
     const baselineWater = totalWater(world);
     openSceneDrain(world, level.scene);
     const manualStageIndex = getManualStageIndex(stages);
-    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `game/${level.id}: before manual`);
 
     if (manualStageIndex >= 0) {
       const beforeManualProgress = evaluateLevel(
         world,
         level,
         makeProgress(stages, manualStageIndex, stages[manualStageIndex].label, 0, getScriptedSelectedChoiceLabel(stages)),
-        true,
+        false,
       );
       assert(!beforeManualProgress.complete, `game/${level.id}: openSceneDrain should not complete manual carve stage`);
       assert(
@@ -110,6 +110,8 @@ function assertGameLevelsComplete(): void {
         `game/${level.id}: openSceneDrain should not clear manual carve terrain`,
       );
       clearStageDigBoxes(world, getStageChoices(stages[manualStageIndex])[0]);
+    } else {
+      runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `game/${level.id}: before complete`);
     }
 
     runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `game/${level.id}`);
@@ -169,6 +171,7 @@ function makeProgress(
   activeStageLabel: string,
   activeStageProgress: number,
   selectedChoiceLabel: string | null,
+  selectedRouteWater: number | null = selectedChoiceLabel === null ? null : 0,
 ) {
   const activeStage = stages[completedStages];
   return {
@@ -178,6 +181,7 @@ function makeProgress(
     activeStageProgress,
     activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel,
+    selectedRouteWater,
   };
 }
 
@@ -231,12 +235,11 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
       );
     }
 
-    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1} before manual`);
     const beforeManualProgress = evaluateLevel(
       world,
       level,
       makeProgress(stages, manualStageIndex >= 0 ? manualStageIndex : stages.length, "complete", 0, choices[choiceIndex].label),
-      true,
+      false,
     );
     assert(!beforeManualProgress.complete, `${preset}: choice ${choiceIndex + 1} should still require manual carve stage`);
 
@@ -244,6 +247,31 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
       const manualChoices = getStageChoices(stages[manualStageIndex]);
       const manualChoiceIndex = Math.min(choiceIndex, manualChoices.length - 1);
       const manualChoice = manualChoices[manualChoiceIndex];
+      const manualChoiceInitialSolids = countStageSolidCells(world, manualChoice);
+      assert(
+        manualChoiceInitialSolids >= 40,
+        `${preset}: manual carve choice ${choiceIndex + 1} should start as a meaningful plug, got ${manualChoiceInitialSolids} solids`,
+      );
+      const dryManualProgress = evaluateLevel(
+        world,
+        level,
+        makeProgress(stages, manualStageIndex, manualChoice.label, 0, choices[choiceIndex].label, 0),
+        false,
+      );
+      assert(
+        dryManualProgress.status === `Carve route: ${manualChoice.label}`,
+        `${preset}: dry manual status should ask for carving, got "${dryManualProgress.status}"`,
+      );
+      const wetManualProgress = evaluateLevel(
+        world,
+        level,
+        makeProgress(stages, manualStageIndex, manualChoice.label, 0, choices[choiceIndex].label, 2),
+        false,
+      );
+      assert(
+        wetManualProgress.status === `Water entering: ${manualChoice.label}`,
+        `${preset}: wet manual status should report entering water, got "${wetManualProgress.status}"`,
+      );
       const removed = clearStageDigBoxes(world, manualChoice);
       assert(removed > 0, `${preset}: manual carve choice ${choiceIndex + 1} removed no terrain`);
 
@@ -259,6 +287,17 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
           }`,
         );
       }
+
+      const flowingProgress = evaluateLevel(
+        world,
+        level,
+        makeProgress(stages, stages.length, "complete", 1, choices[choiceIndex].label, 2),
+        false,
+      );
+      assert(
+        flowingProgress.status === "Water is taking the carved route",
+        `${preset}: routed water status should acknowledge carved flow, got "${flowingProgress.status}"`,
+      );
     }
 
     runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1}`);

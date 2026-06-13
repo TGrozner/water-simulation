@@ -24,6 +24,7 @@ export type StageProgress = {
   activeStageProgress: number;
   activeStageIsManual: boolean;
   selectedChoiceLabel: string | null;
+  selectedRouteWater: number | null;
 };
 
 export type LevelProgress = {
@@ -63,8 +64,8 @@ export const GAME_LEVELS: GameLevel[] = [
     brief: "Open the weak gates, route the flow through the selected basin, and avoid the red spill seams.",
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
-    deliveryTargetWater: 175,
-    maxWastedWater: 30,
+    deliveryTargetWater: 160,
+    maxWastedWater: 35,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
@@ -157,13 +158,17 @@ function getStatusText(
   }
 
   if (!allStagesOpen) {
-    return stageProgress.activeStageIsManual
-      ? `Carve route: ${stageProgress.activeStageLabel}`
-      : `Cut weak rock: ${stageProgress.activeStageLabel}`;
+    if (stageProgress.activeStageIsManual) {
+      return hasRouteFlow(stageProgress)
+        ? `Water entering: ${stageProgress.activeStageLabel}`
+        : `Carve route: ${stageProgress.activeStageLabel}`;
+    }
+
+    return `Cut weak rock: ${stageProgress.activeStageLabel}`;
   }
 
   if (!delivered) {
-    return "Route more water into the lower cave";
+    return hasRouteFlow(stageProgress) ? "Water is taking the carved route" : "Route more water into the lower cave";
   }
 
   if (!settled) {
@@ -171,6 +176,10 @@ function getStatusText(
   }
 
   return level.successText;
+}
+
+function hasRouteFlow(stageProgress: StageProgress): boolean {
+  return (stageProgress.selectedRouteWater ?? 0) >= 1;
 }
 
 function box(minX: number, maxX: number, minY: number, maxY: number, minZ: number, maxZ: number): ClearBox {

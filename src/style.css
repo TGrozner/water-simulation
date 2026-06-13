@@ -343,6 +343,15 @@ canvas {
   font-weight: 800;
 }
 
+.game-panel [data-game-metric="pathWater"] {
+  color: #9ab7c8;
+  font-weight: 800;
+}
+
+.game-panel[data-route-flow="active"] [data-game-metric="pathWater"] {
+  color: #7ee9ff;
+}
+
 .game-panel [data-game-metric="mode"] {
   color: #ffd27d;
   font-weight: 800;
@@ -370,6 +379,11 @@ canvas {
   background: rgba(143, 179, 222, 0.12);
   color: #eaf4ff;
   font-weight: 700;
+}
+
+.game-panel[data-route-flow="active"] .game-panel-status {
+  background: rgba(126, 233, 255, 0.13);
+  color: #b9f5ff;
 }
 
 .game-panel[data-complete="true"] .game-panel-status {

@@ -29,6 +29,7 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
       <dt>Delivered</dt><dd data-game-metric="delivered">0</dd>
       <dt>Wasted</dt><dd data-game-metric="wasted">0</dd>
       <dt data-game-route-label>Route</dt><dd data-game-metric="route">unselected</dd>
+      <dt data-game-path-water-label>Path water</dt><dd data-game-metric="pathWater">0</dd>
       <dt data-game-mode-label>Mode</dt><dd data-game-metric="mode">gate</dd>
       <dt data-game-risk-label>Risk</dt><dd data-game-metric="risk">none</dd>
       <dt>Flow</dt><dd data-game-metric="settled">moving</dd>
@@ -66,6 +67,8 @@ function updateGamePanel(
   const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
   const routeLabel = panel.querySelector<HTMLElement>("[data-game-route-label]");
   const routeValue = panel.querySelector<HTMLElement>('[data-game-metric="route"]');
+  const pathWaterLabel = panel.querySelector<HTMLElement>("[data-game-path-water-label]");
+  const pathWaterValue = panel.querySelector<HTMLElement>('[data-game-metric="pathWater"]');
   const modeLabel = panel.querySelector<HTMLElement>("[data-game-mode-label]");
   const modeValue = panel.querySelector<HTMLElement>('[data-game-metric="mode"]');
   const riskLabel = panel.querySelector<HTMLElement>("[data-game-risk-label]");
@@ -96,6 +99,7 @@ function updateGamePanel(
     `${progress.wastedWater.toFixed(0)} / ${progress.level.maxWastedWater.toFixed(0)}`,
   );
   setText(panel, '[data-game-metric="route"]', progress.stageProgress.selectedChoiceLabel ?? "unselected");
+  setText(panel, '[data-game-metric="pathWater"]', formatWater(progress.stageProgress.selectedRouteWater));
   setText(panel, '[data-game-metric="mode"]', isManualStage ? "manual carve" : "authored gate");
   setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
@@ -104,6 +108,11 @@ function updateGamePanel(
   if (routeLabel && routeValue) {
     routeLabel.hidden = !hasRouteChoice;
     routeValue.hidden = !hasRouteChoice;
+  }
+
+  if (pathWaterLabel && pathWaterValue) {
+    pathWaterLabel.hidden = !hasRouteChoice;
+    pathWaterValue.hidden = !hasRouteChoice;
   }
 
   if (modeLabel && modeValue) {
@@ -123,6 +132,7 @@ function updateGamePanel(
   panel.dataset.complete = String(progress.complete);
   panel.dataset.failed = String(progress.failed);
   panel.dataset.risk = hasHazards ? "hazard" : "none";
+  panel.dataset.routeFlow = (progress.stageProgress.selectedRouteWater ?? 0) >= 1 ? "active" : "dry";
 
   if (resetButton) {
     resetButton.textContent = progress.failed ? "Retry level" : "Reset level";
@@ -132,6 +142,10 @@ function updateGamePanel(
     nextButton.disabled = !progress.complete;
     nextButton.textContent = levelIndex >= GAME_LEVELS.length - 1 ? "Restart slice" : "Next level";
   }
+}
+
+function formatWater(value: number | null): string {
+  return value === null ? "-" : value.toFixed(1);
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {

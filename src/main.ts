@@ -2,7 +2,7 @@ import "./style.css";
 import { createDebugOverlay, updateDebugOverlay } from "./debug/debugOverlay";
 import { createDebugPanel } from "./debug/debugPanel";
 import { createGamePanel } from "./game/gamePanel";
-import { evaluateLevel, GAME_LEVELS, getLevel, type GameLevel, type LevelProgress } from "./game/levels";
+import { evaluateLevel, GAME_LEVELS, getLevel, measureBoxWater, type GameLevel, type LevelProgress } from "./game/levels";
 import { createCellInspector } from "./input/cellInspector";
 import { createFirstPersonController } from "./input/firstPersonController";
 import {
@@ -780,6 +780,7 @@ function getMissionStageProgress() {
     activeStageProgress,
     activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel: getSelectedChoiceLabel(),
+    selectedRouteWater: getSelectedRouteWater(),
   };
 }
 
@@ -809,6 +810,34 @@ function getSelectedRouteChoiceIndex(): number | null {
   }
 
   return null;
+}
+
+function getSelectedRouteWater(): number | null {
+  const selectedRouteChoiceIndex = getSelectedRouteChoiceIndex();
+  if (selectedRouteChoiceIndex === null) {
+    return null;
+  }
+
+  const manualStage = getSceneOpeningStages(currentPreset).find((stage) => !isStageAutoOpen(stage));
+  if (!manualStage) {
+    return null;
+  }
+
+  const choices = getStageChoices(manualStage);
+  if (choices.length === 0) {
+    return null;
+  }
+
+  const selectedManualChoiceIndex = Math.min(selectedRouteChoiceIndex, choices.length - 1);
+  const boxes = choices.flatMap((choice, choiceIndex) => {
+    if (choiceIndex !== selectedManualChoiceIndex) {
+      return [];
+    }
+
+    return getStageDigBoxes(choice);
+  });
+
+  return measureBoxWater(world, boxes);
 }
 
 function getAvailableChoiceIndexes(stageIndex: number): number[] {

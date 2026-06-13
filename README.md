@@ -83,8 +83,8 @@ clear either highlighted route and only that route opens. The final split-basin
 approach is a manual carve zone: digging removes only the cells hit by the
 player, without an authored collapse. Opening a red hazard can route water into
 a waste pocket and fail the mission. The HUD tracks gate progress, selected
-route, delivered water, wasted water, red-seam risk, settling state, failure,
-and level completion.
+route, water inside the selected path, delivered water, wasted water, red-seam
+risk, settling state, failure, and level completion.
 The debug panels are hidden on the root view by default; press F3 or backquote,
 or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
 start directly in the full sandbox/debug workflow.

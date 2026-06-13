@@ -84,6 +84,8 @@ function carveSplitterScene(world: VoxelWorld): void {
   carveEllipsoid(world, 39, 4, 25, 5, 3, 8);
   addSolidBox(world, 14, 13, 24, 19, 20, 31);
   addSolidBox(world, 25, 1, 16, 30, 15, 34);
+  addSolidBox(world, 31, 1, 18, 39, 5, 22);
+  addSolidBox(world, 31, 1, 28, 39, 5, 32);
   addSolidBox(world, 43, 3, 22, 43, 3, 28);
 
   addReservoirTank(world, 7, 15, 14, 24, 24, 31);

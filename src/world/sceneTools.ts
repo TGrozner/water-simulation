@@ -49,18 +49,18 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
     {
       label: "Carve final basin approach",
       boxes: [],
-      digBoxes: [box(31, 39, 1, 5, 18, 22)],
+      digBoxes: [box(31, 39, 1, 4, 19, 21)],
       autoOpen: false,
       choices: [
         {
           label: "South hand-cut trench",
           boxes: [],
-          digBoxes: [box(31, 39, 1, 5, 18, 22)],
+          digBoxes: [box(31, 39, 1, 4, 19, 21)],
         },
         {
           label: "North hand-cut trench",
           boxes: [],
-          digBoxes: [box(31, 39, 1, 5, 28, 32)],
+          digBoxes: [box(31, 39, 1, 4, 29, 31)],
         },
       ],
     },
