@@ -42,6 +42,7 @@ import {
   getStageChoices,
   getStageDigBoxes,
   isCellInStage,
+  isStageAutoOpen,
   openClearBox,
   openSceneStage,
   type SceneOpeningStage,
@@ -339,7 +340,9 @@ function advanceClearedGameStages(): void {
     }
 
     openedStageChoices[openedStageCount] = clearedChoiceIndex;
-    openSceneStage(world, currentPreset, openedStageCount, clearedChoiceIndex);
+    if (isStageAutoOpen(stage)) {
+      openSceneStage(world, currentPreset, openedStageCount, clearedChoiceIndex);
+    }
     openedStageCount += 1;
     markRenderOptionsChanged();
     inputState.forceWaterUpdate = true;
@@ -388,6 +391,11 @@ function openClearedHazards(): void {
 }
 
 function openCurrentScene(): void {
+  const stage = getSceneOpeningStages(currentPreset)[openedStageCount];
+  if (stage && !isStageAutoOpen(stage)) {
+    return;
+  }
+
   const choiceIndex = getInitialStageChoiceIndex(currentPreset, openedStageCount);
   const removed = openSceneStage(world, currentPreset, openedStageCount, choiceIndex);
   if (openedStageCount < getSceneOpeningStages(currentPreset).length) {
@@ -404,6 +412,11 @@ function openAllSceneStages(): void {
   const stageCount = getSceneOpeningStages(currentPreset).length;
 
   while (openedStageCount < stageCount) {
+    const stage = getSceneOpeningStages(currentPreset)[openedStageCount];
+    if (!isStageAutoOpen(stage)) {
+      break;
+    }
+
     const choiceIndex = getInitialStageChoiceIndex(currentPreset, openedStageCount);
     removed += openSceneStage(world, currentPreset, openedStageCount, choiceIndex);
     openedStageChoices[openedStageCount] = choiceIndex;
@@ -674,6 +687,11 @@ function openInitialStages(initialWorld: typeof world, preset: ScenePresetId, se
   const stagesToOpen = Number.isFinite(requestedStages) ? Math.min(stageCount, Math.max(0, requestedStages)) : 0;
 
   for (let stageIndex = 0; stageIndex < stagesToOpen; stageIndex += 1) {
+    const stage = getSceneOpeningStages(preset)[stageIndex];
+    if (!isStageAutoOpen(stage)) {
+      return stageIndex;
+    }
+
     const choiceIndex = getInitialStageChoiceIndex(preset, stageIndex);
     openSceneStage(initialWorld, preset, stageIndex, choiceIndex);
     selectedChoices[stageIndex] = choiceIndex;
@@ -753,6 +771,7 @@ function getMissionStageProgress() {
     stageCount: stages.length,
     activeStageLabel: activeStage?.label ?? "complete",
     activeStageProgress,
+    activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
     selectedChoiceLabel: getSelectedChoiceLabel(),
   };
 }

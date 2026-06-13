@@ -11,6 +11,8 @@ import {
   countStageSolidCells,
   getSceneOpeningStages,
   getStageChoices,
+  getStageDigBoxes,
+  isStageAutoOpen,
   openClearBox,
   openSceneDrain,
   openSceneStage,
@@ -74,6 +76,7 @@ function assertGameLevelsComplete(): void {
         stageCount: stages.length,
         activeStageLabel: stages[1]?.label ?? "complete",
         activeStageProgress: 0,
+        activeStageIsManual: stages[1] ? !isStageAutoOpen(stages[1]) : false,
         selectedChoiceLabel: null,
       },
       true,
@@ -91,18 +94,30 @@ function assertGameLevelsComplete(): void {
     const world = createWorld(level.scene);
     const baselineWater = totalWater(world);
     openSceneDrain(world, level.scene);
+    const manualStageIndex = getManualStageIndex(stages);
+    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `game/${level.id}: before manual`);
+
+    if (manualStageIndex >= 0) {
+      const beforeManualProgress = evaluateLevel(
+        world,
+        level,
+        makeProgress(stages, manualStageIndex, stages[manualStageIndex].label, 0, getScriptedSelectedChoiceLabel(stages)),
+        true,
+      );
+      assert(!beforeManualProgress.complete, `game/${level.id}: openSceneDrain should not complete manual carve stage`);
+      assert(
+        countStageSolidCells(world, getStageChoices(stages[manualStageIndex])[0]) > 0,
+        `game/${level.id}: openSceneDrain should not clear manual carve terrain`,
+      );
+      clearStageDigBoxes(world, getStageChoices(stages[manualStageIndex])[0]);
+    }
+
     runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `game/${level.id}`);
 
     const progress = evaluateLevel(
       world,
       level,
-      {
-        completedStages: stages.length,
-        stageCount: stages.length,
-        activeStageLabel: "complete",
-        activeStageProgress: 1,
-        selectedChoiceLabel: getScriptedSelectedChoiceLabel(stages),
-      },
+      makeProgress(stages, stages.length, "complete", 1, getScriptedSelectedChoiceLabel(stages)),
       true,
     );
     assert(
@@ -116,6 +131,9 @@ function assertGameLevelsComplete(): void {
       const hazardWorld = createWorld(level.scene);
       const hazardBaselineWater = totalWater(hazardWorld);
       openSceneDrain(hazardWorld, level.scene);
+      if (manualStageIndex >= 0) {
+        clearStageDigBoxes(hazardWorld, getStageChoices(stages[manualStageIndex])[0]);
+      }
       for (const clearRegion of level.hazardStages[hazardIndex].boxes) {
         openClearBox(hazardWorld, clearRegion);
       }
@@ -130,13 +148,7 @@ function assertGameLevelsComplete(): void {
       const hazardProgress = evaluateLevel(
         hazardWorld,
         level,
-        {
-          completedStages: stages.length,
-          stageCount: stages.length,
-          activeStageLabel: "complete",
-          activeStageProgress: 1,
-          selectedChoiceLabel: getScriptedSelectedChoiceLabel(stages),
-        },
+        makeProgress(stages, stages.length, "complete", 1, getScriptedSelectedChoiceLabel(stages)),
         true,
       );
       assert(
@@ -149,6 +161,32 @@ function assertGameLevelsComplete(): void {
 
     assertChoiceStagesCanComplete(level.scene, level);
   }
+}
+
+function makeProgress(
+  stages: ReturnType<typeof getSceneOpeningStages>,
+  completedStages: number,
+  activeStageLabel: string,
+  activeStageProgress: number,
+  selectedChoiceLabel: string | null,
+) {
+  const activeStage = stages[completedStages];
+  return {
+    completedStages,
+    stageCount: stages.length,
+    activeStageLabel,
+    activeStageProgress,
+    activeStageIsManual: activeStage ? !isStageAutoOpen(activeStage) : false,
+    selectedChoiceLabel,
+  };
+}
+
+function getManualStageIndex(stages: ReturnType<typeof getSceneOpeningStages>): number {
+  return stages.findIndex((stage) => !isStageAutoOpen(stage));
+}
+
+function clearStageDigBoxes(world: VoxelWorld, stageOrChoice: Parameters<typeof getStageDigBoxes>[0]): number {
+  return getStageDigBoxes(stageOrChoice).reduce((removed, clearRegion) => removed + openClearBox(world, clearRegion), 0);
 }
 
 function getScriptedSelectedChoiceLabel(stages: ReturnType<typeof getSceneOpeningStages>): string | null {
@@ -164,12 +202,13 @@ function getScriptedSelectedChoiceLabel(stages: ReturnType<typeof getSceneOpenin
 
 function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAME_LEVELS)[number]): void {
   const stages = getSceneOpeningStages(preset);
-  const choiceStageIndex = stages.findIndex((stage) => getStageChoices(stage).length > 1);
+  const choiceStageIndex = stages.findIndex((stage) => isStageAutoOpen(stage) && getStageChoices(stage).length > 1);
   if (choiceStageIndex < 0) {
     return;
   }
 
   const choices = getStageChoices(stages[choiceStageIndex]);
+  const manualStageIndex = getManualStageIndex(stages);
   const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
 
   for (let choiceIndex = 0; choiceIndex < choices.length; choiceIndex += 1) {
@@ -192,17 +231,27 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
       );
     }
 
+    runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1} before manual`);
+    const beforeManualProgress = evaluateLevel(
+      world,
+      level,
+      makeProgress(stages, manualStageIndex >= 0 ? manualStageIndex : stages.length, "complete", 0, choices[choiceIndex].label),
+      true,
+    );
+    assert(!beforeManualProgress.complete, `${preset}: choice ${choiceIndex + 1} should still require manual carve stage`);
+
+    if (manualStageIndex >= 0) {
+      const manualChoices = getStageChoices(stages[manualStageIndex]);
+      const manualChoice = manualChoices[Math.min(choiceIndex, manualChoices.length - 1)];
+      const removed = clearStageDigBoxes(world, manualChoice);
+      assert(removed > 0, `${preset}: manual carve choice ${choiceIndex + 1} removed no terrain`);
+    }
+
     runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}: choice ${choiceIndex + 1}`);
     const progress = evaluateLevel(
       world,
       level,
-      {
-        completedStages: stages.length,
-        stageCount: stages.length,
-        activeStageLabel: "complete",
-        activeStageProgress: 1,
-        selectedChoiceLabel: choices[choiceIndex].label,
-      },
+      makeProgress(stages, stages.length, "complete", 1, choices[choiceIndex].label),
       true,
     );
 
@@ -285,6 +334,14 @@ function assertAuthoredStagesRemoveTerrain(preset: ScenePresetId): void {
   assert(stages.length > 0, `${preset}: expected authored opening stages`);
 
   for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
+    if (!isStageAutoOpen(stages[stageIndex])) {
+      assert(
+        countStageSolidCells(world, getStageChoices(stages[stageIndex])[0]) > 0,
+        `${preset}: manual stage ${stageIndex + 1} (${stages[stageIndex].label}) has no terrain to carve`,
+      );
+      continue;
+    }
+
     const removed = openSceneStage(world, preset, stageIndex);
     assert(removed > 0, `${preset}: opening stage ${stageIndex + 1} (${stages[stageIndex].label}) removed no terrain`);
   }
@@ -297,8 +354,10 @@ function assertProgressiveStagesMoveWater(preset: ScenePresetId): void {
   const stages = getSceneOpeningStages(preset);
 
   for (let stageIndex = 0; stageIndex < stages.length; stageIndex += 1) {
-    const removed = openSceneStage(world, preset, stageIndex);
-    assert(removed > 0, `${preset}: opening stage ${stageIndex + 1} (${stages[stageIndex].label}) removed no terrain`);
+    const removed = isStageAutoOpen(stages[stageIndex])
+      ? openSceneStage(world, preset, stageIndex)
+      : clearStageDigBoxes(world, getStageChoices(stages[stageIndex])[0]);
+    assert(removed > 0, `${preset}: stage ${stageIndex + 1} (${stages[stageIndex].label}) removed no terrain`);
 
     const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, MAX_STAGE_TICKS, `${preset}: stage ${stageIndex + 1}`);
     if (stageIndex === 0) {

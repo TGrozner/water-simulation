@@ -19,6 +19,7 @@ export type SceneOpeningChoice = {
 
 export type SceneOpeningStage = SceneOpeningChoice & {
   choices?: SceneOpeningChoice[];
+  autoOpen?: boolean;
 };
 
 export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = {
@@ -42,6 +43,24 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
           label: "North basin branch",
           boxes: [box(25, 30, 1, 15, 27, 33)],
           digBoxes: [box(26, 30, 8, 14, 27, 31)],
+        },
+      ],
+    },
+    {
+      label: "Carve final basin approach",
+      boxes: [],
+      digBoxes: [box(31, 39, 1, 5, 18, 22)],
+      autoOpen: false,
+      choices: [
+        {
+          label: "South hand-cut trench",
+          boxes: [],
+          digBoxes: [box(31, 39, 1, 5, 18, 22)],
+        },
+        {
+          label: "North hand-cut trench",
+          boxes: [],
+          digBoxes: [box(31, 39, 1, 5, 28, 32)],
         },
       ],
     },
@@ -86,6 +105,10 @@ export function openSceneStage(world: VoxelWorld, preset: ScenePresetId, stageIn
     return 0;
   }
 
+  if (!isStageAutoOpen(stage)) {
+    return 0;
+  }
+
   return openStageChoice(world, getStageChoices(stage)[choiceIndex] ?? getStageChoices(stage)[0]);
 }
 
@@ -118,6 +141,10 @@ export function getStageDigBoxes(stage: SceneOpeningStage): ClearBox[] {
 
 export function getStageChoices(stage: SceneOpeningStage): SceneOpeningChoice[] {
   return stage.choices ?? [stage];
+}
+
+export function isStageAutoOpen(stage: SceneOpeningStage): boolean {
+  return stage.autoOpen !== false;
 }
 
 function isCellInBox(x: number, y: number, z: number, clearRegion: ClearBox): boolean {

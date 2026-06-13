@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { PNG } from "pngjs";
 import { SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
-import { getSceneOpeningStages } from "../world/sceneTools";
+import { getSceneOpeningStages, isStageAutoOpen } from "../world/sceneTools";
 
 const HOST = "127.0.0.1";
 const PORT = 4175;
@@ -69,7 +69,8 @@ async function run(): Promise<void> {
 
     for (const preset of STAGED_CAPTURE_PRESETS) {
       const stages = getSceneOpeningStages(preset);
-      for (let openStages = 1; openStages <= stages.length; openStages += 1) {
+      const scriptedStageCount = stages.filter(isStageAutoOpen).length;
+      for (let openStages = 1; openStages <= scriptedStageCount; openStages += 1) {
         const filename = `${preset}-open-${openStages}.png`;
         await captureAndCompare(chrome, `${BASE_URL}/?scene=${preset}&openStages=${openStages}&debug=1`, filename, updateBaseline);
       }

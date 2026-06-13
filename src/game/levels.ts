@@ -22,6 +22,7 @@ export type StageProgress = {
   stageCount: number;
   activeStageLabel: string;
   activeStageProgress: number;
+  activeStageIsManual: boolean;
   selectedChoiceLabel: string | null;
 };
 
@@ -156,7 +157,9 @@ function getStatusText(
   }
 
   if (!allStagesOpen) {
-    return `Cut weak rock: ${stageProgress.activeStageLabel}`;
+    return stageProgress.activeStageIsManual
+      ? `Carve route: ${stageProgress.activeStageLabel}`
+      : `Cut weak rock: ${stageProgress.activeStageLabel}`;
   }
 
   if (!delivered) {
