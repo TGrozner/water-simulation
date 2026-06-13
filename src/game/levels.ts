@@ -61,17 +61,17 @@ export const GAME_LEVELS: GameLevel[] = [
   },
   {
     id: "challenge",
-    name: "Split Basin Challenge",
+    name: "Forked Cavern Challenge",
     scene: "splitter",
-    brief: "Open the weak gates, route the flow through the selected basin, and avoid the red spill seams.",
+    brief: "Mine into the forked cavern, cut a hand tunnel for the water, and avoid the red spill seams.",
     successText: "Fork stabilized",
     failText: "Too much water escaped the fork",
-    deliveryTargetWater: 160,
+    deliveryTargetWater: 150,
     maxWastedWater: 35,
     deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
     safeWaterBoxes: [
       box(7, 15, 14, 25, 14, 31),
-      box(14, 42, 1, 17, 14, 34),
+      box(14, 42, 1, 23, 14, 34),
     ],
     hazardStages: [
       {

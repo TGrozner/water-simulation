@@ -74,14 +74,15 @@ terrain destruction and grid-water simulation as the sandbox, then adds a
 lightweight mission loop on top:
 
 - **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
-- **Split Basin Challenge**: open the forked route through either branch, hand-carve the final basin approach, and avoid red spill seams.
+- **Forked Cavern Challenge**: mine into a forked cave network, hand-carve the final water route, and avoid red spill seams.
 
 In game mode, digging is restricted to the currently highlighted weak-rock gate
 plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
 collapses open and the next gate is highlighted. Some gates are branch choices:
-clear either highlighted route and only that route opens. The final split-basin
+clear either highlighted route and only that route opens. The final forked-cavern
 approach is a manual carve zone: digging removes only the cells hit by the
-player, without an authored collapse. Opening a red hazard can route water into
+player, without an authored collapse, and completion waits for water to enter
+the hand-cut tunnel. Opening a red hazard can route water into
 a waste pocket and fail the mission. The HUD tracks gate progress, selected
 route, water inside the selected path, delivered water, wasted water, red-seam
 risk, settling state, failure, and level completion.
@@ -110,7 +111,7 @@ start directly in the full sandbox/debug workflow.
 - O: open the next authored scene path stage
 - Shift+O: open all remaining authored scene path stages
 - 1: Sluice Tutorial / Sluice Gates scene
-- 2: Split Basin Challenge / Split Basin scene
+- 2: Forked Cavern Challenge / Forked Cavern scene
 - R: reset the world
 
 The debug panel also provides scene selection, pause/step/reset, **Open next**,
@@ -132,7 +133,7 @@ storage.
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
 - Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
-- Two authored scenes: a focused sluice tutorial and a split-basin challenge
+- Two authored scenes: a focused sluice tutorial and a forked cavern challenge
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
 - Hover cell inspection for coordinates, solid/open state, water amount, active/sleep state, and hit source

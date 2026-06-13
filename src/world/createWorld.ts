@@ -11,6 +11,12 @@ export type ScenePreset = {
   description: string;
 };
 
+type CavePoint = {
+  x: number;
+  y: number;
+  z: number;
+};
+
 export const SCENE_PRESET_DETAILS: Record<ScenePresetId, ScenePreset> = {
   sluice: {
     id: "sluice",
@@ -19,8 +25,8 @@ export const SCENE_PRESET_DETAILS: Record<ScenePresetId, ScenePreset> = {
   },
   splitter: {
     id: "splitter",
-    name: "Split Basin",
-    description: "Release water into a fork that divides flow between two lower cavities.",
+    name: "Forked Cavern",
+    description: "Mine through a forked cave network and cut a route for water into one lower cavern.",
   },
 };
 
@@ -71,22 +77,55 @@ function carveSluiceScene(world: VoxelWorld): void {
 
 function carveSplitterScene(world: VoxelWorld): void {
   carveSharedCutaway(world);
-  carveBox(world, 15, 9, 19, 24, 15, 31);
-  carveBox(world, 23, 7, 21, 31, 12, 29);
-  carveBox(world, 30, 4, 16, 40, 8, 23);
-  carveBox(world, 30, 4, 27, 40, 8, 33);
-  carveBox(world, 33, 1, 17, 39, 3, 22);
-  carveBox(world, 33, 1, 28, 39, 3, 32);
-  carveEllipsoid(world, 20, 12, 25, 9, 4, 8);
-  carveEllipsoid(world, 28, 9, 25, 10, 4, 6);
-  carveEllipsoid(world, 35, 5, 19, 8, 3, 5);
-  carveEllipsoid(world, 35, 5, 30, 8, 3, 5);
+  carveEllipsoid(world, 18, 14, 25, 8, 5, 8);
+  carveEllipsoid(world, 24, 11, 25, 7, 5, 6);
+  carveEllipsoid(world, 29, 8, 25, 7, 4, 5);
+  carveTunnel(
+    world,
+    [
+      { x: 14, y: 16, z: 27 },
+      { x: 19, y: 14, z: 25 },
+      { x: 25, y: 11, z: 25 },
+      { x: 30, y: 8, z: 24 },
+    ],
+    3.4,
+    3.1,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 28, y: 8, z: 21 },
+      { x: 32, y: 7, z: 20 },
+      { x: 37, y: 5, z: 20 },
+      { x: 40, y: 4, z: 19 },
+    ],
+    3.2,
+    2.6,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 28, y: 8, z: 29 },
+      { x: 32, y: 7, z: 30 },
+      { x: 37, y: 5, z: 30 },
+      { x: 40, y: 4, z: 31 },
+    ],
+    3.2,
+    2.6,
+  );
+  carveEllipsoid(world, 35, 5, 19, 8, 4, 5);
+  carveEllipsoid(world, 35, 5, 30, 8, 4, 5);
   carveEllipsoid(world, 39, 4, 25, 5, 3, 8);
+  carveEllipsoid(world, 23, 18, 27, 4, 3, 4);
+  carveEllipsoid(world, 31, 13, 20, 4, 3, 3);
+  carveEllipsoid(world, 31, 13, 30, 4, 3, 3);
+  carveEllipsoid(world, 38, 9, 25, 4, 4, 4);
   addSolidBox(world, 14, 13, 24, 19, 20, 31);
   addSolidBox(world, 25, 1, 16, 30, 15, 34);
   addSolidBox(world, 31, 1, 18, 39, 5, 22);
   addSolidBox(world, 31, 1, 28, 39, 5, 32);
-  addSolidBox(world, 43, 3, 22, 43, 3, 28);
+  addSolidBox(world, 43, 0, 4, 43, 12, 34);
+  addSolidBox(world, 4, 0, 35, 43, 12, 35);
 
   addReservoirTank(world, 7, 15, 14, 24, 24, 31);
   fillWaterBox(world, 8, 14, 15, 23, 25, 30);
@@ -208,6 +247,22 @@ function carveEllipsoid(
           world.solid[index(world, x, y, z)] = 0;
         }
       }
+    }
+  }
+}
+
+function carveTunnel(world: VoxelWorld, points: CavePoint[], radiusY: number, radiusZ: number): void {
+  for (let i = 0; i < points.length - 1; i += 1) {
+    const from = points[i];
+    const to = points[i + 1];
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy, dz)));
+
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / steps;
+      carveEllipsoid(world, from.x + dx * t, from.y + dy * t, from.z + dz * t, 3.6, radiusY, radiusZ);
     }
   }
 }
