@@ -110,7 +110,8 @@ const digController = createDigController(
   () => world,
   () => terrainRenderer,
   inputState,
-  () => !firstPersonMode || firstPersonController.isPointerLocked(),
+  () => !firstPersonMode || firstPersonController.hasSceneAim(),
+  () => firstPersonMode && firstPersonController.hasSceneAim(),
 );
 const cellInspector = createCellInspector(
   sceneContext.renderer,
@@ -179,6 +180,7 @@ bindKeyboardControls(inputState, {
   selectPreset,
   renderOptionsChanged: markRenderOptionsChanged,
   toggleFirstPerson: toggleFirstPersonMode,
+  isFirstPersonActive: () => firstPersonMode,
 });
 
 function selectPreset(preset: ScenePresetId): void {
@@ -194,6 +196,7 @@ function resetCurrentLevel(): void {
   setFirstPersonMode(true);
   currentPreset = getCurrentLevel().scene;
   resetWorld();
+  firstPersonController.requestPointerLock();
 }
 
 function advanceToNextLevel(): void {
@@ -202,10 +205,21 @@ function advanceToNextLevel(): void {
   currentLevelIndex = currentLevelIndex >= GAME_LEVELS.length - 1 ? 0 : currentLevelIndex + 1;
   currentPreset = getCurrentLevel().scene;
   resetWorld();
+  firstPersonController.requestPointerLock();
 }
 
 function toggleFirstPersonMode(): void {
-  setFirstPersonMode(!firstPersonMode);
+  if (firstPersonMode && !firstPersonController.isPointerLocked()) {
+    firstPersonController.requestPointerLock();
+    return;
+  }
+
+  const nextEnabled = !firstPersonMode;
+  setFirstPersonMode(nextEnabled);
+  if (nextEnabled) {
+    firstPersonController.reset(world);
+    firstPersonController.requestPointerLock();
+  }
 }
 
 function setFirstPersonMode(enabled: boolean): void {

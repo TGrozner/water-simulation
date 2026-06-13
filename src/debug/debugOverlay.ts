@@ -54,7 +54,7 @@ export function updateDebugOverlay(overlay: HTMLElement, stats: DebugOverlayStat
     </dl>
     <div class="controls">
       Left mouse dig<br />
-      F FPS/orbit, mouse look, WASD/ZQSD move, Shift sprint, Space jump<br />
+      F lock/orbit, mouse look, WASD/ZQSD move, Shift sprint, Space jump<br />
       Right mouse orbit, wheel zoom<br />
       1 tutorial, 2 challenge, O open next, Shift+O open all<br />
       V slice, [ ] move slice<br />

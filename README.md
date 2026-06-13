@@ -67,9 +67,9 @@ scene browsing.
 ## Controls
 
 - Left mouse: lock mouse in FPS mode and dig terrain
-- F: toggle FPS and orbit camera modes
+- F: request FPS pointer lock, then toggle FPS/orbit once locked
 - W / A / S / D or Z / Q / S / D: move in FPS mode
-- Mouse: look around after pointer lock
+- Mouse: look around in FPS mode; click the scene if the browser needs pointer lock
 - Space: jump in FPS mode, pause/resume in orbit mode
 - Shift: sprint in FPS mode
 - Hover visible terrain or water: inspect the cell under the cursor

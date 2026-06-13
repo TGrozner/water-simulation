@@ -5,6 +5,8 @@ import type { VoxelWorld } from "../world/types";
 export type FirstPersonController = {
   enabled: boolean;
   isPointerLocked: () => boolean;
+  hasSceneAim: () => boolean;
+  requestPointerLock: () => void;
   setEnabled: (enabled: boolean) => void;
   reset: (world: VoxelWorld) => void;
   update: (world: VoxelWorld, deltaSeconds: number) => void;
@@ -44,10 +46,15 @@ export function createFirstPersonController(
   const reticle = document.createElement("div");
   reticle.className = "fps-reticle";
   document.body.appendChild(reticle);
+  canvas.tabIndex = 0;
 
   let enabled = initiallyEnabled;
   let yaw = 0;
   let pitch = 0;
+  let lockRequestPending = false;
+  let fallbackAimActive = false;
+  let lastUnlockedMouseX: number | null = null;
+  let lastUnlockedMouseY: number | null = null;
   const physics: MovementPhysics = {
     verticalVelocity: 0,
     jumpQueued: false,
@@ -65,19 +72,83 @@ export function createFirstPersonController(
     camera.rotation.set(pitch, yaw, 0, "YXZ");
   };
 
-  const requestPointerLock = () => {
-    if (enabled && document.pointerLockElement !== canvas) {
-      void canvas.requestPointerLock();
-    }
-  };
-
-  const onMouseMove = (event: MouseEvent) => {
-    if (!enabled || document.pointerLockElement !== canvas) {
+  const requestPointerLock = (armFallbackAim = true) => {
+    if (!enabled) {
       return;
     }
 
-    yaw -= event.movementX * LOOK_SENSITIVITY;
-    pitch -= event.movementY * LOOK_SENSITIVITY;
+    if (armFallbackAim) {
+      fallbackAimActive = true;
+    }
+    if (document.pointerLockElement === canvas || lockRequestPending) {
+      return;
+    }
+
+    lockRequestPending = true;
+    canvas.focus({ preventScroll: true });
+
+    try {
+      const result = canvas.requestPointerLock();
+      void Promise.resolve(result)
+        .catch(() => {
+          lockRequestPending = false;
+        })
+        .finally(() => {
+          if (document.pointerLockElement !== canvas) {
+            lockRequestPending = false;
+          }
+        });
+    } catch {
+      lockRequestPending = false;
+    }
+  };
+
+  const onPointerDown = (event: PointerEvent) => {
+    if (event.button !== 0 || shouldIgnorePointerLockTarget(event.target)) {
+      return;
+    }
+
+    fallbackAimActive = true;
+    requestPointerLock(false);
+  };
+
+  const onClick = (event: MouseEvent) => {
+    if (event.button !== 0 || shouldIgnorePointerLockTarget(event.target)) {
+      return;
+    }
+
+    requestPointerLock();
+  };
+
+  const onPointerLockChange = () => {
+    lockRequestPending = false;
+    lastUnlockedMouseX = null;
+    lastUnlockedMouseY = null;
+    if (document.pointerLockElement === canvas) {
+      fallbackAimActive = true;
+      syncFromCamera();
+    } else {
+      fallbackAimActive = false;
+    }
+  };
+
+  const onPointerLockError = () => {
+    lockRequestPending = false;
+  };
+
+  const onMouseMove = (event: MouseEvent) => {
+    if (!enabled) {
+      return;
+    }
+
+    const locked = document.pointerLockElement === canvas;
+    const mouseDelta = locked ? getLockedMouseDelta(event) : getUnlockedMouseDelta(event, canvas);
+    if (!mouseDelta) {
+      return;
+    }
+
+    yaw -= mouseDelta.x * LOOK_SENSITIVITY;
+    pitch -= mouseDelta.y * LOOK_SENSITIVITY;
     pitch = Math.min(MAX_PITCH, Math.max(-MAX_PITCH, pitch));
     applyRotation();
   };
@@ -87,24 +158,32 @@ export function createFirstPersonController(
       return;
     }
 
-    if (isMovementKey(event.code)) {
-      keys.add(event.code);
+    const movementKey = getMovementKey(event);
+    if (movementKey) {
+      requestPointerLock();
+      keys.add(movementKey);
       event.preventDefault();
       return;
     }
 
     if (event.code === "Space") {
+      requestPointerLock();
       physics.jumpQueued = true;
       event.preventDefault();
     }
   };
 
   const onKeyUp = (event: KeyboardEvent) => {
-    keys.delete(event.code);
+    const movementKey = getMovementKey(event);
+    if (movementKey) {
+      keys.delete(movementKey);
+    }
   };
 
-  canvas.addEventListener("pointerdown", requestPointerLock);
-  canvas.addEventListener("click", requestPointerLock);
+  window.addEventListener("pointerdown", onPointerDown, { capture: true });
+  window.addEventListener("click", onClick, { capture: true });
+  document.addEventListener("pointerlockchange", onPointerLockChange);
+  document.addEventListener("pointerlockerror", onPointerLockError);
   document.addEventListener("mousemove", onMouseMove);
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
@@ -114,12 +193,18 @@ export function createFirstPersonController(
       return enabled;
     },
     isPointerLocked: () => document.pointerLockElement === canvas,
+    hasSceneAim: () => enabled && (document.pointerLockElement === canvas || fallbackAimActive),
+    requestPointerLock,
     setEnabled: (nextEnabled) => {
       enabled = nextEnabled;
       reticle.hidden = !enabled;
       keys.clear();
       physics.jumpQueued = false;
       physics.verticalVelocity = 0;
+      lockRequestPending = false;
+      fallbackAimActive = false;
+      lastUnlockedMouseX = null;
+      lastUnlockedMouseY = null;
       if (!enabled && document.pointerLockElement === canvas) {
         document.exitPointerLock();
       }
@@ -135,6 +220,9 @@ export function createFirstPersonController(
       physics.verticalVelocity = 0;
       physics.jumpQueued = false;
       physics.grounded = isGrounded(world, camera.position);
+      fallbackAimActive = false;
+      lastUnlockedMouseX = null;
+      lastUnlockedMouseY = null;
     },
     update: (world, deltaSeconds) => {
       if (!enabled) {
@@ -144,8 +232,10 @@ export function createFirstPersonController(
       updateMovement(world, camera, keys, yaw, Math.min(deltaSeconds, MAX_DELTA_SECONDS), physics);
     },
     dispose: () => {
-      canvas.removeEventListener("pointerdown", requestPointerLock);
-      canvas.removeEventListener("click", requestPointerLock);
+      window.removeEventListener("pointerdown", onPointerDown, { capture: true });
+      window.removeEventListener("click", onClick, { capture: true });
+      document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("pointerlockerror", onPointerLockError);
       document.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
@@ -155,10 +245,46 @@ export function createFirstPersonController(
 
   controller.setEnabled(initiallyEnabled);
   return controller;
+
+  function getUnlockedMouseDelta(event: MouseEvent, targetCanvas: HTMLCanvasElement): { x: number; y: number } | null {
+    if (!isSceneMouseEvent(event, targetCanvas)) {
+      lastUnlockedMouseX = null;
+      lastUnlockedMouseY = null;
+      return null;
+    }
+
+    const previousX = lastUnlockedMouseX;
+    const previousY = lastUnlockedMouseY;
+    lastUnlockedMouseX = event.clientX;
+    lastUnlockedMouseY = event.clientY;
+    if (previousX === null || previousY === null) {
+      return null;
+    }
+
+    return {
+      x: event.clientX - previousX,
+      y: event.clientY - previousY,
+    };
+  }
+}
+
+function getLockedMouseDelta(event: MouseEvent): { x: number; y: number } | null {
+  return { x: event.movementX, y: event.movementY };
+}
+
+function isSceneMouseEvent(event: MouseEvent, canvas: HTMLCanvasElement): boolean {
+  if (shouldIgnorePointerLockTarget(event.target)) {
+    return false;
+  }
+
+  return event.target === canvas || event.composedPath().includes(canvas);
 }
 
 function setSpawn(camera: PerspectiveCamera, world: VoxelWorld): void {
   const spawnCandidates = [
+    { position: new Vector3(-8.5, 26.75, 3.5), lookAt: new Vector3(-12, 23.2, 3.5) },
+    { position: new Vector3(-8.5, 26.75, 6.5), lookAt: new Vector3(-12, 23.2, 4.5) },
+    { position: new Vector3(-7.5, 25.75, 3.5), lookAt: new Vector3(-12.5, 23.5, 4.5) },
     { position: new Vector3(-5, 15.4, -4.5), lookAt: new Vector3(9, 15.4, -4.5) },
     { position: new Vector3(4, 15.4, -5), lookAt: new Vector3(10, 15.4, 4) },
     { position: new Vector3(8, 15.4, -2), lookAt: new Vector3(-4, 15.4, -4) },
@@ -178,6 +304,19 @@ function setSpawn(camera: PerspectiveCamera, world: VoxelWorld): void {
   camera.lookAt(-8, 15.5, 4);
 }
 
+function shouldIgnorePointerLockTarget(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (Boolean(target.closest(".debug-panel")) ||
+      Boolean(target.closest(".game-panel")) ||
+      Boolean(target.closest(".sonar-panel")) ||
+      target instanceof HTMLButtonElement ||
+      target instanceof HTMLInputElement ||
+      target instanceof HTMLSelectElement ||
+      target instanceof HTMLTextAreaElement)
+  );
+}
+
 function updateMovement(
   world: VoxelWorld,
   camera: PerspectiveCamera,
@@ -190,16 +329,16 @@ function updateMovement(
   forward.set(-Math.sin(yaw), 0, -Math.cos(yaw));
   right.set(Math.cos(yaw), 0, -Math.sin(yaw));
 
-  if (keys.has("KeyW") || keys.has("KeyZ")) {
+  if (keys.has("forward")) {
     movement.add(forward);
   }
-  if (keys.has("KeyS")) {
+  if (keys.has("back")) {
     movement.sub(forward);
   }
-  if (keys.has("KeyD")) {
+  if (keys.has("right")) {
     movement.add(right);
   }
-  if (keys.has("KeyA") || keys.has("KeyQ")) {
+  if (keys.has("left")) {
     movement.sub(right);
   }
 
@@ -213,7 +352,7 @@ function updateMovement(
   if (movement.lengthSq() > 0) {
     movement
       .normalize()
-      .multiplyScalar((keys.has("ShiftLeft") || keys.has("ShiftRight") ? SPRINT_SPEED : WALK_SPEED) * deltaSeconds);
+      .multiplyScalar((keys.has("sprint") ? SPRINT_SPEED : WALK_SPEED) * deltaSeconds);
     moveAxis(world, camera, movement.x, 0, 0);
     moveAxis(world, camera, 0, 0, movement.z);
   }
@@ -264,17 +403,25 @@ function isGrounded(world: VoxelWorld, position: Vector3): boolean {
   return !canOccupy(groundProbePosition, world);
 }
 
-function isMovementKey(code: string): boolean {
-  return (
-    code === "KeyW" ||
-    code === "KeyZ" ||
-    code === "KeyA" ||
-    code === "KeyQ" ||
-    code === "KeyS" ||
-    code === "KeyD" ||
-    code === "ShiftLeft" ||
-    code === "ShiftRight"
-  );
+function getMovementKey(event: KeyboardEvent): string | null {
+  const key = event.key.toLowerCase();
+  if (key === "z" || key === "w") {
+    return "forward";
+  }
+  if (key === "s") {
+    return "back";
+  }
+  if (key === "q" || key === "a") {
+    return "left";
+  }
+  if (key === "d") {
+    return "right";
+  }
+  if (event.code === "ShiftLeft" || event.code === "ShiftRight") {
+    return "sprint";
+  }
+
+  return null;
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {

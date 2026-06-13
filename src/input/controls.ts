@@ -25,6 +25,7 @@ export type InputCallbacks = {
   selectPreset: (preset: ScenePresetId) => void;
   renderOptionsChanged: () => void;
   toggleFirstPerson: () => void;
+  isFirstPersonActive: () => boolean;
 };
 
 export type DigController = {
@@ -50,12 +51,12 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
       return;
     }
 
-    if (document.pointerLockElement && isFirstPersonGameplayKey(event.code)) {
+    if (event.code === "KeyF") {
+      callbacks.toggleFirstPerson();
       return;
     }
 
-    if (event.code === "KeyF") {
-      callbacks.toggleFirstPerson();
+    if (callbacks.isFirstPersonActive() && isFirstPersonGameplayKey(event)) {
       return;
     }
 
@@ -119,17 +120,19 @@ export function bindKeyboardControls(state: InputState, callbacks: InputCallback
   });
 }
 
-function isFirstPersonGameplayKey(code: string): boolean {
+function isFirstPersonGameplayKey(event: KeyboardEvent): boolean {
+  const key = event.key.toLowerCase();
   return (
-    code === "KeyW" ||
-    code === "KeyZ" ||
-    code === "KeyA" ||
-    code === "KeyQ" ||
-    code === "KeyS" ||
-    code === "KeyD" ||
-    code === "Space" ||
-    code === "ShiftLeft" ||
-    code === "ShiftRight"
+    key === "z" ||
+    key === "w" ||
+    key === "q" ||
+    key === "a" ||
+    key === "s" ||
+    key === "d" ||
+    key === " " ||
+    event.code === "Space" ||
+    event.code === "ShiftLeft" ||
+    event.code === "ShiftRight"
   );
 }
 
@@ -155,6 +158,7 @@ export function createDigController(
   terrainProvider: () => TerrainRenderer,
   state: InputState,
   canDig = () => true,
+  useCenteredAim = () => false,
 ): DigController {
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -254,7 +258,7 @@ export function createDigController(
 
   function pickTerrainCell(event: PointerEvent): number | null {
     const rect = canvas.getBoundingClientRect();
-    if (document.pointerLockElement === canvas) {
+    if (document.pointerLockElement === canvas || useCenteredAim()) {
       pointer.set(0, 0);
     } else {
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
