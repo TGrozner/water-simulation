@@ -1,15 +1,20 @@
 import {
   Color,
+  type BufferGeometry,
   ConeGeometry,
   Group,
   IcosahedronGeometry,
   InstancedMesh,
+  type Material,
+  Mesh,
   MeshBasicMaterial,
+  type MeshStandardMaterialParameters,
   MeshStandardMaterial,
   Object3D,
   PointLight,
   Scene,
 } from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { inBounds, isSolid } from "../world/grid";
 import type { VoxelWorld } from "../world/types";
 
@@ -32,15 +37,63 @@ type DecorLight = {
   z: number;
 };
 
+const CAVE_ASSET_BASE = "assets/kenney-nature-kit/";
+const CAVE_ASSET_FILES = [
+  { key: "cliffWaterfall", file: "cliff_waterfall_rock.glb" },
+  { key: "cliffWaterfallTop", file: "cliff_waterfallTop_rock.glb" },
+  { key: "riverRocks", file: "ground_riverRocks.glb" },
+  { key: "largeRockA", file: "rock_largeA.glb" },
+  { key: "largeRockD", file: "rock_largeD.glb" },
+  { key: "tallRockA", file: "rock_tallA.glb" },
+  { key: "flatRock", file: "rock_smallFlatC.glb" },
+  { key: "mushrooms", file: "mushroom_tanGroup.glb" },
+] as const;
+
+type CaveAssetKey = (typeof CAVE_ASSET_FILES)[number]["key"];
+
+type CaveAssetState = {
+  root: Group;
+  loader: GLTFLoader;
+  prototypes: Partial<Record<CaveAssetKey, Object3D>>;
+  loadingStarted: boolean;
+  disposed: boolean;
+  signature: string;
+};
+
+type CaveAssetPlacement = {
+  key: CaveAssetKey;
+  x: number;
+  y: number;
+  z: number;
+  scale: number;
+  rotationY: number;
+};
+
+const CAVE_ASSET_MATERIALS: Record<CaveAssetKey, MeshStandardMaterialParameters> = {
+  cliffWaterfall: { color: 0x625f51, emissive: 0x101711, roughness: 0.9, metalness: 0.02 },
+  cliffWaterfallTop: { color: 0x746852, emissive: 0x15140f, roughness: 0.88, metalness: 0.02 },
+  riverRocks: { color: 0x5f675a, emissive: 0x0d1714, roughness: 0.92, metalness: 0.02 },
+  largeRockA: { color: 0x6f6858, emissive: 0x121612, roughness: 0.92, metalness: 0.02 },
+  largeRockD: { color: 0x665f50, emissive: 0x10130f, roughness: 0.92, metalness: 0.02 },
+  tallRockA: { color: 0x59675d, emissive: 0x0c1512, roughness: 0.9, metalness: 0.02 },
+  flatRock: { color: 0x79705e, emissive: 0x151510, roughness: 0.9, metalness: 0.02 },
+  mushrooms: { color: 0xb49b72, emissive: 0x271d11, roughness: 0.78, metalness: 0.01 },
+};
+
 const CRYSTAL_CAPACITY = 260;
 const GLOW_CAPACITY = 72;
 const SPIKE_CAPACITY = 180;
+const PROCEDURAL_DECOR_VISIBLE = false;
 const decorDummy = new Object3D();
 const decorColor = new Color();
 
 export function createCavernDecorRenderer(scene: Scene, world: VoxelWorld): CavernDecorRenderer {
   const root = new Group();
   root.name = "cavern-decor";
+  const assetRoot = new Group();
+  assetRoot.name = "cc0-cave-assets";
+  root.add(assetRoot);
+  const caveAssets = createCaveAssetState(assetRoot);
 
   const crystalGeometry = new ConeGeometry(0.34, 1.7, 5, 1);
   const glowGeometry = new IcosahedronGeometry(0.45, 1);
@@ -92,9 +145,11 @@ export function createCavernDecorRenderer(scene: Scene, world: VoxelWorld): Cave
     root,
     update: (nextWorld) => {
       rebuildDecor(nextWorld, crystalMesh, glowMesh, spikeMesh, lights);
+      rebuildCaveAssetDecor(nextWorld, caveAssets);
     },
     dispose: () => {
       scene.remove(root);
+      disposeCaveAssets(caveAssets);
       crystalGeometry.dispose();
       glowGeometry.dispose();
       spikeGeometry.dispose();
@@ -108,6 +163,165 @@ export function createCavernDecorRenderer(scene: Scene, world: VoxelWorld): Cave
   return renderer;
 }
 
+function createCaveAssetState(root: Group): CaveAssetState {
+  return {
+    root,
+    loader: new GLTFLoader(),
+    prototypes: {},
+    loadingStarted: false,
+    disposed: false,
+    signature: "",
+  };
+}
+
+function rebuildCaveAssetDecor(world: VoxelWorld, state: CaveAssetState, force = false): void {
+  const isGeneratedCavernWorld = world.width >= 64 || world.depth >= 64 || world.height >= 40;
+  state.root.visible = isGeneratedCavernWorld;
+  if (!isGeneratedCavernWorld) {
+    state.root.clear();
+    state.signature = "";
+    return;
+  }
+
+  startCaveAssetLoading(world, state);
+  const loadedCount = CAVE_ASSET_FILES.reduce((count, asset) => count + (state.prototypes[asset.key] ? 1 : 0), 0);
+  const signature = `${world.width}x${world.height}x${world.depth}:${loadedCount}`;
+  if (!force && state.signature === signature) {
+    return;
+  }
+
+  state.root.clear();
+  for (const placement of getCaveAssetPlacements(world)) {
+    const prototype = state.prototypes[placement.key];
+    if (!prototype) {
+      continue;
+    }
+
+    const clone = prototype.clone(true);
+    clone.position.set(placement.x - world.width / 2 + 0.5, placement.y, placement.z - world.depth / 2 + 0.5);
+    clone.rotation.set(0, placement.rotationY, 0);
+    clone.scale.setScalar(placement.scale);
+    state.root.add(clone);
+  }
+
+  state.signature = signature;
+}
+
+function startCaveAssetLoading(world: VoxelWorld, state: CaveAssetState): void {
+  if (state.loadingStarted || state.disposed) {
+    return;
+  }
+
+  state.loadingStarted = true;
+  for (const asset of CAVE_ASSET_FILES) {
+    state.loader.load(
+      `${CAVE_ASSET_BASE}${asset.file}`,
+      (gltf) => {
+        if (state.disposed) {
+          return;
+        }
+        prepareCaveAssetPrototype(gltf.scene, asset.key);
+        state.prototypes[asset.key] = gltf.scene;
+        state.signature = "";
+        rebuildCaveAssetDecor(world, state, true);
+      },
+      undefined,
+      () => {
+        state.signature = "";
+      },
+    );
+  }
+}
+
+function prepareCaveAssetPrototype(prototype: Object3D, key: CaveAssetKey): void {
+  const material = new MeshStandardMaterial(CAVE_ASSET_MATERIALS[key]);
+  prototype.traverse((child) => {
+    child.frustumCulled = false;
+    child.castShadow = false;
+    child.receiveShadow = true;
+    if (child instanceof Mesh) {
+      child.material = material;
+    }
+  });
+}
+
+function getCaveAssetPlacements(world: VoxelWorld): CaveAssetPlacement[] {
+  const placements: CaveAssetPlacement[] = [];
+  addAssetOnFloor(placements, world, "cliffWaterfallTop", 57, 22, 8, 0.9, 0.15);
+  addAssetOnFloor(placements, world, "cliffWaterfall", 57, 24, 7, 0.95, 0.15);
+  addAssetOnFloor(placements, world, "riverRocks", 39, 40, 7, 0.8, 2.2);
+  addAssetOnFloor(placements, world, "largeRockA", 49, 18, 6, 0.85, 0.8);
+  addAssetOnFloor(placements, world, "largeRockD", 63, 54, 5, 0.82, 2.7);
+  addAssetOnFloor(placements, world, "tallRockA", 23, 47, 8, 0.88, 1.5);
+  addAssetOnFloor(placements, world, "flatRock", 33, 34, 6, 1.05, 0.35);
+  addAssetOnFloor(placements, world, "mushrooms", 18, 26, 26, 1.15, 2.9);
+  addAssetOnFloor(placements, world, "mushrooms", 21, 52, 11, 0.95, 0.7);
+  addAssetOnFloor(placements, world, "largeRockA", 61, 23, 7, 0.72, 2.1);
+  addAssetOnFloor(placements, world, "flatRock", 54, 24, 7, 0.86, 1.7);
+  addAssetOnFloor(placements, world, "tallRockA", 56, 27, 7, 0.7, 0.4);
+  addAssetOnFloor(placements, world, "riverRocks", 31, 37, 7, 0.72, 0.6);
+  return placements;
+}
+
+function addAssetOnFloor(
+  placements: CaveAssetPlacement[],
+  world: VoxelWorld,
+  key: CaveAssetKey,
+  x: number,
+  z: number,
+  preferredY: number,
+  scale: number,
+  rotationY: number,
+): void {
+  if (x < 1 || x >= world.width - 1 || z < 1 || z >= world.depth - 1) {
+    return;
+  }
+
+  const floorY = findNearestFloorY(world, x, z, preferredY);
+  if (floorY < 0) {
+    return;
+  }
+
+  placements.push({ key, x, y: floorY + 0.02, z, scale, rotationY });
+}
+
+function disposeCaveAssets(state: CaveAssetState): void {
+  state.disposed = true;
+  const disposedGeometries = new Set<BufferGeometry>();
+  const disposedMaterials = new Set<Material>();
+  for (const prototype of Object.values(state.prototypes)) {
+    if (prototype) {
+      disposeObjectTree(prototype, disposedGeometries, disposedMaterials);
+    }
+  }
+  for (const child of state.root.children) {
+    disposeObjectTree(child, disposedGeometries, disposedMaterials);
+  }
+  state.root.clear();
+  state.prototypes = {};
+}
+
+function disposeObjectTree(object: Object3D, disposedGeometries: Set<BufferGeometry>, disposedMaterials: Set<Material>): void {
+  object.traverse((child) => {
+    if (!(child instanceof Mesh)) {
+      return;
+    }
+
+    if (!disposedGeometries.has(child.geometry)) {
+      child.geometry.dispose();
+      disposedGeometries.add(child.geometry);
+    }
+
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!disposedMaterials.has(material)) {
+        material.dispose();
+        disposedMaterials.add(material);
+      }
+    }
+  });
+}
+
 function rebuildDecor(
   world: VoxelWorld,
   crystalMesh: InstancedMesh,
@@ -115,16 +329,17 @@ function rebuildDecor(
   spikeMesh: InstancedMesh,
   lights: DecorLight[],
 ): void {
-  const isDeepCavern = world.width >= 64 || world.depth >= 64 || world.height >= 40;
-  crystalMesh.visible = isDeepCavern;
-  glowMesh.visible = isDeepCavern;
-  spikeMesh.visible = isDeepCavern;
+  const isGeneratedCavernWorld = world.width >= 64 || world.depth >= 64 || world.height >= 40;
+  const showProceduralDecor = isGeneratedCavernWorld && PROCEDURAL_DECOR_VISIBLE;
+  crystalMesh.visible = showProceduralDecor;
+  glowMesh.visible = showProceduralDecor;
+  spikeMesh.visible = showProceduralDecor;
   for (const decorLight of lights) {
-    decorLight.light.visible = isDeepCavern;
+    decorLight.light.visible = isGeneratedCavernWorld;
     setDecorLightPosition(world, decorLight);
   }
 
-  if (!isDeepCavern) {
+  if (!showProceduralDecor) {
     crystalMesh.count = 0;
     glowMesh.count = 0;
     spikeMesh.count = 0;
@@ -138,26 +353,9 @@ function rebuildDecor(
   addCrystalCluster(world, crystalMesh, glowMesh, counts, 21, 10, 52, 0x9b7dff, 12, 1.08);
   addCrystalCluster(world, crystalMesh, glowMesh, counts, 36, 8, 38, 0xff8a4f, 10, 0.95);
 
-  for (let z = 8; z < world.depth - 8; z += 5) {
-    for (let x = 8; x < world.width - 8; x += 5) {
-      const seed = getDecorNoise(x, 0, z);
-      if (seed < 0.16) {
-        const floorY = findFloorY(world, x, z);
-        if (floorY >= 0) {
-          addSpike(world, spikeMesh, counts, x, floorY, z, false, 0.9 + seed * 2.4, 0x78604a);
-        }
-      } else if (seed > 0.84) {
-        const ceilingY = findCeilingY(world, x, z);
-        if (ceilingY >= 0) {
-          addSpike(world, spikeMesh, counts, x, ceilingY, z, true, 1.0 + (1 - seed) * 2.1, 0x615c57);
-        }
-      }
-    }
-  }
-
   crystalMesh.count = counts.crystal;
   glowMesh.count = counts.glow;
-  spikeMesh.count = counts.spike;
+  spikeMesh.count = 0;
   crystalMesh.instanceMatrix.needsUpdate = true;
   glowMesh.instanceMatrix.needsUpdate = true;
   spikeMesh.instanceMatrix.needsUpdate = true;
@@ -253,36 +451,6 @@ function addGlow(
   counts.glow += 1;
 }
 
-function addSpike(
-  world: VoxelWorld,
-  mesh: InstancedMesh,
-  counts: DecorCounts,
-  x: number,
-  y: number,
-  z: number,
-  inverted: boolean,
-  scale: number,
-  color: number,
-): void {
-  if (counts.spike >= SPIKE_CAPACITY || !isOpen(world, x, y, z)) {
-    return;
-  }
-
-  const height = 2.4 * scale;
-  decorDummy.position.set(
-    x - world.width / 2 + 0.5,
-    inverted ? y + 1 - height * 0.5 : y + height * 0.5,
-    z - world.depth / 2 + 0.5,
-  );
-  decorDummy.rotation.set(inverted ? Math.PI : 0, getDecorNoise(x, y, z) * Math.PI * 2, 0);
-  decorDummy.scale.set(0.72 + scale * 0.2, scale, 0.72 + scale * 0.2);
-  decorDummy.updateMatrix();
-  mesh.setMatrixAt(counts.spike, decorDummy.matrix);
-  decorColor.setHex(color);
-  mesh.setColorAt(counts.spike, decorColor);
-  counts.spike += 1;
-}
-
 function findNearestFloorY(world: VoxelWorld, x: number, z: number, preferredY: number): number {
   let bestY = -1;
   let bestDistance = Number.POSITIVE_INFINITY;
@@ -298,24 +466,6 @@ function findNearestFloorY(world: VoxelWorld, x: number, z: number, preferredY: 
     }
   }
   return bestY;
-}
-
-function findFloorY(world: VoxelWorld, x: number, z: number): number {
-  for (let y = 1; y < world.height - 1; y += 1) {
-    if (isOpen(world, x, y, z) && isSolid(world, x, y - 1, z)) {
-      return y;
-    }
-  }
-  return -1;
-}
-
-function findCeilingY(world: VoxelWorld, x: number, z: number): number {
-  for (let y = world.height - 2; y > 1; y -= 1) {
-    if (isOpen(world, x, y, z) && isSolid(world, x, y + 1, z)) {
-      return y;
-    }
-  }
-  return -1;
 }
 
 function isOpen(world: VoxelWorld, x: number, y: number, z: number): boolean {

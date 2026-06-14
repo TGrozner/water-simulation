@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Vector3, WebGLRenderer } from "three";
+import { PerspectiveCamera, Vector3 } from "three";
 import { isSolid } from "../world/grid";
 import type { VoxelWorld } from "../world/types";
 
@@ -41,8 +41,12 @@ type MovementPhysics = {
   grounded: boolean;
 };
 
+type CanvasRenderer = {
+  domElement: HTMLCanvasElement;
+};
+
 export function createFirstPersonController(
-  renderer: WebGLRenderer,
+  renderer: CanvasRenderer,
   camera: PerspectiveCamera,
   initiallyEnabled: boolean,
 ): FirstPersonController {

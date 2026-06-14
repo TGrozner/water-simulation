@@ -1,4 +1,4 @@
-import { PerspectiveCamera, Plane, Raycaster, Vector2, Vector3, WebGLRenderer } from "three";
+import { PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from "three";
 import type { TerrainRenderer } from "../render/terrainRenderer";
 import type { WaterRenderer } from "../render/waterRenderer";
 import type { RenderOptions } from "../render/renderOptions";
@@ -18,8 +18,12 @@ export type CellInspector = {
   getCell: () => InspectedCell;
 };
 
+type CanvasRenderer = {
+  domElement: HTMLCanvasElement;
+};
+
 export function createCellInspector(
-  renderer: WebGLRenderer,
+  renderer: CanvasRenderer,
   camera: PerspectiveCamera,
   worldProvider: () => VoxelWorld,
   terrainProvider: () => TerrainRenderer,

@@ -18,7 +18,11 @@ const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
-const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid", "divide", "deep-cavern"];
+const DEFAULT_CAPTURE_WAIT_MS = 5_000;
+const LARGE_SCENE_CAPTURE_WAIT_MS = 10_000;
+const BLANK_CAPTURE_RETRY_COUNT = 3;
+const CDP_CAPTURE_READY_TIMEOUT_MS = 25_000;
+const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["generated-cavern"];
 type GameCapture = {
   url: string;
   filename: string;
@@ -27,116 +31,37 @@ type GameCapture = {
 
 const GAME_CAPTURES: GameCapture[] = [
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&camera=fps`,
-    filename: "game-tutorial.png",
+    url: `${BASE_URL}/?game=1&level=generated-cavern&camera=fps&spawn=overview`,
+    filename: "game-generated-cavern-start.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&openStages=2&warmupTicks=1800&camera=fps`,
-    filename: "game-tutorial-complete.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&camera=fps`,
-    filename: "game-tutorial-best-start.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&openStages=2&warmupTicks=1800&camera=fps`,
-    filename: "game-tutorial-repeat-complete.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&camera=fps`,
-    filename: "game-challenge-start.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&camera=fps`,
-    filename: "game-challenge-open-2.png",
-    timeoutMs: 350,
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&camera=fps`,
-    filename: "game-challenge-north.png",
-    timeoutMs: 350,
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-challenge-route-south.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&branch=north&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-challenge-route-north.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=challenge&openStages=2&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-challenge-hazard.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitpath&camera=fps`,
-    filename: "game-splitpath-start.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&camera=fps`,
-    filename: "game-splitpath-open-1.png",
-    timeoutMs: 350,
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-splitpath-route-south.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&choice2=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-splitpath-route-north.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitpath&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-splitpath-hazard.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitbasin&camera=fps`,
-    filename: "game-splitbasin-start.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&camera=fps`,
-    filename: "game-splitbasin-open-1.png",
-    timeoutMs: 350,
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&carveManual=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-splitbasin-both-routes.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
-    filename: "game-splitbasin-hazard.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&camera=fps&spawn=overview`,
-    filename: "game-deep-cavern-start.png",
-  },
-  {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&camera=fps&spawn=drop`,
-    filename: "game-deep-cavern-open-2.png",
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&camera=fps&spawn=drop`,
+    filename: "game-generated-cavern-open-2.png",
     timeoutMs: 700,
   },
   {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=basins`,
-    filename: "game-deep-cavern-complete.png",
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=basins`,
+    filename: "game-generated-cavern-complete.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=south-basin`,
-    filename: "game-deep-cavern-hazard.png",
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=south-basin`,
+    filename: "game-generated-cavern-hazard.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&camera=fps`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&seedBestScores=1&camera=fps&spawn=overview`,
     filename: "game-level-select-summary.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&debugUi=1&camera=fps`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&seedBestScores=1&debugUi=1&camera=fps&spawn=overview`,
     filename: "game-level-select-debug-ui.png",
   },
 ];
 
 async function run(): Promise<void> {
   const updateBaseline = process.argv.includes("--update-baseline");
+  const onlyFilenames = getOnlyFilenames();
   await mkdir(BASELINE_DIR, { recursive: true });
   await rm(CHROME_PROFILE_DIR, { recursive: true, force: true });
   await mkdir(CHROME_PROFILE_DIR, { recursive: true });
@@ -152,13 +77,27 @@ async function run(): Promise<void> {
     const chrome = findChromeCommand();
 
     for (const preset of SCENE_PRESETS) {
-      await captureAndCompare(chrome, getSceneCaptureUrl(preset), `${preset}.png`, updateBaseline);
-      await capture(
-        chrome,
-        getSceneSliceCaptureUrl(preset),
-        `${ACTUAL_DIR}/${preset}-slice.png`,
-      );
-      await compareOrUpdateBaseline(`${preset}-slice.png`, updateBaseline);
+      const sceneFilename = `${preset}.png`;
+      if (shouldCapture(sceneFilename, onlyFilenames)) {
+        await captureAndCompare(
+          chrome,
+          getSceneCaptureUrl(preset),
+          sceneFilename,
+          updateBaseline,
+          getSceneCaptureTimeout(preset),
+        );
+      }
+
+      const sliceFilename = `${preset}-slice.png`;
+      if (shouldCapture(sliceFilename, onlyFilenames)) {
+        await captureNonBlank(
+          chrome,
+          getSceneSliceCaptureUrl(preset),
+          `${ACTUAL_DIR}/${sliceFilename}`,
+          getSceneCaptureTimeout(preset),
+        );
+        await compareOrUpdateBaseline(sliceFilename, updateBaseline);
+      }
     }
 
     for (const preset of STAGED_CAPTURE_PRESETS) {
@@ -166,32 +105,55 @@ async function run(): Promise<void> {
       const scriptedStageCount = stages.filter(isStageAutoOpen).length;
       for (let openStages = 1; openStages <= scriptedStageCount; openStages += 1) {
         const filename = `${preset}-open-${openStages}.png`;
-        await captureAndCompare(chrome, `${BASE_URL}/?scene=${preset}&openStages=${openStages}&debug=1`, filename, updateBaseline);
+        if (shouldCapture(filename, onlyFilenames)) {
+          await captureAndCompare(
+            chrome,
+            `${BASE_URL}/?scene=${preset}&openStages=${openStages}&debug=1&paused=1`,
+            filename,
+            updateBaseline,
+          );
+        }
       }
     }
 
     for (const gameCapture of GAME_CAPTURES) {
-      await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline, gameCapture.timeoutMs);
+      if (shouldCapture(gameCapture.filename, onlyFilenames)) {
+        await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline, gameCapture.timeoutMs);
+      }
     }
   } finally {
     await stopProcess(server);
   }
 }
 
-function getSceneCaptureUrl(preset: ScenePresetId): string {
-  if (preset === "deep-cavern") {
-    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=overview&debugUi=1`;
+function getOnlyFilenames(): Set<string> | null {
+  const onlyArg = process.argv.find((arg) => arg.startsWith("--only="));
+  if (!onlyArg) {
+    return null;
   }
 
-  return `${BASE_URL}/?scene=${preset}`;
+  const filenames = onlyArg
+    .slice("--only=".length)
+    .split(",")
+    .map((filename) => filename.trim())
+    .filter(Boolean);
+  return filenames.length > 0 ? new Set(filenames) : null;
+}
+
+function shouldCapture(filename: string, onlyFilenames: Set<string> | null): boolean {
+  return !onlyFilenames || onlyFilenames.has(filename);
+}
+
+function getSceneCaptureUrl(preset: ScenePresetId): string {
+  return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=overview&debugUi=1&paused=1`;
 }
 
 function getSceneSliceCaptureUrl(preset: ScenePresetId): string {
-  if (preset === "deep-cavern") {
-    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=drop&slice=1&sliceZ=36&debug=1&debugUi=1`;
-  }
+  return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=drop&slice=1&sliceZ=36&debug=1&debugUi=1&paused=1`;
+}
 
-  return `${BASE_URL}/?scene=${preset}&slice=1&sliceZ=28&debug=1`;
+function getSceneCaptureTimeout(_preset: ScenePresetId): number {
+  return LARGE_SCENE_CAPTURE_WAIT_MS;
 }
 
 async function captureAndCompare(
@@ -201,8 +163,50 @@ async function captureAndCompare(
   updateBaseline: boolean,
   timeoutMs?: number,
 ): Promise<void> {
-  await capture(chrome, url, `${ACTUAL_DIR}/${filename}`, timeoutMs);
+  await captureNonBlank(chrome, url, `${ACTUAL_DIR}/${filename}`, timeoutMs);
   await compareOrUpdateBaseline(filename, updateBaseline);
+}
+
+async function captureNonBlank(chrome: string, url: string, outputPath: string, timeoutMs = DEFAULT_CAPTURE_WAIT_MS): Promise<void> {
+  if (shouldUseCdpFirst(outputPath, timeoutMs)) {
+    await captureWithCdp(chrome, url, outputPath, timeoutMs);
+    assertNotBlank(await readPng(outputPath), outputPath);
+    return;
+  }
+
+  let lastBlankError: unknown;
+
+  for (let attempt = 1; attempt <= BLANK_CAPTURE_RETRY_COUNT; attempt += 1) {
+    const attemptTimeoutMs = timeoutMs * attempt;
+    await capture(chrome, url, outputPath, attemptTimeoutMs);
+
+    try {
+      assertNotBlank(await readPng(outputPath), outputPath);
+      return;
+    } catch (error) {
+      if (!isBlankScreenshotError(error) || attempt === BLANK_CAPTURE_RETRY_COUNT) {
+        if (!isBlankScreenshotError(error)) {
+          throw error;
+        }
+        lastBlankError = error;
+        break;
+      }
+
+      lastBlankError = error;
+      console.warn(`retrying blank capture ${outputPath} attempt=${attempt + 1}`);
+    }
+  }
+
+  console.warn(`falling back to CDP capture ${outputPath}`);
+  await captureWithCdp(chrome, url, outputPath, timeoutMs);
+  try {
+    assertNotBlank(await readPng(outputPath), outputPath);
+  } catch (error) {
+    if (lastBlankError instanceof Error && error instanceof Error) {
+      throw new Error(`${error.message}; CLI fallback source: ${lastBlankError.message}`);
+    }
+    throw error;
+  }
 }
 
 async function compareOrUpdateBaseline(filename: string, updateBaseline: boolean): Promise<void> {
@@ -250,6 +254,10 @@ function assertNotBlank(image: PNG, path: string): void {
   if (variance < MIN_VARIANCE) {
     throw new Error(`${path}: screenshot appears blank; variance=${variance.toFixed(3)}`);
   }
+}
+
+function isBlankScreenshotError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes("screenshot appears blank");
 }
 
 function comparePngs(baseline: PNG, actual: PNG): { score: number; diffImage: PNG } {
@@ -323,13 +331,14 @@ function findChromeCommand(): string {
   return process.env.CHROME_BIN || CHROME_CANDIDATES[0];
 }
 
-async function capture(chrome: string, url: string, outputPath: string, timeoutMs = 1500): Promise<void> {
+async function capture(chrome: string, url: string, outputPath: string, timeoutMs = DEFAULT_CAPTURE_WAIT_MS): Promise<void> {
   const profilePath = getCaptureProfilePath(outputPath);
   await rm(profilePath, { recursive: true, force: true });
   const args = [
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
+    "--enable-unsafe-swiftshader",
     "--no-sandbox",
     `--user-data-dir=${profilePath}`,
     "--window-size=1280,720",
@@ -364,9 +373,220 @@ async function capture(chrome: string, url: string, outputPath: string, timeoutM
   });
 }
 
+async function captureWithCdp(chrome: string, url: string, outputPath: string, timeoutMs: number): Promise<void> {
+  const port = 12_000 + Math.floor(Math.random() * 20_000);
+  const profilePath = `${getCaptureProfilePath(outputPath)}-cdp`;
+  await rm(profilePath, { recursive: true, force: true });
+  const args = [
+    "--headless=new",
+    "--disable-gpu",
+    "--disable-dev-shm-usage",
+    "--disable-background-timer-throttling",
+    "--enable-unsafe-swiftshader",
+    "--no-sandbox",
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profilePath}`,
+    "about:blank",
+  ];
+  const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  browser.stderr.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+
+  try {
+    const version = await waitForCdpVersion(port);
+    const ws = new WebSocket(version.webSocketDebuggerUrl);
+    const cdp = createCdpClient(ws);
+    await cdp.open();
+    const { targetId } = await cdp.send<{ targetId: string }>("Target.createTarget", { url: "about:blank" });
+    const { sessionId } = await cdp.send<{ sessionId: string }>("Target.attachToTarget", { targetId, flatten: true });
+    await cdp.send("Runtime.enable", {}, sessionId);
+    await cdp.send("Page.enable", {}, sessionId);
+    await cdp.send("Emulation.setDeviceMetricsOverride", { width: 1280, height: 720, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await cdp.send("Page.navigate", { url }, sessionId);
+    await waitForRenderedPage(cdp, sessionId);
+    await sleep(getCdpSettleWaitMs(timeoutMs));
+    cdp.throwIfRuntimeFailed(url);
+    const screenshot = await cdp.send<{ data: string }>(
+      "Page.captureScreenshot",
+      { format: "png", fromSurface: true, captureBeyondViewport: false },
+      sessionId,
+    );
+    await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
+    await cdp.send("Target.closeTarget", { targetId });
+    cdp.close();
+  } catch (error) {
+    throw new Error(`CDP screenshot failed for ${url}: ${String(error)}\n${stderr}`);
+  } finally {
+    await stopProcess(browser);
+  }
+}
+
+type CdpVersion = {
+  webSocketDebuggerUrl: string;
+};
+
+type CdpMessage = {
+  id?: number;
+  method?: string;
+  params?: {
+    type?: string;
+    args?: Array<{ value?: unknown; description?: string; type?: string }>;
+    exceptionDetails?: {
+      text?: string;
+      url?: string;
+      lineNumber?: number;
+      columnNumber?: number;
+      exception?: { description?: string };
+    };
+  };
+  result?: unknown;
+  error?: unknown;
+};
+
+type PendingCdpRequest = {
+  resolve: (value: unknown) => void;
+  reject: (error: Error) => void;
+};
+
+type CdpClient = ReturnType<typeof createCdpClient>;
+
+function createCdpClient(ws: WebSocket) {
+  let nextId = 1;
+  const pending = new Map<number, PendingCdpRequest>();
+  const runtimeFailures: string[] = [];
+
+  ws.addEventListener("message", (event) => {
+    const message = JSON.parse(String(event.data)) as CdpMessage;
+    if (message.id !== undefined) {
+      const request = pending.get(message.id);
+      if (!request) {
+        return;
+      }
+
+      pending.delete(message.id);
+      if (message.error) {
+        request.reject(new Error(JSON.stringify(message.error)));
+        return;
+      }
+
+      request.resolve(message.result);
+      return;
+    }
+
+    if (message.method === "Runtime.exceptionThrown") {
+      const details = message.params?.exceptionDetails;
+      runtimeFailures.push(
+        `${details?.exception?.description ?? details?.text ?? "runtime exception"} ${details?.url ?? ""}:${
+          details?.lineNumber ?? 0
+        }:${details?.columnNumber ?? 0}`,
+      );
+    }
+
+    if (message.method === "Runtime.consoleAPICalled" && message.params?.type === "error") {
+      runtimeFailures.push(
+        (message.params.args ?? []).map((arg) => String(arg.value ?? arg.description ?? arg.type ?? "error")).join(" "),
+      );
+    }
+  });
+
+  ws.addEventListener("error", () => {
+    for (const [id, request] of pending) {
+      pending.delete(id);
+      request.reject(new Error("CDP websocket error"));
+    }
+  });
+
+  return {
+    open: () =>
+      new Promise<void>((resolve, reject) => {
+        ws.addEventListener("open", () => resolve(), { once: true });
+        ws.addEventListener("error", () => reject(new Error("CDP websocket failed to open")), { once: true });
+      }),
+    send: <T>(method: string, params: Record<string, unknown> = {}, sessionId?: string) => {
+      const id = nextId;
+      nextId += 1;
+      const payload: Record<string, unknown> = { id, method, params };
+      if (sessionId) {
+        payload.sessionId = sessionId;
+      }
+
+      ws.send(JSON.stringify(payload));
+      return new Promise<T>((resolve, reject) => {
+        pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+      });
+    },
+    throwIfRuntimeFailed: (url: string) => {
+      const meaningfulFailures = runtimeFailures.filter((failure) => !failure.includes("favicon.ico"));
+      if (meaningfulFailures.length > 0) {
+        throw new Error(`${url} runtime failures:\n${meaningfulFailures.join("\n")}`);
+      }
+    },
+    close: () => ws.close(),
+  };
+}
+
+async function waitForCdpVersion(port: number): Promise<CdpVersion> {
+  const deadline = Date.now() + 10_000;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (response.ok) {
+        return (await response.json()) as CdpVersion;
+      }
+      lastError = new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      lastError = error;
+    }
+    await sleep(100);
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("CDP endpoint did not start");
+}
+
+async function waitForRenderedPage(cdp: CdpClient, sessionId: string): Promise<void> {
+  const deadline = Date.now() + CDP_CAPTURE_READY_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const rendered = await cdp.send<{ result?: { value?: boolean } }>(
+      "Runtime.evaluate",
+      {
+        expression:
+          'document.readyState === "complete" && document.querySelectorAll("canvas").length > 0 && Boolean(document.body?.innerText?.trim())',
+        returnByValue: true,
+      },
+      sessionId,
+    );
+    if (rendered.result?.value === true) {
+      return;
+    }
+    await sleep(150);
+  }
+
+  throw new Error("page did not render a canvas and UI before timeout");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function getCdpSettleWaitMs(timeoutMs: number): number {
+  const maxWait = timeoutMs >= LARGE_SCENE_CAPTURE_WAIT_MS ? 5_000 : 1_500;
+  return Math.min(Math.max(timeoutMs, 350), maxWait);
+}
+
+function shouldUseCdpFirst(outputPath: string, timeoutMs: number): boolean {
+  return timeoutMs >= LARGE_SCENE_CAPTURE_WAIT_MS || getCaptureFilename(outputPath).startsWith("game-");
+}
+
 function getCaptureProfilePath(outputPath: string): string {
-  const filename = outputPath.split("/").pop() ?? "capture";
+  const filename = getCaptureFilename(outputPath);
   return `${CHROME_PROFILE_DIR}/${filename.replace(/[^a-z0-9_-]+/gi, "-")}`;
+}
+
+function getCaptureFilename(outputPath: string): string {
+  return outputPath.split("/").pop() ?? "capture";
 }
 
 run().catch((error: unknown) => {

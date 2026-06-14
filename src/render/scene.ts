@@ -13,17 +13,24 @@ import {
   Vector3,
   WebGLRenderer,
 } from "three";
+import type { WebGPURenderer as ThreeWebGPURenderer } from "three/webgpu";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+export type MainRenderer = WebGLRenderer | ThreeWebGPURenderer;
+export type RendererRequestMode = "auto" | "webgpu" | "webgl";
+export type RendererBackend = "webgl" | "webgpu" | "webgpu-webgl-fallback";
 
 export type SceneContext = {
   scene: Scene;
   camera: PerspectiveCamera;
-  renderer: WebGLRenderer;
+  renderer: MainRenderer;
+  rendererMode: RendererRequestMode;
+  rendererBackend: RendererBackend;
   controls: OrbitControls;
   resize: () => void;
 };
 
-export function createSceneContext(container: HTMLElement): SceneContext {
+export async function createSceneContext(container: HTMLElement): Promise<SceneContext> {
   const scene = new Scene();
   scene.background = new Color(0x081017);
   scene.fog = new FogExp2(0x081017, 0.012);
@@ -32,13 +39,10 @@ export function createSceneContext(container: HTMLElement): SceneContext {
   camera.position.set(38, 26, 48);
   camera.lookAt(new Vector3(0, 9, 0));
 
-  const renderer = new WebGLRenderer({ antialias: true });
-  renderer.outputColorSpace = SRGBColorSpace;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = PCFSoftShadowMap;
+  const rendererMode = getInitialRendererMode();
+  const { renderer, backend } = await createMainRenderer(rendererMode);
   container.appendChild(renderer.domElement);
+  document.body.dataset.renderer = backend;
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.target.set(0, 9, 0);
@@ -79,7 +83,62 @@ export function createSceneContext(container: HTMLElement): SceneContext {
     scene,
     camera,
     renderer,
+    rendererMode,
+    rendererBackend: backend,
     controls,
     resize,
   };
+}
+
+async function createMainRenderer(
+  rendererMode: RendererRequestMode,
+): Promise<{ renderer: MainRenderer; backend: RendererBackend }> {
+  if (rendererMode === "webgl") {
+    const renderer = new WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    configureRenderer(renderer);
+    return { renderer, backend: "webgl" };
+  }
+
+  try {
+    const { WebGPURenderer } = await import("three/webgpu");
+    const renderer = new WebGPURenderer({
+      antialias: true,
+      alpha: false,
+      powerPreference: "high-performance",
+    });
+    configureRenderer(renderer);
+    await renderer.init();
+    return { renderer, backend: getWebGPUBackendLabel(renderer) };
+  } catch (error) {
+    console.warn("WebGPU renderer failed to initialize; falling back to WebGLRenderer.", error);
+    const renderer = new WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+    configureRenderer(renderer);
+    return { renderer, backend: "webgl" };
+  }
+}
+
+function configureRenderer(renderer: MainRenderer): void {
+  renderer.outputColorSpace = SRGBColorSpace;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = PCFSoftShadowMap;
+}
+
+function getInitialRendererMode(): RendererRequestMode {
+  const requested = new URLSearchParams(window.location.search).get("renderer");
+  if (requested === "webgpu" || requested === "webgl" || requested === "auto") {
+    return requested;
+  }
+
+  return "auto";
+}
+
+function getWebGPUBackendLabel(renderer: ThreeWebGPURenderer): RendererBackend {
+  const backend = renderer.backend as { isWebGPUBackend?: boolean; isWebGLBackend?: boolean };
+  if (backend.isWebGPUBackend) {
+    return "webgpu";
+  }
+
+  return "webgpu-webgl-fallback";
 }

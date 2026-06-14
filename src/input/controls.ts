@@ -1,4 +1,4 @@
-import { MOUSE, PerspectiveCamera, Raycaster, Vector2, WebGLRenderer } from "three";
+import { MOUSE, PerspectiveCamera, Raycaster, Vector2 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { collectDigCells, digSphere, type DigResult } from "../world/dig";
 import type { TerrainRenderer } from "../render/terrainRenderer";
@@ -33,10 +33,21 @@ export type InputCallbacks = {
 export type DigController = {
   update: () => void;
   getPreviewCells: () => number[];
+  getPreviewState: () => DigPreviewState;
 };
 
-const DIG_INTERVAL_MS = 70;
-const PREVIEW_INTERVAL_MS = 33;
+export type DigPreviewState = {
+  cells: number[];
+  targetCell: number | null;
+  digAllowed: boolean;
+};
+
+type CanvasRenderer = {
+  domElement: HTMLCanvasElement;
+};
+
+const DIG_INTERVAL_MS = 50;
+const PREVIEW_INTERVAL_MS = 25;
 
 export function configureOrbitControls(controls: OrbitControls): void {
   controls.mouseButtons.LEFT = null as unknown as MOUSE;
@@ -168,7 +179,7 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export function createDigController(
-  renderer: WebGLRenderer,
+  renderer: CanvasRenderer,
   camera: PerspectiveCamera,
   worldProvider: () => VoxelWorld,
   terrainProvider: () => TerrainRenderer,
@@ -187,6 +198,8 @@ export function createDigController(
   let lastPreviewRadius = state.digRadius;
   let previewDirty = true;
   let previewCells: number[] = [];
+  let previewTargetCell: number | null = null;
+  let previewDigAllowed = false;
   let hasPointer = false;
 
   const canvas = renderer.domElement;
@@ -226,6 +239,7 @@ export function createDigController(
   canvas.addEventListener("pointerleave", () => {
     isDigging = false;
     hasPointer = false;
+    previewTargetCell = null;
     previewCells = [];
     previewDirty = true;
   });
@@ -251,13 +265,21 @@ export function createDigController(
   }
 
   function updatePreview(): void {
-    if (!hasPointer || !lastPointerEvent) {
+    previewDigAllowed = canDig();
+    if (!hasAimSource()) {
+      previewTargetCell = null;
       previewCells = [];
       return;
     }
 
     const hitCell = pickTerrainCell(lastPointerEvent);
+    previewTargetCell = hitCell;
     if (hitCell === null) {
+      previewCells = [];
+      return;
+    }
+
+    if (!previewDigAllowed) {
       previewCells = [];
       return;
     }
@@ -269,6 +291,10 @@ export function createDigController(
   }
 
   function digFromEvent(event: PointerEvent): void {
+    if (!canDig()) {
+      return;
+    }
+
     const cellIndex = pickTerrainCell(event);
     if (cellIndex === null) {
       return;
@@ -289,16 +315,20 @@ export function createDigController(
   }
 
   function shouldUpdatePreview(now: number): boolean {
-    if (!hasPointer || !lastPointerEvent) {
-      return previewCells.length > 0;
+    if (!hasAimSource()) {
+      return previewCells.length > 0 || previewTargetCell !== null;
     }
 
     return previewDirty || state.digRadius !== lastPreviewRadius || now - lastPreviewTime >= PREVIEW_INTERVAL_MS;
   }
 
-  function pickTerrainCell(event: PointerEvent): number | null {
+  function hasAimSource(): boolean {
+    return hasPointer || document.pointerLockElement === canvas || useCenteredAim();
+  }
+
+  function pickTerrainCell(event: PointerEvent | null): number | null {
     const rect = canvas.getBoundingClientRect();
-    if (document.pointerLockElement === canvas || useCenteredAim()) {
+    if (document.pointerLockElement === canvas || useCenteredAim() || !event) {
       pointer.set(0, 0);
     } else {
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -312,5 +342,10 @@ export function createDigController(
   return {
     update,
     getPreviewCells: () => previewCells,
+    getPreviewState: () => ({
+      cells: previewCells,
+      targetCell: previewTargetCell,
+      digAllowed: previewDigAllowed,
+    }),
   };
 }

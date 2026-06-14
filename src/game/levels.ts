@@ -33,6 +33,11 @@ export type ScoreInput = {
   ticks: number;
 };
 
+export type SettlingInput = {
+  stableTicks: number;
+  requiredTicks: number;
+};
+
 export type DeliveryRequirement = {
   label: string;
   targetWater: number;
@@ -57,6 +62,12 @@ export type StageProgress = {
   openedHazardCount: number;
 };
 
+export type SettlingProgress = {
+  stableTicks: number;
+  requiredTicks: number;
+  ratio: number;
+};
+
 export type LevelProgress = {
   level: GameLevel;
   stageProgress: StageProgress;
@@ -64,6 +75,7 @@ export type LevelProgress = {
   deliveryRequirements: DeliveryRequirementProgress[];
   wastedWater: number;
   totalWater: number;
+  settling: SettlingProgress;
   settled: boolean;
   failed: boolean;
   complete: boolean;
@@ -71,116 +83,20 @@ export type LevelProgress = {
   status: string;
 };
 
+const DEFAULT_SETTLING_REQUIRED_TICKS = 18;
+
 export const GAME_LEVELS: GameLevel[] = [
   {
-    id: "tutorial",
-    name: "Sluice Tutorial",
-    scene: "sluice",
-    brief: "Cut the highlighted weak rock, then keep carving the sluice chain until the release reaches the lower cave.",
-    successText: "Flow stabilized",
-    failText: "Too much water escaped the route",
-    deliveryTargetWater: 185,
-    maxWastedWater: 70,
-    scoreParTicks: 900,
-    deliveryBoxes: [box(21, 39, 1, 7, 20, 30)],
-    safeWaterBoxes: [
-      box(7, 15, 14, 25, 14, 31),
-      box(13, 36, 8, 20, 18, 32),
-      box(20, 40, 1, 12, 19, 31),
-    ],
-    hazardStages: [],
-  },
-  {
-    id: "challenge",
-    name: "Forked Cavern Challenge",
-    scene: "splitter",
-    brief: "Mine the fork plug, pick a basin branch, cut the low tunnel for the water, and avoid red spill seams.",
-    successText: "Fork stabilized",
-    failText: "Too much water escaped the fork",
-    deliveryTargetWater: 150,
-    maxWastedWater: 35,
-    scoreParTicks: 1300,
-    deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
-    safeWaterBoxes: [
-      box(7, 15, 14, 25, 14, 31),
-      box(14, 42, 1, 23, 14, 34),
-    ],
-    hazardStages: [
-      {
-        label: "South spill seam",
-        boxes: [box(34, 42, 2, 8, 10, 16)],
-        digBoxes: [box(36, 40, 5, 8, 13, 15)],
-      },
-      {
-        label: "Fork floor sink",
-        boxes: [box(31, 39, 0, 2, 23, 27)],
-        digBoxes: [box(33, 38, 1, 3, 23, 27)],
-      },
-    ],
-  },
-  {
-    id: "splitpath",
-    name: "Split Path Challenge",
-    scene: "braid",
-    brief: "Release the reservoir, then carve either lower branch yourself while keeping the center spill seam sealed.",
-    successText: "Player route stabilized",
-    failText: "Too much water escaped the carved route",
-    deliveryTargetWater: 145,
-    maxWastedWater: 32,
-    scoreParTicks: 1300,
-    deliveryBoxes: [box(30, 40, 1, 8, 16, 23), box(30, 40, 1, 8, 27, 33)],
-    safeWaterBoxes: [
-      box(7, 15, 14, 25, 24, 31),
-      box(13, 27, 8, 22, 18, 32),
-      box(24, 42, 1, 12, 16, 34),
-    ],
-    hazardStages: [
-      {
-        label: "Outer spill seams",
-        boxes: [box(34, 42, 1, 7, 11, 15), box(34, 42, 1, 7, 35, 38)],
-        digBoxes: [box(36, 40, 2, 6, 15, 17), box(36, 40, 2, 6, 33, 35)],
-      },
-    ],
-  },
-  {
-    id: "splitbasin",
-    name: "Split Basin Challenge",
-    scene: "divide",
-    brief: "Open the reservoir, then carve both lower outlets so each basin gets enough water before the flow settles.",
-    successText: "Both basins stabilized",
-    failText: "Too much water escaped the split route",
-    deliveryTargetWater: 170,
-    maxWastedWater: 38,
-    scoreParTicks: 1450,
-    deliveryBoxes: [box(30, 40, 1, 8, 16, 22), box(30, 40, 1, 8, 28, 34)],
-    deliveryRequirements: [
-      { label: "south basin", targetWater: 80, boxes: [box(30, 40, 1, 8, 16, 22)] },
-      { label: "north basin", targetWater: 80, boxes: [box(30, 40, 1, 8, 28, 34)] },
-    ],
-    safeWaterBoxes: [
-      box(7, 15, 14, 25, 24, 31),
-      box(13, 27, 8, 22, 18, 32),
-      box(24, 42, 1, 12, 16, 22),
-      box(24, 42, 1, 12, 28, 34),
-    ],
-    hazardStages: [
-      {
-        label: "Center spill seam",
-        boxes: [box(34, 42, 1, 7, 23, 27)],
-        digBoxes: [box(36, 40, 2, 6, 23, 27)],
-      },
-    ],
-  },
-  {
-    id: "deep-cavern",
-    name: "Deep Cavern Expedition",
-    scene: "deep-cavern",
-    brief: "Breach the high reservoir, drop the flow through the main cavern, then carve both lower sluices into distant basins.",
-    successText: "Deep cavern stabilized",
-    failText: "The cavern swallowed too much water",
+    id: "generated-cavern",
+    name: "Seeded Cavern Expedition",
+    scene: "generated-cavern",
+    brief:
+      "Follow the template-cut cave chain: breach the reservoir, open the throat, then carve both seeded sluices into the twin basins.",
+    successText: "Seeded cavern stabilized",
+    failText: "The seeded cavern leaked too much water",
     deliveryTargetWater: 680,
-    maxWastedWater: 120,
-    scoreParTicks: 2800,
+    maxWastedWater: 130,
+    scoreParTicks: 3000,
     deliveryBoxes: [box(54, 68, 1, 12, 14, 31), box(52, 68, 1, 12, 48, 66)],
     deliveryRequirements: [
       { label: "south basin", targetWater: 330, boxes: [box(54, 68, 1, 12, 14, 31)] },
@@ -195,7 +111,7 @@ export const GAME_LEVELS: GameLevel[] = [
     ],
     hazardStages: [
       {
-        label: "Lower spill rims",
+        label: "Seeded spill rims",
         boxes: [box(30, 43, 0, 3, 32, 43), box(10, 13, 4, 9, 47, 54)],
         digBoxes: [box(33, 41, 1, 3, 34, 41)],
       },
@@ -214,6 +130,7 @@ export function evaluateLevel(
   settled: boolean,
   scoreInput?: ScoreInput,
   currentTotalWater = totalWater(world),
+  settlingInput?: SettlingInput,
 ): LevelProgress {
   const deliveredWater = measureBoxWater(world, level.deliveryBoxes);
   const deliveryRequirements = getDeliveryRequirementProgress(world, level);
@@ -225,6 +142,7 @@ export function evaluateLevel(
   const delivered = deliveredWater >= level.deliveryTargetWater && deliveryRequirements.every((requirement) => requirement.complete);
   const complete = allStagesOpen && delivered && settled && !failed;
   const score = complete && scoreInput ? scoreLevel(level, deliveredWater, wastedWater, scoreInput.ticks) : null;
+  const settling = getSettlingProgress(settled, settlingInput);
 
   return {
     level,
@@ -233,11 +151,23 @@ export function evaluateLevel(
     deliveryRequirements,
     wastedWater,
     totalWater: currentTotalWater,
+    settling,
     settled,
     failed,
     complete,
     score,
-    status: getStatusText(level, stageProgress, allStagesOpen, delivered, settled, failed),
+    status: getStatusText(
+      level,
+      stageProgress,
+      allStagesOpen,
+      delivered,
+      settled,
+      failed,
+      deliveredWater,
+      deliveryRequirements,
+      wastedWater,
+      settling,
+    ),
   };
 }
 
@@ -374,39 +304,51 @@ function getStatusText(
   delivered: boolean,
   settled: boolean,
   failed: boolean,
+  deliveredWater: number,
+  deliveryRequirements: DeliveryRequirementProgress[],
+  wastedWater: number,
+  settling: SettlingProgress,
 ): string {
   if (failed) {
-    return level.failText;
+    return `${level.failText}: ${wastedWater.toFixed(0)} / ${level.maxWastedWater.toFixed(0)} wasted`;
   }
 
   if (!allStagesOpen) {
     if (stageProgress.activeStageIsManual) {
       return hasRouteFlow(stageProgress)
-        ? `Water entering ${stageProgress.activeStageLabel}`
-        : `Carve ${stageProgress.activeStageLabel}`;
+        ? `Water caught in ${stageProgress.activeStageLabel}; widen the route`
+        : `Carve ${stageProgress.activeStageLabel} until water enters`;
     }
 
-    return `Clear route marker: ${stageProgress.activeStageLabel}`;
+    return `Cut highlighted marker: ${stageProgress.activeStageLabel}`;
   }
 
   if (!delivered) {
-    const unmetRequirement = level.deliveryRequirements
-      ? stageProgress.completedStages >= stageProgress.stageCount
-        ? "Fill every basin"
-        : null
-      : null;
+    const unmetRequirement = deliveryRequirements.find((requirement) => !requirement.complete);
     if (unmetRequirement) {
-      return unmetRequirement;
+      return `Fill ${unmetRequirement.label}: ${unmetRequirement.water.toFixed(0)} / ${unmetRequirement.targetWater.toFixed(0)}`;
     }
 
-    return hasRouteFlow(stageProgress) ? "Water is taking the low tunnel" : "Route more water into the lower cave";
+    return hasRouteFlow(stageProgress)
+      ? `Route more water: ${deliveredWater.toFixed(0)} / ${level.deliveryTargetWater.toFixed(0)}`
+      : "Open a route into the lower cave";
   }
 
   if (!settled) {
-    return "Let the water settle";
+    return `Delivered; settling ${settling.stableTicks} / ${settling.requiredTicks}`;
   }
 
   return level.successText;
+}
+
+function getSettlingProgress(settled: boolean, input?: SettlingInput): SettlingProgress {
+  const requiredTicks = Math.max(1, Math.floor(input?.requiredTicks ?? DEFAULT_SETTLING_REQUIRED_TICKS));
+  const stableTicks = settled ? requiredTicks : Math.max(0, Math.floor(input?.stableTicks ?? 0));
+  return {
+    stableTicks: Math.min(requiredTicks, stableTicks),
+    requiredTicks,
+    ratio: clamp01(stableTicks / requiredTicks),
+  };
 }
 
 function hasRouteFlow(stageProgress: StageProgress): boolean {

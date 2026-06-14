@@ -10,6 +10,7 @@ export type ActiveCellRenderer = {
 };
 
 const dummy = new Object3D();
+const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
 
 export function createActiveCellRenderer(scene: Scene, world: VoxelWorld): ActiveCellRenderer {
   const geometry = new BoxGeometry(1.08, 1.08, 1.08);
@@ -20,7 +21,7 @@ export function createActiveCellRenderer(scene: Scene, world: VoxelWorld): Activ
     wireframe: true,
     depthWrite: false,
   });
-  const mesh = new InstancedMesh(geometry, material, world.water.length);
+  const mesh = new InstancedMesh(geometry, material, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
   mesh.frustumCulled = false;
   scene.add(mesh);
 
@@ -57,9 +58,14 @@ function updateActiveCells(renderer: ActiveCellRenderer, world: VoxelWorld, enab
   }
 
   let instanceCount = 0;
+  const capacity = renderer.mesh.instanceMatrix.count;
   const activeCells = Array.from(world.activeCells).sort((a, b) => a - b);
 
   for (const cellIndex of activeCells) {
+    if (instanceCount >= capacity) {
+      break;
+    }
+
     if (world.water[cellIndex] <= EPSILON || world.solid[cellIndex] === 1) {
       continue;
     }

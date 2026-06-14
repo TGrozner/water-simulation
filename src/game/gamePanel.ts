@@ -154,8 +154,8 @@ function updateGamePanel(
   setText(panel, '[data-game-metric="route"]', progress.stageProgress.selectedChoiceLabel ?? "unselected");
   setText(panel, '[data-game-metric="pathWater"]', formatWater(progress.stageProgress.selectedRouteWater));
   setText(panel, '[data-game-metric="mode"]', isManualStage ? "manual carve" : "guided breach");
-  setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
-  setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
+  setText(panel, '[data-game-metric="risk"]', formatRisk(progress));
+  setText(panel, '[data-game-metric="settled"]', formatFlowState(progress));
   setText(panel, '[data-game-metric="score"]', formatScore(progress));
   setText(panel, '[data-game-metric="best"]', formatBestScore(bestScore, scoreIsNewBest));
   setText(panel, "[data-game-status]", progress.status);
@@ -205,6 +205,7 @@ function updateGamePanel(
   panel.dataset.routeFlow = (progress.stageProgress.selectedRouteWater ?? 0) >= 1 ? "active" : "dry";
   panel.dataset.grade = progress.score?.grade ?? "";
   panel.dataset.newBest = String(scoreIsNewBest);
+  panel.dataset.settling = String(!progress.complete && !progress.failed && progress.settling.ratio > 0);
 
   if (resetButton) {
     resetButton.textContent = progress.failed ? "Retry level" : "Reset level";
@@ -226,7 +227,38 @@ function formatDeliveryTargets(progress: LevelProgress): string {
   }
 
   const completeTargets = progress.deliveryRequirements.filter((requirement) => requirement.complete).length;
-  return `${completeTargets}/${progress.deliveryRequirements.length} basins`;
+  const nextTarget = progress.deliveryRequirements.find((requirement) => !requirement.complete);
+  if (!nextTarget) {
+    return `${completeTargets}/${progress.deliveryRequirements.length} basins`;
+  }
+
+  return `${completeTargets}/${progress.deliveryRequirements.length}; ${nextTarget.label} ${nextTarget.water.toFixed(
+    0,
+  )}/${nextTarget.targetWater.toFixed(0)}`;
+}
+
+function formatRisk(progress: LevelProgress): string {
+  if (progress.level.hazardStages.length === 0) {
+    return "none";
+  }
+
+  if (progress.stageProgress.openedHazardCount > 0) {
+    return `${progress.stageProgress.openedHazardCount} seam breached`;
+  }
+
+  return `avoid ${progress.level.hazardStages.length} red seams`;
+}
+
+function formatFlowState(progress: LevelProgress): string {
+  if (progress.settled) {
+    return "settled";
+  }
+
+  if (progress.settling.stableTicks > 0) {
+    return `settling ${progress.settling.stableTicks}/${progress.settling.requiredTicks}`;
+  }
+
+  return "moving";
 }
 
 function formatScore(progress: LevelProgress): string {

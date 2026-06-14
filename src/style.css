@@ -40,6 +40,11 @@ canvas {
   background: rgba(255, 194, 71, 0.95);
 }
 
+.is-blocked-dig-target .fps-reticle::before,
+.is-blocked-dig-target .fps-reticle::after {
+  background: rgba(143, 179, 222, 0.7);
+}
+
 .is-hazard-target .fps-reticle::before,
 .is-hazard-target .fps-reticle::after {
   background: rgba(255, 74, 61, 0.98);
@@ -473,6 +478,11 @@ canvas {
 .game-panel[data-route-flow="active"] .game-panel-status {
   background: rgba(126, 233, 255, 0.13);
   color: #b9f5ff;
+}
+
+.game-panel[data-settling="true"] .game-panel-status {
+  background: rgba(255, 210, 125, 0.13);
+  color: #ffd27d;
 }
 
 .game-panel[data-complete="true"] .game-panel-status {

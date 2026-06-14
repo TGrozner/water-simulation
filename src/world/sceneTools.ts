@@ -23,91 +23,19 @@ export type SceneOpeningStage = SceneOpeningChoice & {
 };
 
 export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = {
-  sluice: [
-    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
-    { label: "Lower drop gate", boxes: [box(21, 39, 8, 13, 20, 30)], digBoxes: [box(24, 31, 9, 13, 23, 28)] },
-  ],
-  splitter: [
-    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
+  "generated-cavern": [
     {
-      label: "Cut fork plug",
-      boxes: [box(25, 30, 1, 15, 17, 23)],
-      digBoxes: [box(26, 30, 8, 14, 19, 23)],
-      choices: [
-        {
-          label: "South basin branch",
-          boxes: [box(25, 30, 1, 15, 17, 23)],
-          digBoxes: [box(26, 30, 8, 14, 19, 23)],
-        },
-        {
-          label: "North basin branch",
-          boxes: [box(25, 30, 1, 15, 27, 33)],
-          digBoxes: [box(26, 30, 8, 14, 27, 31)],
-        },
-      ],
-    },
-    {
-      label: "Carve low tunnel to basin",
-      boxes: [],
-      digBoxes: [box(31, 39, 1, 4, 19, 21)],
-      autoOpen: false,
-      choices: [
-        {
-          label: "Low south tunnel to basin",
-          boxes: [],
-          digBoxes: [box(31, 39, 1, 4, 19, 21)],
-        },
-        {
-          label: "Low north tunnel to basin",
-          boxes: [],
-          digBoxes: [box(31, 39, 1, 4, 29, 31)],
-        },
-      ],
-    },
-  ],
-  braid: [
-    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
-    {
-      label: "Split path",
-      boxes: [],
-      digBoxes: [box(25, 39, 2, 12, 18, 25), box(25, 39, 2, 12, 25, 32)],
-      autoOpen: false,
-      choices: [
-        {
-          label: "South split path",
-          boxes: [],
-          digBoxes: [box(25, 39, 2, 12, 18, 25)],
-        },
-        {
-          label: "North split path",
-          boxes: [],
-          digBoxes: [box(25, 39, 2, 12, 25, 32)],
-        },
-      ],
-    },
-  ],
-  divide: [
-    { label: "Reservoir weak gate", boxes: [box(12, 18, 14, 22, 24, 31)], digBoxes: [box(14, 18, 15, 20, 25, 30)] },
-    {
-      label: "Twin basin outlets",
-      boxes: [],
-      digBoxes: [box(25, 39, 2, 12, 18, 22), box(25, 39, 2, 12, 28, 32)],
-      autoOpen: false,
-    },
-  ],
-  "deep-cavern": [
-    {
-      label: "High reservoir breach",
+      label: "Seeded reservoir breach",
       boxes: [box(19, 23, 33, 43, 24, 31)],
       digBoxes: [box(19, 23, 33, 43, 24, 31)],
     },
     {
-      label: "Main gallery throat",
+      label: "Template throat",
       boxes: [box(28, 36, 22, 31, 28, 36)],
       digBoxes: [box(29, 35, 23, 30, 29, 35)],
     },
     {
-      label: "Twin lower sluices",
+      label: "Twin seeded sluices",
       boxes: [],
       digBoxes: [box(44, 56, 4, 11, 21, 31), box(44, 56, 4, 11, 47, 57)],
       autoOpen: false,

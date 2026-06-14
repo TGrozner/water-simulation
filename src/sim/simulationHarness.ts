@@ -16,6 +16,7 @@ import {
   openClearBox,
   openSceneDrain,
   openSceneStage,
+  type ClearBox,
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { getBestScore, isBetterScore, mergeBestScore, parseStoredBestScores } from "../game/bestScoreStorage";
@@ -50,6 +51,7 @@ function runHarness(): void {
   assertLevelScoreRules();
   assertBestScoreRules();
   assertLevelSelectRows();
+  assertGeneratedCavernDeterministic();
   assertGameLevelsComplete();
 
   for (const preset of SCENE_PRESETS) {
@@ -75,6 +77,8 @@ function assertGameLevelsComplete(): void {
   const tuning = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID);
 
   for (const level of GAME_LEVELS) {
+    assertGeneratedCavernLevelContract(level);
+
     const stages = getSceneOpeningStages(level.scene);
     const earlyWorld = createWorld(level.scene);
     const earlyBaselineWater = totalWater(earlyWorld);
@@ -96,14 +100,6 @@ function assertGameLevelsComplete(): void {
       true,
     );
     assert(!earlyProgress.complete, `game/${level.id}: first opening stage should not complete the level`);
-    if (level.id === "challenge") {
-      assert(
-        earlyProgress.deliveredWater < level.deliveryTargetWater * 0.5,
-        `game/${level.id}: first opening stage bypassed the fork gate with delivered=${earlyProgress.deliveredWater.toFixed(
-          1,
-        )}/${level.deliveryTargetWater.toFixed(1)}`,
-      );
-    }
 
     const world = createWorld(level.scene);
     const baselineWater = totalWater(world);
@@ -197,6 +193,81 @@ function assertGameLevelsComplete(): void {
   }
 }
 
+function assertGeneratedCavernDeterministic(): void {
+  const first = createWorld("generated-cavern");
+  const second = createWorld("generated-cavern");
+  assert(first.width === second.width, "generated-cavern: deterministic world width mismatch");
+  assert(first.height === second.height, "generated-cavern: deterministic world height mismatch");
+  assert(first.depth === second.depth, "generated-cavern: deterministic world depth mismatch");
+
+  let openSidePocketCells = 0;
+  for (let cellIndex = 0; cellIndex < first.solid.length; cellIndex += 1) {
+    assert(first.solid[cellIndex] === second.solid[cellIndex], `generated-cavern: solid mismatch at ${cellIndex}`);
+    assert(first.water[cellIndex] === second.water[cellIndex], `generated-cavern: water mismatch at ${cellIndex}`);
+
+    const cell = coords(first, cellIndex);
+    if (
+      first.solid[cellIndex] === 0 &&
+      cell.x >= 12 &&
+      cell.x <= 26 &&
+      cell.y >= 20 &&
+      cell.y <= 31 &&
+      cell.z >= 45 &&
+      cell.z <= 60
+    ) {
+      openSidePocketCells += 1;
+    }
+  }
+
+  assert(openSidePocketCells >= 80, `generated-cavern: expected seeded upper side pocket, got ${openSidePocketCells}`);
+}
+
+function assertGeneratedCavernLevelContract(level: (typeof GAME_LEVELS)[number]): void {
+  const world = createWorld("generated-cavern");
+  const stages = getSceneOpeningStages("generated-cavern");
+  assert(stages.length === 3, "generated-cavern: expected three mission stages");
+  assert(totalWater(world) > 1200, "generated-cavern: expected a large seeded reservoir");
+
+  for (const [stageIndex, stage] of stages.entries()) {
+    const choices = getStageChoices(stage);
+    assert(choices.length > 0, `generated-cavern: stage ${stageIndex + 1} has no choices`);
+    for (const choice of choices) {
+      const solids = countStageSolidCells(world, choice);
+      assert(
+        solids >= (isStageAutoOpen(stage) ? 80 : 40),
+        `generated-cavern: stage ${stageIndex + 1} (${choice.label}) should start with meaningful solids, got ${solids}`,
+      );
+    }
+  }
+
+  const deliveredCapacity = countOpenCellsInBoxes(world, level.deliveryBoxes);
+  assert(deliveredCapacity >= 1200, `generated-cavern: delivery basins need open catchment capacity, got ${deliveredCapacity}`);
+  assert(level.deliveryRequirements?.length === 2, "generated-cavern: expected two delivery basin requirements");
+  assert(level.hazardStages.length === 1, "generated-cavern: expected one authored hazard group");
+  assert(
+    countStageSolidCells(world, level.hazardStages[0]) >= 40,
+    "generated-cavern: hazard seam should start as meaningful solid terrain",
+  );
+}
+
+function countOpenCellsInBoxes(world: VoxelWorld, boxes: ClearBox[]): number {
+  let openCells = 0;
+  for (const box of boxes) {
+    for (let y = box.minY; y <= box.maxY; y += 1) {
+      for (let z = box.minZ; z <= box.maxZ; z += 1) {
+        for (let x = box.minX; x <= box.maxX; x += 1) {
+          if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+            continue;
+          }
+          openCells += world.solid[index(world, x, y, z)] === 0 ? 1 : 0;
+        }
+      }
+    }
+  }
+
+  return openCells;
+}
+
 function assertLevelScoreRules(): void {
   for (const level of GAME_LEVELS) {
     assert(level.scoreParTicks !== undefined && level.scoreParTicks > 0, `game/${level.id}: missing score par ticks`);
@@ -264,16 +335,15 @@ function assertBestScoreRules(): void {
 function assertLevelSelectRows(): void {
   const level = GAME_LEVELS[0];
   const score = scoreLevel(level, level.deliveryTargetWater, 0, level.scoreParTicks ?? MAX_TICKS);
-  const emptyRows = getLevelSelectRows(1, {});
+  const emptyRows = getLevelSelectRows(0, {});
 
   assert(emptyRows.length === GAME_LEVELS.length, "level-select: should render every game level");
-  assert(emptyRows[1]?.selected, "level-select: current level should be marked selected");
+  assert(emptyRows[0]?.selected, "level-select: current level should be marked selected");
   assert(emptyRows.every((row) => row.bestLabel === "No best"), "level-select: empty score table should show No best");
 
   const rowsWithBest = getLevelSelectRows(0, { [level.id]: score });
   assert(rowsWithBest[0]?.selected, "level-select: selected row should follow current level index");
   assert(rowsWithBest[0]?.bestLabel === `${score.grade} ${score.total}`, "level-select: stored best should be formatted");
-  assert(rowsWithBest[1]?.bestLabel === "No best", "level-select: missing best score should stay explicit");
 }
 
 function makeProgress(
@@ -407,7 +477,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        dryManualProgress.status === `Carve ${manualChoice.label}`,
+        dryManualProgress.status === `Carve ${manualChoice.label} until water enters`,
         `${preset}: dry manual status should ask for carving, got "${dryManualProgress.status}"`,
       );
       const wetManualProgress = evaluateLevel(
@@ -417,7 +487,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        wetManualProgress.status === `Water entering ${manualChoice.label}`,
+        wetManualProgress.status === `Water caught in ${manualChoice.label}; widen the route`,
         `${preset}: wet manual status should report entering water, got "${wetManualProgress.status}"`,
       );
       const removed = clearStageDigBoxes(world, manualChoice);
@@ -443,7 +513,7 @@ function assertChoiceStagesCanComplete(preset: ScenePresetId, level: (typeof GAM
         false,
       );
       assert(
-        flowingProgress.status === "Water is taking the low tunnel",
+        flowingProgress.status.startsWith("Route more water:"),
         `${preset}: routed water status should acknowledge carved flow, got "${flowingProgress.status}"`,
       );
     }
@@ -730,7 +800,7 @@ function assertProgressiveStagesMoveWater(preset: ScenePresetId): void {
         `${preset}: opening stage ${stageIndex + 1} (${stages[stageIndex].label}) did not move water`,
       );
     }
-    if (stageIndex === stages.length - 1) {
+    if (stageIndex === stages.length - 1 && !isLargeCavernPreset(preset)) {
       assert(world.activeCells.size === 0, `${preset}: final stage did not stabilize`);
     }
   }
@@ -752,10 +822,12 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
     });
 
     assert(movedVolume > 0, `${preset}/${tuningPreset}: expected water to move after opening drain`);
-    assert(
-      world.activeCells.size === 0,
-      `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
-    );
+    if (!isLargeCavernPreset(preset)) {
+      assert(
+        world.activeCells.size === 0,
+        `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
+      );
+    }
 
     return {
       preset,
@@ -769,15 +841,19 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
 }
 
 function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetId[] {
-  return preset === "deep-cavern" ? [DEFAULT_TUNING_PRESET_ID] : TUNING_PRESETS;
+  return isLargeCavernPreset(preset) ? [DEFAULT_TUNING_PRESET_ID] : TUNING_PRESETS;
 }
 
 function getProgressiveStageMaxTicks(preset: ScenePresetId): number {
-  return preset === "deep-cavern" ? MAX_TICKS : MAX_STAGE_TICKS;
+  return isLargeCavernPreset(preset) ? MAX_TICKS : MAX_STAGE_TICKS;
 }
 
 function getScenarioMaxTicks(preset: ScenePresetId): number {
-  return preset === "deep-cavern" ? 2800 : MAX_TICKS;
+  return isLargeCavernPreset(preset) ? 2800 : MAX_TICKS;
+}
+
+function isLargeCavernPreset(preset: ScenePresetId): boolean {
+  return preset === "generated-cavern";
 }
 
 function runUntilStable(

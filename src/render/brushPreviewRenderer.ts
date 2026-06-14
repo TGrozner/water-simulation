@@ -16,17 +16,19 @@ type BrushPreviewCache = {
 
 const dummy = new Object3D();
 const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
+const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
 
 export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): BrushPreviewRenderer {
   const geometry = new BoxGeometry(1.12, 1.12, 1.12);
   const material = new MeshBasicMaterial({
-    color: 0xff5c7a,
+    color: 0xb8fbff,
     transparent: true,
-    opacity: 0.85,
-    wireframe: true,
+    opacity: 0.18,
+    wireframe: false,
+    depthTest: true,
     depthWrite: false,
   });
-  const mesh = new InstancedMesh(geometry, material, world.solid.length);
+  const mesh = new InstancedMesh(geometry, material, Math.min(world.solid.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
   const cache: BrushPreviewCache = {
     lastCells: [],
     lastOptionsKey: "",
@@ -66,8 +68,13 @@ function updateBrushPreview(
   cache.lastCells.push(...cells);
   cache.lastOptionsKey = optionsKey;
   let instanceCount = 0;
+  const capacity = renderer.mesh.instanceMatrix.count;
 
   for (const cellIndex of cells) {
+    if (instanceCount >= capacity) {
+      break;
+    }
+
     if (world.solid[cellIndex] === 0) {
       continue;
     }

@@ -68,7 +68,7 @@ type FaceColor = {
 };
 
 const TERRAIN_CHUNK_SIZE = 12;
-const DEEP_CAVERN_VERTEX_JITTER = 0;
+const GENERATED_CAVERN_VERTEX_JITTER = 0;
 const DEFAULT_VERTEX_JITTER = 0;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
@@ -701,7 +701,7 @@ function getTerrainVertexColor(
   let baseColor = getBaseTerrainColor(world, x, y, z);
   const adjacentWater = getAdjacentWaterAmount(world, x, y, z, direction);
   if (adjacentWater > EPSILON) {
-    const wetColor = isDeepCavernWorld(world) ? 0x1f6472 : 0x2f7a86;
+    const wetColor = isGeneratedCavernWorld(world) ? 0x1f6472 : 0x2f7a86;
     baseColor = mixHexColors(baseColor, wetColor, Math.min(0.72, 0.28 + adjacentWater * 0.34));
   }
 
@@ -715,8 +715,8 @@ function getTerrainVertexColor(
 }
 
 function getBaseTerrainColor(world: VoxelWorld, x: number, y: number, z: number): number {
-  if (isDeepCavernWorld(world)) {
-    return getDeepCavernColor(x, y, z);
+  if (isGeneratedCavernWorld(world)) {
+    return getGeneratedCavernColor(x, y, z);
   }
 
   if (y <= 3) {
@@ -730,11 +730,11 @@ function getBaseTerrainColor(world: VoxelWorld, x: number, y: number, z: number)
   return 0x9f7041;
 }
 
-function isDeepCavernWorld(world: VoxelWorld): boolean {
+function isGeneratedCavernWorld(world: VoxelWorld): boolean {
   return world.width >= 64 || world.depth >= 64 || world.height >= 40;
 }
 
-function getDeepCavernColor(x: number, y: number, z: number): number {
+function getGeneratedCavernColor(x: number, y: number, z: number): number {
   let color = y <= 7 ? 0x51635e : y >= 34 ? 0x596171 : y >= 24 ? 0x8b7658 : 0x84603e;
 
   const band = positiveModulo(y + Math.floor(x * 0.21) + Math.floor(z * 0.13), 7);
@@ -815,11 +815,11 @@ function getTerrainMergeKey(world: VoxelWorld, x: number, y: number, z: number, 
 }
 
 function getGreedyFaceSpanLimit(world: VoxelWorld): number {
-  return isDeepCavernWorld(world) ? 4 : 8;
+  return isGeneratedCavernWorld(world) ? 4 : 8;
 }
 
 function getTerrainVertexJitter(world: VoxelWorld, gridX: number, gridY: number, gridZ: number): { x: number; y: number; z: number } {
-  const amount = isDeepCavernWorld(world) ? DEEP_CAVERN_VERTEX_JITTER : DEFAULT_VERTEX_JITTER;
+  const amount = isGeneratedCavernWorld(world) ? GENERATED_CAVERN_VERTEX_JITTER : DEFAULT_VERTEX_JITTER;
   return {
     x: (getCellVariation(gridX, gridY, gridZ) - 0.5) * amount,
     y: (getCellVariation(gridX + 17, gridY - 11, gridZ + 5) - 0.5) * amount * 0.7,

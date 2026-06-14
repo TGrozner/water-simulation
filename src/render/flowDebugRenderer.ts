@@ -29,6 +29,7 @@ const dummy = new Object3D();
 const upVector = new Vector3(0, 1, 0);
 const directionVector = new Vector3();
 const rotation = new Quaternion();
+const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
 
 export function createFlowDebugRenderer(scene: Scene, world: VoxelWorld): FlowDebugRenderer {
   const meshes: DirectionMesh[] = [
@@ -62,7 +63,7 @@ function createDirectionMesh(
     opacity: 0.9,
     depthWrite: false,
   });
-  const mesh = new InstancedMesh(geometry, material, world.water.length);
+  const mesh = new InstancedMesh(geometry, material, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
   mesh.frustumCulled = false;
   scene.add(mesh);
 
@@ -104,6 +105,7 @@ function updateDirectionMesh(
   }
 
   let instanceCount = 0;
+  const capacity = entry.mesh.instanceMatrix.count;
   if (flows.size === 0) {
     entry.mesh.count = 0;
     entry.mesh.instanceMatrix.needsUpdate = true;
@@ -111,6 +113,10 @@ function updateDirectionMesh(
   }
 
   for (const [cellIndex, flow] of flows) {
+    if (instanceCount >= capacity) {
+      break;
+    }
+
     if (flow.direction !== entry.direction || world.solid[cellIndex] === 1) {
       continue;
     }

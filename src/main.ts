@@ -64,7 +64,7 @@ if (!app) {
   throw new Error("Missing #app container");
 }
 
-const sceneContext = createSceneContext(app);
+const sceneContext = await createSceneContext(app);
 configureOrbitControls(sceneContext.controls);
 
 const VOLUME_WARNING_TOLERANCE = 0.05;
@@ -96,11 +96,11 @@ let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneConte
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
 let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
-  opacity: 0.13,
+  opacity: 0.1,
   scale: 1.03,
   wireframe: false,
-  outline: true,
-  outlineOpacity: 0.92,
+  outline: false,
+  outlineOpacity: 0.5,
   outlineScale: 1.075,
 });
 let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
@@ -122,7 +122,7 @@ let bestScores: BestScoresByLevel = loadBestScores();
 let recentFlows = new Map<number, RecentFlow>();
 
 const inputState: InputState = {
-  paused: false,
+  paused: initialUrlParams.get("paused") === "1",
   debugWater: initialUrlParams.get("debug") === "1",
   showActiveCells: initialUrlParams.get("active") !== "0",
   showFlowDebug: initialUrlParams.get("flow") !== "0",
@@ -618,11 +618,11 @@ function resetWorld(): void {
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
   stageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
-    opacity: 0.13,
+    opacity: 0.1,
     scale: 1.03,
     wireframe: false,
-    outline: true,
-    outlineOpacity: 0.92,
+    outline: false,
+    outlineOpacity: 0.5,
     outlineScale: 1.075,
   });
   hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
@@ -659,7 +659,7 @@ function getInitialPreset(): ScenePresetId {
     return requestedPreset as ScenePresetId;
   }
 
-  return "sluice";
+  return "generated-cavern";
 }
 
 function getInitialGameModeEnabled(): boolean {
@@ -751,11 +751,28 @@ function evaluateCurrentLevelProgress(settled: boolean, currentWaterVolume = tot
 
   const level = getCurrentLevel();
   const stageProgress = getMissionStageProgress();
-  let progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() }, currentWaterVolume);
+  const settlingInput = { stableTicks, requiredTicks: STABLE_COMPLETE_TICKS };
+  let progress = evaluateLevel(
+    world,
+    level,
+    stageProgress,
+    settled,
+    { ticks: getScoreTicks() },
+    currentWaterVolume,
+    settlingInput,
+  );
 
   if (progress.complete && completedAtTick === null) {
     completedAtTick = tickCount;
-    progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() }, currentWaterVolume);
+    progress = evaluateLevel(
+      world,
+      level,
+      stageProgress,
+      settled,
+      { ticks: getScoreTicks() },
+      currentWaterVolume,
+      settlingInput,
+    );
   }
 
   if (progress.complete && progress.score && !completedScoreRecorded) {
@@ -780,106 +797,52 @@ function getCurrentBestScore() {
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
-  if (currentPreset === "deep-cavern") {
-    const spawn = initialUrlParams.get("spawn");
-    if (spawn === "drop") {
-      return {
-        position: new Vector3(-6.5, 36.75, -8.5),
-        lookAt: new Vector3(7.5, 8.5, 1.5),
-      };
-    }
+  const spawn = initialUrlParams.get("spawn");
+  if (spawn === "drop") {
+    return {
+      position: new Vector3(-6.5, 36.75, -8.5),
+      lookAt: new Vector3(7.5, 8.5, 1.5),
+    };
+  }
 
-    if (spawn === "south-basin") {
-      return {
-        position: new Vector3(22.5, 8.75, -11.5),
-        lookAt: new Vector3(4.5, 8, 0.5),
-      };
-    }
+  if (spawn === "south-basin") {
+    return {
+      position: new Vector3(22.5, 8.75, -11.5),
+      lookAt: new Vector3(4.5, 8, 0.5),
+    };
+  }
 
-    if (spawn === "basins" || spawn === "north-basin") {
-      return {
-        position: new Vector3(15.5, 9.2, 22.5),
-        lookAt: new Vector3(2.5, 8, 2.5),
-      };
-    }
+  if (spawn === "basins" || spawn === "north-basin") {
+    return {
+      position: new Vector3(15.5, 9.2, 22.5),
+      lookAt: new Vector3(2.5, 8, 2.5),
+    };
+  }
 
-    if (spawn === "overview") {
-      return {
-        position: new Vector3(-17.5, 24.5, -13.5),
-        lookAt: new Vector3(7, 10, 1.5),
-      };
-    }
-
-    if (openedStageCount >= 2) {
-      return {
-        position: new Vector3(22.5, 8.75, -11.5),
-        lookAt: new Vector3(4.5, 7.5, 0.5),
-      };
-    }
-
-    if (openedStageCount >= 1) {
-      return {
-        position: new Vector3(-17.5, 24.5, -13.5),
-        lookAt: new Vector3(7, 10, 1.5),
-      };
-    }
-
+  if (spawn === "overview") {
     return {
       position: new Vector3(-17.5, 24.5, -13.5),
       lookAt: new Vector3(7, 10, 1.5),
     };
   }
 
-  if (currentPreset === "braid" || currentPreset === "divide") {
-    if (initialUrlParams.get("spawn") === "overview") {
-      return {
-        position: new Vector3(-13.5, 20.75, 3.5),
-        lookAt: new Vector3(5, 9, 1),
-      };
-    }
-
-    if (openedStageCount >= 1) {
-      return {
-        position: new Vector3(-8, 18, -2),
-        lookAt: new Vector3(8, 6, 0),
-      };
-    }
-
-    return {
-      position: new Vector3(0, 16, -2),
-      lookAt: new Vector3(-10, 18, 3),
-    };
-  }
-
-  if (currentPreset !== "splitter") {
-    return undefined;
-  }
-
-  if (initialUrlParams.get("spawn") === "overview") {
-    return {
-      position: new Vector3(-16.5, 26.75, 3.5),
-      lookAt: new Vector3(-2, 17, 2),
-    };
-  }
-
-  const selectedBranch = getSelectedRouteChoiceIndex();
-  if (openedStageCount >= 2 && selectedBranch === 1) {
-    return {
-      position: new Vector3(16.5, 2.75, 7.5),
-      lookAt: new Vector3(8.5, 3.4, 6.2),
-    };
-  }
-
   if (openedStageCount >= 2) {
     return {
-      position: new Vector3(16.5, 2.75, -4.5),
-      lookAt: new Vector3(8.5, 3.4, -3.2),
+      position: new Vector3(22.5, 8.75, -11.5),
+      lookAt: new Vector3(4.5, 7.5, 0.5),
+    };
+  }
+
+  if (openedStageCount >= 1) {
+    return {
+      position: new Vector3(-17.5, 24.5, -13.5),
+      lookAt: new Vector3(7, 10, 1.5),
     };
   }
 
   return {
-    position: new Vector3(15.5, 2.75, 1.5),
-    lookAt: new Vector3(8.5, 3.8, 0.5),
+    position: new Vector3(-17.5, 24.5, -13.5),
+    lookAt: new Vector3(7, 10, 1.5),
   };
 }
 
@@ -1194,7 +1157,7 @@ function animate(now: number): void {
   if (inputState.forceWaterUpdate) {
     waterRenderer.update(world, inputState.debugWater, getRenderOptions(), gameModeEnabled);
     activeCellRenderer.update(world, inputState.debugWater && inputState.showActiveCells, getRenderOptions());
-    flowDebugRenderer.update(world, recentFlows, inputState.debugWater && inputState.showFlowDebug, getRenderOptions());
+    flowDebugRenderer.update(world, recentFlows, inputState.debugWater && inputState.showFlowDebug && !gameModeEnabled, getRenderOptions());
     pendingSonarWaterUpdate = true;
     inputState.forceWaterUpdate = false;
   }
@@ -1238,6 +1201,7 @@ function animate(now: number): void {
   updateGamePanelIfNeeded(now);
   syncBodyModeClasses();
 
+  waterRenderer.animate(now / 1000);
   sceneContext.renderer.render(sceneContext.scene, sceneContext.camera);
   if (now - lastSonarRenderAt >= SONAR_RENDER_INTERVAL_MS) {
     sonarRenderer.render(sceneContext.camera);
@@ -1262,6 +1226,11 @@ function updateGamePanelIfNeeded(now: number): void {
     currentLevelIndex,
     levelProgress?.complete ?? false,
     levelProgress?.failed ?? false,
+    levelProgress?.status ?? "-",
+    levelProgress?.stageProgress.activeStageProgress.toFixed(2) ?? "-",
+    levelProgress?.deliveredWater.toFixed(0) ?? "-",
+    levelProgress?.wastedWater.toFixed(0) ?? "-",
+    levelProgress?.settling.stableTicks ?? "-",
     levelProgress?.score?.total ?? "-",
     currentScoreIsNewBest,
     gameModeEnabled,
@@ -1330,11 +1299,14 @@ function getVisibleHazardStage() {
 }
 
 function updateAimFeedback(): void {
-  const previewCells = digController.getPreviewCells();
-  const hasDigTarget = firstPersonMode && previewCells.length > 0;
-  const hasHazardTarget = hasDigTarget && previewCells.some((cellIndex) => isCellInVisibleHazard(cellIndex));
+  const previewState = digController.getPreviewState();
+  const hasDigTarget = firstPersonMode && previewState.cells.length > 0;
+  const hasBlockedTarget =
+    firstPersonMode && previewState.targetCell !== null && (!previewState.digAllowed || previewState.cells.length === 0);
+  const hasHazardTarget = hasDigTarget && previewState.cells.some((cellIndex) => isCellInVisibleHazard(cellIndex));
 
   document.body.classList.toggle("is-dig-target", hasDigTarget);
+  document.body.classList.toggle("is-blocked-dig-target", hasBlockedTarget);
   document.body.classList.toggle("is-hazard-target", hasHazardTarget);
 }
 

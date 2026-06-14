@@ -1,12 +1,16 @@
 import {
   BoxGeometry,
   BufferGeometry,
+  CanvasTexture,
+  CircleGeometry,
   DoubleSide,
   Float32BufferAttribute,
-  MeshPhongMaterial,
   InstancedMesh,
   Mesh,
+  MeshBasicMaterial,
+  MeshPhongMaterial,
   Object3D,
+  RepeatWrapping,
   Scene,
 } from "three";
 import { cellCenter } from "../world/grid";
@@ -17,80 +21,148 @@ import { createRendererStats, type RendererStats } from "./renderStats";
 export type WaterRenderer = {
   mesh: InstancedMesh<BoxGeometry, MeshPhongMaterial>;
   surfaceMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
-  foamMesh: InstancedMesh<BoxGeometry, MeshPhongMaterial>;
+  curtainMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
+  foamMesh: InstancedMesh<CircleGeometry, MeshBasicMaterial>;
+  sprayMesh: InstancedMesh<CircleGeometry, MeshBasicMaterial>;
   instanceToCell: Int32Array;
   stats: RendererStats;
   update: (world: VoxelWorld, debugMode: boolean, options?: RenderOptions, gameplayMode?: boolean) => void;
+  animate: (timeSeconds: number) => void;
   dispose: () => void;
 };
 
+type Rgb = { r: number; g: number; b: number };
+type SideDirection = { dx: number; dz: number; axis: "x" | "z"; side: -1 | 1 };
+type SurfaceCell = { x: number; y: number; z: number; waterHeight: number };
+
 const bodyDummy = new Object3D();
 const foamDummy = new Object3D();
+const sprayDummy = new Object3D();
 const FULL_WATER_RENDER_THRESHOLD = 0.96;
 const EXPOSED_WATER_DELTA = 0.05;
+const SURFACE_LIFT = 0.024;
+const SURFACE_WAVE_AMPLITUDE = 0.045;
+const CURTAIN_INSET = 0.065;
+const FALLING_WATER_DROP_DELTA = 0.2;
+const FALLING_WATER_MIN_AMOUNT = 0.16;
+const FALLING_RIBBON_MAX_DROP = 8;
+const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
+const SPRAY_CAPACITY_LIMIT = WEBGPU_SAFE_INSTANCE_CAPACITY;
+const SIDE_DIRECTIONS: SideDirection[] = [
+  { dx: -1, dz: 0, axis: "x", side: -1 },
+  { dx: 1, dz: 0, axis: "x", side: 1 },
+  { dx: 0, dz: -1, axis: "z", side: -1 },
+  { dx: 0, dz: 1, axis: "z", side: 1 },
+];
 
 export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRenderer {
   const geometry = new BoxGeometry(0.96, 1, 0.96);
-  const foamGeometry = new BoxGeometry(0.78, 0.045, 0.78);
+  const foamGeometry = new CircleGeometry(0.5, 18);
+  const sprayGeometry = new CircleGeometry(0.5, 10);
+  const surfaceRippleTexture = createWaterRippleTexture(0x91f7ff, 0x11677f);
   const material = new MeshPhongMaterial({
-    color: 0x2fc4df,
+    color: 0x32d5eb,
     emissive: 0x073d4d,
     specular: 0xcff8ff,
     shininess: 115,
     transparent: true,
-    opacity: 0.26,
+    opacity: 0,
     depthWrite: false,
   });
+  material.colorWrite = false;
+
   const surfaceMaterial = new MeshPhongMaterial({
-    color: 0xc6fbff,
-    emissive: 0x125d68,
+    color: 0xffffff,
+    emissive: 0x0d5f70,
     specular: 0xffffff,
-    shininess: 180,
+    shininess: 210,
     transparent: true,
-    opacity: 0.66,
+    opacity: 0.86,
+    depthWrite: true,
+    side: DoubleSide,
+    vertexColors: true,
+    map: surfaceRippleTexture,
+  });
+  const curtainMaterial = new MeshPhongMaterial({
+    color: 0xffffff,
+    emissive: 0x08384d,
+    specular: 0xdffbff,
+    shininess: 145,
+    transparent: true,
+    opacity: 0.46,
     depthWrite: false,
     side: DoubleSide,
+    vertexColors: true,
   });
-  const foamMaterial = new MeshPhongMaterial({
-    color: 0xe8feff,
-    emissive: 0x2c8290,
-    specular: 0xffffff,
-    shininess: 160,
+  const foamMaterial = new MeshBasicMaterial({
+    color: 0xdffcff,
     transparent: true,
     opacity: 0.32,
     depthWrite: false,
+    side: DoubleSide,
   });
-  const mesh = new InstancedMesh(geometry, material, world.water.length);
+  const sprayMaterial = new MeshBasicMaterial({
+    color: 0xecffff,
+    transparent: true,
+    opacity: 0.36,
+    depthWrite: false,
+    side: DoubleSide,
+  });
+  const mesh = new InstancedMesh(geometry, material, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
   const surfaceMesh = new Mesh(new BufferGeometry(), surfaceMaterial);
-  const foamMesh = new InstancedMesh(foamGeometry, foamMaterial, world.water.length);
-  const instanceToCell = new Int32Array(world.water.length);
+  const curtainMesh = new Mesh(new BufferGeometry(), curtainMaterial);
+  const foamMesh = new InstancedMesh(foamGeometry, foamMaterial, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
+  const sprayCapacity = Math.min(world.water.length * 2, SPRAY_CAPACITY_LIMIT);
+  const sprayMesh = new InstancedMesh(sprayGeometry, sprayMaterial, sprayCapacity);
+  const instanceToCell = new Int32Array(mesh.instanceMatrix.count);
   const stats = createRendererStats(world.water.length);
 
   mesh.frustumCulled = false;
   surfaceMesh.frustumCulled = false;
+  curtainMesh.frustumCulled = false;
   foamMesh.frustumCulled = false;
+  sprayMesh.frustumCulled = false;
+  mesh.renderOrder = -10;
+  curtainMesh.renderOrder = 6;
+  surfaceMesh.renderOrder = 7;
+  foamMesh.renderOrder = 8;
+  sprayMesh.renderOrder = 9;
   scene.add(mesh);
+  scene.add(curtainMesh);
   scene.add(surfaceMesh);
   scene.add(foamMesh);
+  scene.add(sprayMesh);
 
   const waterRenderer: WaterRenderer = {
     mesh,
     surfaceMesh,
+    curtainMesh,
     foamMesh,
+    sprayMesh,
     instanceToCell,
     stats,
     update: (nextWorld, debugMode, options = defaultRenderOptions(nextWorld), gameplayMode = false) =>
       updateWaterMesh(waterRenderer, nextWorld, debugMode, options, gameplayMode),
+    animate: (timeSeconds) => {
+      surfaceRippleTexture.offset.set(timeSeconds * 0.018, timeSeconds * 0.011);
+    },
     dispose: () => {
       scene.remove(mesh);
+      scene.remove(curtainMesh);
       scene.remove(surfaceMesh);
       scene.remove(foamMesh);
+      scene.remove(sprayMesh);
       geometry.dispose();
+      curtainMesh.geometry.dispose();
       surfaceMesh.geometry.dispose();
       foamGeometry.dispose();
+      sprayGeometry.dispose();
       material.dispose();
       surfaceMaterial.dispose();
+      curtainMaterial.dispose();
       foamMaterial.dispose();
+      sprayMaterial.dispose();
+      surfaceRippleTexture.dispose();
     },
   };
 
@@ -108,19 +180,32 @@ function updateWaterMesh(
 ): void {
   const startedAt = performance.now();
   let instanceCount = 0;
+  let surfaceFaceCount = 0;
+  let curtainFaceCount = 0;
   let foamCount = 0;
-  const surfaceBuckets = new Map<number, Uint8Array>();
+  let sprayCount = 0;
+  const surfaceCells: SurfaceCell[] = [];
+  const curtainPositions: number[] = [];
+  const curtainColors: number[] = [];
   const material = renderer.mesh.material;
   const surfaceMaterial = renderer.surfaceMesh.material;
+  const curtainMaterial = renderer.curtainMesh.material;
   const foamMaterial = renderer.foamMesh.material;
-  material.color.set(debugMode ? 0x5ef0ff : gameplayMode ? 0x25b9d2 : 0x2fc4df);
-  material.emissive.set(debugMode ? 0x126c7c : gameplayMode ? 0x043946 : 0x073d4d);
-  material.opacity = debugMode ? 0.82 : gameplayMode ? 0.24 : 0.26;
-  surfaceMaterial.color.set(debugMode ? 0xd6ffff : gameplayMode ? 0xbff8ff : 0xc6fbff);
-  surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x0f5262 : 0x125d68);
-  surfaceMaterial.opacity = debugMode ? 0.58 : gameplayMode ? 0.7 : 0.66;
-  foamMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.46 : 0.36;
+  const sprayMaterial = renderer.sprayMesh.material;
+  material.color.set(debugMode ? 0x5ef0ff : 0x32d5eb);
+  material.emissive.set(debugMode ? 0x126c7c : 0x073d4d);
+  material.opacity = debugMode ? 0.45 : 0;
+  material.colorWrite = debugMode;
+  surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x0f5e70 : 0x125d68);
+  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.88 : 0.78;
+  curtainMaterial.emissive.set(debugMode ? 0x125c78 : gameplayMode ? 0x08384d : 0x0b4057);
+  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.48 : 0.42;
+  foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.36 : 0.3;
+  sprayMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.42 : 0.3;
   const layerSize = world.width * world.depth;
+  const bodyCapacity = renderer.mesh.instanceMatrix.count;
+  const foamCapacity = renderer.foamMesh.instanceMatrix.count;
+  const sprayCapacity = renderer.sprayMesh.instanceMatrix.count;
 
   for (const cellIndex of world.wetCells) {
     const y = Math.floor(cellIndex / layerSize);
@@ -138,164 +223,494 @@ function updateWaterMesh(
     }
 
     const center = cellCenter(world, x, y, z);
-    const waterHeight = Math.max(0.05, amount);
-    bodyDummy.position.set(center.x, y + waterHeight * 0.5, center.z);
-    bodyDummy.scale.set(1, waterHeight, 1);
-    bodyDummy.updateMatrix();
-    renderer.mesh.setMatrixAt(instanceCount, bodyDummy.matrix);
-
-    renderer.instanceToCell[instanceCount] = cellIndex;
-    instanceCount += 1;
-
-    if (shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
-      markSurfaceCell(surfaceBuckets, world, x, y, z, waterHeight);
+    const waterHeight = Math.max(0.05, Math.min(1, amount));
+    if (instanceCount < bodyCapacity) {
+      bodyDummy.position.set(center.x, y + waterHeight * 0.5, center.z);
+      bodyDummy.rotation.set(0, 0, 0);
+      bodyDummy.scale.set(1, waterHeight, 1);
+      bodyDummy.updateMatrix();
+      renderer.mesh.setMatrixAt(instanceCount, bodyDummy.matrix);
+      renderer.instanceToCell[instanceCount] = cellIndex;
+      instanceCount += 1;
     }
 
-    if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
+    if (shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
+      surfaceCells.push({ x, y, z, waterHeight });
+      surfaceFaceCount += 1;
+    }
+
+    curtainFaceCount += appendWaterCurtains(
+      curtainPositions,
+      curtainColors,
+      world,
+      x,
+      y,
+      z,
+      waterHeight,
+      debugMode,
+      gameplayMode,
+    );
+
+    if (foamCount < foamCapacity && shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
+      const dropScore = getWaterDropScore(world, x, y, z, amount);
       const foamScale = getWaterFoamScale(world, x, y, z, amount);
-      foamDummy.position.set(center.x, y + waterHeight + 0.035, center.z);
-      foamDummy.scale.set(foamScale, 1, foamScale);
+      const foamStretch = 0.72 + getCellVariation(x, y + 17, z) * 0.34;
+      foamDummy.position.set(center.x, y + waterHeight + 0.05, center.z);
+      foamDummy.rotation.set(-Math.PI / 2, 0, getCellVariation(z, y, x) * Math.PI * 2);
+      foamDummy.scale.set(foamScale, foamScale * foamStretch, 1);
       foamDummy.updateMatrix();
       renderer.foamMesh.setMatrixAt(foamCount, foamDummy.matrix);
       foamCount += 1;
+
+      if (sprayCount + 2 <= sprayCapacity && dropScore >= 2) {
+        sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount);
+      }
     }
   }
 
   renderer.mesh.count = instanceCount;
   renderer.mesh.instanceMatrix.needsUpdate = true;
   renderer.mesh.computeBoundingSphere();
-  const surfaceFaceCount = rebuildSurfaceMesh(renderer.surfaceMesh, world, surfaceBuckets);
+  replacePoolSurfaceGeometry(renderer.surfaceMesh, world, surfaceCells);
+  replaceDynamicGeometry(renderer.curtainMesh, curtainPositions, curtainColors);
   renderer.foamMesh.count = foamCount;
   renderer.foamMesh.instanceMatrix.needsUpdate = true;
+  if (renderer.foamMesh.instanceColor) {
+    renderer.foamMesh.instanceColor.needsUpdate = true;
+  }
   renderer.foamMesh.computeBoundingSphere();
-  renderer.stats.instances = instanceCount + surfaceFaceCount + foamCount;
+  renderer.sprayMesh.count = sprayCount;
+  renderer.sprayMesh.instanceMatrix.needsUpdate = true;
+  if (renderer.sprayMesh.instanceColor) {
+    renderer.sprayMesh.instanceColor.needsUpdate = true;
+  }
+  renderer.sprayMesh.computeBoundingSphere();
+  renderer.stats.instances = instanceCount + surfaceFaceCount + curtainFaceCount + foamCount + sprayCount;
   renderer.stats.updateMs = performance.now() - startedAt;
 }
 
-function markSurfaceCell(
-  buckets: Map<number, Uint8Array>,
+function appendWaterCurtains(
+  positions: number[],
+  colors: number[],
   world: VoxelWorld,
   x: number,
   y: number,
   z: number,
   waterHeight: number,
-): void {
-  const levelKey = Math.round(y + Math.min(1, waterHeight));
-  let bucket = buckets.get(levelKey);
-  if (!bucket) {
-    bucket = new Uint8Array(world.width * world.depth);
-    buckets.set(levelKey, bucket);
-  }
-
-  bucket[x + world.width * z] = 1;
-}
-
-function rebuildSurfaceMesh(
-  mesh: Mesh<BufferGeometry, MeshPhongMaterial>,
-  world: VoxelWorld,
-  buckets: Map<number, Uint8Array>,
+  debugMode: boolean,
+  gameplayMode: boolean,
 ): number {
-  const positions: number[] = [];
-  const normals: number[] = [];
-  const colors: number[] = [];
   let faceCount = 0;
+  const topY = y + waterHeight + 0.01;
+  const fallingCell = gameplayMode && !debugMode && isFallingWaterCell(world, x, y, z, waterHeight);
 
-  for (const [levelKey, cells] of buckets) {
-    const visited = new Uint8Array(cells.length);
-    const surfaceY = levelKey + 0.014;
-
-    for (let z = 0; z < world.depth; z += 1) {
-      for (let x = 0; x < world.width; x += 1) {
-        const cellIndex = x + world.width * z;
-        if (cells[cellIndex] === 0 || visited[cellIndex] === 1) {
-          continue;
-        }
-
-        let rectWidth = 1;
-        while (
-          x + rectWidth < world.width &&
-          cells[x + rectWidth + world.width * z] === 1 &&
-          visited[x + rectWidth + world.width * z] === 0
-        ) {
-          rectWidth += 1;
-        }
-
-        let rectDepth = 1;
-        let canExtend = true;
-        while (z + rectDepth < world.depth && canExtend) {
-          for (let dx = 0; dx < rectWidth; dx += 1) {
-            const nextIndex = x + dx + world.width * (z + rectDepth);
-            if (cells[nextIndex] === 0 || visited[nextIndex] === 1) {
-              canExtend = false;
-              break;
-            }
-          }
-          if (canExtend) {
-            rectDepth += 1;
-          }
-        }
-
-        for (let dz = 0; dz < rectDepth; dz += 1) {
-          for (let dx = 0; dx < rectWidth; dx += 1) {
-            visited[x + dx + world.width * (z + dz)] = 1;
-          }
-        }
-
-        appendSurfaceQuad(positions, normals, colors, world, x, z, rectWidth, rectDepth, surfaceY);
-        faceCount += 1;
+  if (!fallingCell) {
+    for (const direction of SIDE_DIRECTIONS) {
+      const neighborX = x + direction.dx;
+      const neighborZ = z + direction.dz;
+      if (isSolidWaterNeighbor(world, neighborX, y, neighborZ)) {
+        continue;
       }
+
+      const neighborAmount = getWaterAmountAt(world, neighborX, y, neighborZ);
+      if (neighborAmount >= waterHeight - EXPOSED_WATER_DELTA) {
+        continue;
+      }
+
+      const bottomY = y + Math.max(0.02, neighborAmount);
+      if (topY - bottomY < 0.08) {
+        continue;
+      }
+
+      appendSideCurtain(positions, colors, world, x, z, direction, topY, bottomY, waterHeight);
+      faceCount += 1;
     }
   }
 
-  const nextGeometry = new BufferGeometry();
-  nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  nextGeometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
-  nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-  nextGeometry.computeBoundingSphere();
-  mesh.geometry.dispose();
-  mesh.geometry = nextGeometry;
+  if (shouldStartFallingRibbon(world, x, y, z, waterHeight)) {
+    const bottomY = findFallingRibbonBottomY(world, x, y, z);
+    if (topY - bottomY >= 0.18) {
+      appendFallingRibbon(positions, colors, world, x, z, topY, bottomY, "x", waterHeight);
+      appendFallingRibbon(positions, colors, world, x, z, topY - 0.03, bottomY + 0.02, "z", waterHeight);
+      faceCount += 2;
+    }
+  }
+
   return faceCount;
 }
 
-function appendSurfaceQuad(
+function appendSideCurtain(
   positions: number[],
-  normals: number[],
   colors: number[],
   world: VoxelWorld,
   x: number,
   z: number,
-  width: number,
-  depth: number,
-  surfaceY: number,
+  direction: SideDirection,
+  topY: number,
+  bottomY: number,
+  amount: number,
 ): void {
-  const minX = x - world.width / 2 - 0.015;
-  const maxX = x + width - world.width / 2 + 0.015;
-  const minZ = z - world.depth / 2 - 0.015;
-  const maxZ = z + depth - world.depth / 2 + 0.015;
-  const color = getSurfaceColor(x, z, width, depth);
-  const vertices = [
-    [minX, surfaceY, minZ],
-    [maxX, surfaceY, minZ],
-    [maxX, surfaceY, maxZ],
-    [minX, surfaceY, minZ],
-    [maxX, surfaceY, maxZ],
-    [minX, surfaceY, maxZ],
-  ];
+  const topColor = getCurtainTopColor(x, z, amount);
+  const bottomColor = getCurtainBottomColor(x, z, amount);
+  const ribbonCount = 2 + Math.floor(getCellVariation(x + 7, 43, z + 3) * 2);
 
-  for (const vertex of vertices) {
-    positions.push(vertex[0], vertex[1], vertex[2]);
-    normals.push(0, 1, 0);
-    colors.push(color.r, color.g, color.b);
+  if (direction.axis === "x") {
+    const faceX = x + (direction.side > 0 ? 1 : 0) - world.width / 2;
+    const usable = 1 - CURTAIN_INSET * 2;
+    for (let i = 0; i < ribbonCount; i += 1) {
+      const slotStart = CURTAIN_INSET + (usable / ribbonCount) * i;
+      const slotEnd = CURTAIN_INSET + (usable / ribbonCount) * (i + 1);
+      const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(x, i + 61, z) - 0.5) * 0.06;
+      const halfWidth = ((slotEnd - slotStart) * (0.26 + getCellVariation(z, i + 71, x) * 0.22)) / 2;
+      const minZ = z - world.depth / 2 + center - halfWidth;
+      const maxZ = z - world.depth / 2 + center + halfWidth;
+      appendCurtainQuad(
+        positions,
+        colors,
+        [faceX, topY - getCurtainSag(x + i, z), minZ],
+        [faceX, topY - getCurtainSag(x, z + i), maxZ],
+        [faceX, bottomY, maxZ],
+        [faceX, bottomY + getCurtainSag(z + i, x) * 0.5, minZ],
+        topColor,
+        bottomColor,
+      );
+    }
+    return;
+  }
+
+  const faceZ = z + (direction.side > 0 ? 1 : 0) - world.depth / 2;
+  const usable = 1 - CURTAIN_INSET * 2;
+  for (let i = 0; i < ribbonCount; i += 1) {
+    const slotStart = CURTAIN_INSET + (usable / ribbonCount) * i;
+    const slotEnd = CURTAIN_INSET + (usable / ribbonCount) * (i + 1);
+    const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(z, i + 83, x) - 0.5) * 0.06;
+    const halfWidth = ((slotEnd - slotStart) * (0.26 + getCellVariation(x, i + 97, z) * 0.22)) / 2;
+    const minX = x - world.width / 2 + center - halfWidth;
+    const maxX = x - world.width / 2 + center + halfWidth;
+    appendCurtainQuad(
+      positions,
+      colors,
+      [minX, topY - getCurtainSag(z + i, x), faceZ],
+      [maxX, topY - getCurtainSag(z, x + i), faceZ],
+      [maxX, bottomY, faceZ],
+      [minX, bottomY + getCurtainSag(x + i, z) * 0.5, faceZ],
+      topColor,
+      bottomColor,
+    );
   }
 }
 
-function getSurfaceColor(x: number, z: number, width: number, depth: number): { r: number; g: number; b: number } {
-  const variation = getCellVariation(x + width, 0, z + depth) * 0.08;
+function appendFallingRibbon(
+  positions: number[],
+  colors: number[],
+  world: VoxelWorld,
+  x: number,
+  z: number,
+  topY: number,
+  bottomY: number,
+  axis: "x" | "z",
+  amount: number,
+): void {
+  const centerX = x - world.width / 2 + 0.5;
+  const centerZ = z - world.depth / 2 + 0.5;
+  const width = 0.24 + amount * 0.28;
+  const swayX = (getCellVariation(x + 101, 19, z) - 0.5) * 0.26;
+  const swayZ = (getCellVariation(x, 23, z + 107) - 0.5) * 0.26;
+  const topColor = getCurtainTopColor(x + 5, z, amount);
+  const bottomColor = getMistColor(amount);
+
+  if (axis === "x") {
+    appendCurtainQuad(
+      positions,
+      colors,
+      [centerX - width, topY, centerZ],
+      [centerX + width, topY - getCurtainSag(x, z), centerZ],
+      [centerX + width * 0.72 + swayX, bottomY, centerZ + swayZ],
+      [centerX - width * 0.72 + swayX, bottomY + getCurtainSag(z, x), centerZ + swayZ],
+      topColor,
+      bottomColor,
+    );
+    return;
+  }
+
+  appendCurtainQuad(
+    positions,
+    colors,
+    [centerX, topY, centerZ - width],
+    [centerX, topY - getCurtainSag(z, x), centerZ + width],
+    [centerX + swayX, bottomY, centerZ + width * 0.72 + swayZ],
+    [centerX + swayX, bottomY + getCurtainSag(x, z), centerZ - width * 0.72 + swayZ],
+    topColor,
+    bottomColor,
+  );
+}
+
+function appendWaterSpray(
+  renderer: WaterRenderer,
+  centerX: number,
+  topY: number,
+  centerZ: number,
+  x: number,
+  y: number,
+  z: number,
+  sprayCount: number,
+  amount: number,
+): number {
+  for (let i = 0; i < 2; i += 1) {
+    const variation = getCellVariation(x + i * 11, y + 19, z);
+    sprayDummy.position.set(
+      centerX + (variation - 0.5) * 0.48,
+      topY - 0.22 - i * 0.2,
+      centerZ + (getCellVariation(z, y + i * 13, x) - 0.5) * 0.48,
+    );
+    sprayDummy.rotation.set(0.35 + variation * 0.7, variation * Math.PI * 2, 0.2);
+    sprayDummy.scale.setScalar(0.16 + amount * 0.22 + variation * 0.08);
+    sprayDummy.updateMatrix();
+    renderer.sprayMesh.setMatrixAt(sprayCount, sprayDummy.matrix);
+    sprayCount += 1;
+  }
+  return sprayCount;
+}
+
+function replacePoolSurfaceGeometry(mesh: Mesh<BufferGeometry, MeshPhongMaterial>, world: VoxelWorld, cells: SurfaceCell[]): void {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const nodeIndices = new Map<string, number>();
+
+  const getNodeIndex = (cell: SurfaceCell, nodeX: number, nodeZ: number, cornerX: 0 | 1, cornerZ: 0 | 1): number => {
+    const key = `${cell.y}:${nodeX}:${nodeZ}`;
+    const existing = nodeIndices.get(key);
+    if (existing !== undefined) {
+      return existing;
+    }
+
+    const index = positions.length / 3;
+    const color = getSurfaceColor(world, cell.x, cell.y, cell.z, cell.waterHeight);
+    positions.push(
+      nodeX - world.width / 2,
+      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, cornerX, cornerZ),
+      nodeZ - world.depth / 2,
+    );
+    normals.push(0, 1, 0);
+    colors.push(color.r, color.g, color.b);
+    uvs.push(nodeX * 0.18, nodeZ * 0.18);
+    nodeIndices.set(key, index);
+    return index;
+  };
+
+  for (const cell of cells) {
+    const a = getNodeIndex(cell, cell.x, cell.z, 0, 0);
+    const b = getNodeIndex(cell, cell.x + 1, cell.z, 1, 0);
+    const c = getNodeIndex(cell, cell.x + 1, cell.z + 1, 1, 1);
+    const d = getNodeIndex(cell, cell.x, cell.z + 1, 0, 1);
+    indices.push(a, b, c, a, c, d);
+  }
+
+  const nextGeometry = new BufferGeometry();
+  nextGeometry.setIndex(indices);
+  nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  nextGeometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+  nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  nextGeometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  nextGeometry.computeBoundingSphere();
+  mesh.geometry.dispose();
+  mesh.geometry = nextGeometry;
+}
+
+function createWaterRippleTexture(lightColor: number, darkColor: number): CanvasTexture {
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const context = canvas.getContext("2d");
+  if (!context) {
+    throw new Error("Unable to create water ripple texture");
+  }
+
+  const light = `#${lightColor.toString(16).padStart(6, "0")}`;
+  const dark = `#${darkColor.toString(16).padStart(6, "0")}`;
+  const gradient = context.createLinearGradient(0, 0, size, size);
+  gradient.addColorStop(0, dark);
+  gradient.addColorStop(0.45, light);
+  gradient.addColorStop(1, dark);
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, size, size);
+  context.globalAlpha = 0.28;
+  context.strokeStyle = "#e8ffff";
+  context.lineWidth = 2;
+  for (let i = -size; i < size * 2; i += 18) {
+    context.beginPath();
+    context.moveTo(i, size);
+    context.bezierCurveTo(i + 28, 88, i + 16, 42, i + 62, 0);
+    context.stroke();
+  }
+  context.globalAlpha = 0.16;
+  context.strokeStyle = "#07384b";
+  context.lineWidth = 3;
+  for (let i = -size; i < size * 2; i += 27) {
+    context.beginPath();
+    context.moveTo(i, 0);
+    context.bezierCurveTo(i - 16, 30, i + 36, 78, i + 8, size);
+    context.stroke();
+  }
+
+  const texture = new CanvasTexture(canvas);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.repeat.set(1.2, 1.2);
+  return texture;
+}
+
+function replaceDynamicGeometry(mesh: Mesh<BufferGeometry, MeshPhongMaterial>, positions: number[], colors: number[]): void {
+  const nextGeometry = new BufferGeometry();
+  nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  nextGeometry.computeVertexNormals();
+  nextGeometry.computeBoundingSphere();
+  mesh.geometry.dispose();
+  mesh.geometry = nextGeometry;
+}
+
+function appendCurtainQuad(
+  positions: number[],
+  colors: number[],
+  topA: [number, number, number],
+  topB: [number, number, number],
+  bottomB: [number, number, number],
+  bottomA: [number, number, number],
+  topColor: Rgb,
+  bottomColor: Rgb,
+): void {
+  appendTriangle(positions, colors, topA, topB, bottomB, topColor, topColor, bottomColor);
+  appendTriangle(positions, colors, topA, bottomB, bottomA, topColor, bottomColor, bottomColor);
+}
+
+function appendTriangle(
+  positions: number[],
+  colors: number[],
+  a: [number, number, number],
+  b: [number, number, number],
+  c: [number, number, number],
+  colorA: Rgb,
+  colorB: Rgb,
+  colorC: Rgb,
+): void {
+  appendVertex(positions, colors, a, colorA);
+  appendVertex(positions, colors, b, colorB);
+  appendVertex(positions, colors, c, colorC);
+}
+
+function appendVertex(positions: number[], colors: number[], vertex: [number, number, number], color: Rgb): void {
+  positions.push(vertex[0], vertex[1], vertex[2]);
+  colors.push(color.r, color.g, color.b);
+}
+
+function getSurfaceCornerY(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  waterHeight: number,
+  cornerX: 0 | 1,
+  cornerZ: 0 | 1,
+): number {
+  const xs = cornerX === 0 ? [x - 1, x] : [x, x + 1];
+  const zs = cornerZ === 0 ? [z - 1, z] : [z, z + 1];
+  let total = 0;
+  let count = 0;
+
+  for (const sampleX of xs) {
+    for (const sampleZ of zs) {
+      const amount = getWaterAmountAt(world, sampleX, y, sampleZ);
+      if (amount > EPSILON) {
+        total += y + Math.max(0.05, Math.min(1, amount));
+        count += 1;
+      }
+    }
+  }
+
+  const average = count > 0 ? total / count : y + waterHeight;
+  const wave = getSurfaceWave(x, y, z, cornerX, cornerZ) * SURFACE_WAVE_AMPLITUDE;
+  return Math.max(y + 0.04, Math.min(y + 1.04, average + SURFACE_LIFT + wave));
+}
+
+function getSurfaceWave(x: number, y: number, z: number, cornerX: number, cornerZ: number): number {
+  const harmonic = Math.sin(x * 1.37 + z * 1.91 + cornerX * 1.7 + cornerZ * 2.3) * 0.55;
+  const ripple = getCellVariation(x + cornerX * 3, y + 29, z + cornerZ * 5) - 0.5;
+  return harmonic + ripple * 0.9;
+}
+
+function getSurfaceColor(world: VoxelWorld, x: number, y: number, z: number, amount: number): Rgb {
+  const depth = Math.min(1, getWaterColumnDepth(world, x, y, z) / 4.5);
+  const variation = getCellVariation(x, y + 7, z) * 0.08;
   return {
-    r: 0.66 + variation,
-    g: 0.96 + variation * 0.3,
+    r: 0.2 + amount * 0.08 - depth * 0.08 + variation,
+    g: 0.74 + amount * 0.15 - depth * 0.07 + variation * 0.4,
+    b: 0.92 + amount * 0.08,
+  };
+}
+
+function getCurtainTopColor(x: number, z: number, amount: number): Rgb {
+  const variation = getCellVariation(x, 13, z) * 0.08;
+  return {
+    r: 0.25 + amount * 0.08 + variation,
+    g: 0.78 + amount * 0.1 + variation * 0.3,
     b: 1,
   };
+}
+
+function getCurtainBottomColor(x: number, z: number, amount: number): Rgb {
+  const variation = getCellVariation(x, 23, z) * 0.05;
+  return {
+    r: 0.08 + amount * 0.08 + variation,
+    g: 0.38 + amount * 0.18 + variation,
+    b: 0.72 + amount * 0.18,
+  };
+}
+
+function getMistColor(amount: number): Rgb {
+  return {
+    r: 0.72 + amount * 0.18,
+    g: 0.94 + amount * 0.05,
+    b: 1,
+  };
+}
+
+function getCurtainSag(x: number, z: number): number {
+  return 0.015 + getCellVariation(x, 31, z) * 0.045;
+}
+
+function getWaterColumnDepth(world: VoxelWorld, x: number, y: number, z: number): number {
+  let depth = 0;
+  for (let sampleY = y; sampleY >= 0; sampleY -= 1) {
+    const amount = getWaterAmountAt(world, x, sampleY, z);
+    if (amount <= EPSILON) {
+      break;
+    }
+    depth += Math.min(1, amount);
+  }
+  return depth;
+}
+
+function getWaterAmountAt(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+    return 0;
+  }
+
+  const cellIndex = x + world.width * (z + world.depth * y);
+  return world.solid[cellIndex] === 1 ? 0 : world.water[cellIndex];
+}
+
+function isSolidWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+    return false;
+  }
+
+  const cellIndex = x + world.width * (z + world.depth * y);
+  return world.solid[cellIndex] === 1;
 }
 
 function getCellVariation(x: number, y: number, z: number): number {
@@ -320,6 +735,7 @@ function shouldRenderWaterCell(
   }
 
   return (
+    shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode) ||
     isWaterExposedToLowerNeighbor(world, x, y + 1, z, amount) ||
     isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount) ||
     isWaterExposedToLowerNeighbor(world, x - 1, y, z, amount) ||
@@ -348,6 +764,71 @@ function isWaterExposedToLowerNeighbor(
   return world.water[cellIndex] < amount - EXPOSED_WATER_DELTA;
 }
 
+function hasStrongVerticalWaterDrop(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
+  if (y <= 0 || amount < FALLING_WATER_MIN_AMOUNT || isSolidWaterNeighbor(world, x, y - 1, z)) {
+    return false;
+  }
+
+  const belowAmount = getWaterAmountAt(world, x, y - 1, z);
+  return belowAmount < Math.min(amount - FALLING_WATER_DROP_DELTA, 0.58);
+}
+
+function isFallingWaterCell(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
+  if (hasStrongVerticalWaterDrop(world, x, y, z, amount)) {
+    return true;
+  }
+
+  const belowAmount = getWaterAmountAt(world, x, y - 1, z);
+  const supportedByFloor = y <= 0 || isSolidWaterNeighbor(world, x, y - 1, z);
+  const supportedByWater = belowAmount >= Math.max(0.38, amount - FALLING_WATER_DROP_DELTA);
+  if (supportedByFloor || supportedByWater) {
+    return false;
+  }
+
+  return amount < 0.72 && getWaterDropScore(world, x, y, z, amount) >= 2;
+}
+
+function shouldStartFallingRibbon(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
+  if (!hasStrongVerticalWaterDrop(world, x, y, z, amount)) {
+    return false;
+  }
+
+  const aboveAmount = getWaterAmountAt(world, x, y + 1, z);
+  return aboveAmount <= EPSILON || !hasStrongVerticalWaterDrop(world, x, y + 1, z, aboveAmount);
+}
+
+function findFallingRibbonBottomY(world: VoxelWorld, x: number, y: number, z: number): number {
+  const minY = Math.max(0, Math.floor(y - FALLING_RIBBON_MAX_DROP));
+
+  for (let sampleY = y - 1; sampleY >= minY; sampleY -= 1) {
+    if (isSolidWaterNeighbor(world, x, sampleY, z)) {
+      return sampleY + 1.04;
+    }
+
+    const sampleAmount = getWaterAmountAt(world, x, sampleY, z);
+    if (sampleAmount <= EPSILON) {
+      continue;
+    }
+
+    const sampleHeight = Math.max(0.05, Math.min(1, sampleAmount));
+    if (!hasStrongVerticalWaterDrop(world, x, sampleY, z, sampleHeight)) {
+      return sampleY + sampleHeight + 0.04;
+    }
+  }
+
+  return Math.max(0.04, y - FALLING_RIBBON_MAX_DROP);
+}
+
+function hasOpenWaterTop(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  const aboveY = y + 1;
+  if (aboveY >= world.height) {
+    return true;
+  }
+
+  const aboveIndex = x + world.width * (z + world.depth * aboveY);
+  return world.solid[aboveIndex] !== 1 && world.water[aboveIndex] <= EPSILON;
+}
+
 function shouldRenderWaterSurface(
   world: VoxelWorld,
   x: number,
@@ -357,17 +838,25 @@ function shouldRenderWaterSurface(
   debugMode: boolean,
   gameplayMode: boolean,
 ): boolean {
-  if (debugMode || !gameplayMode || amount < FULL_WATER_RENDER_THRESHOLD) {
-    return true;
+  if (!hasOpenWaterTop(world, x, y, z)) {
+    return debugMode && !gameplayMode;
   }
 
-  const aboveY = y + 1;
-  if (aboveY >= world.height) {
-    return true;
+  if (gameplayMode && !debugMode && isFallingWaterCell(world, x, y, z, amount)) {
+    return false;
   }
 
-  const aboveIndex = x + world.width * (z + world.depth * aboveY);
-  return world.solid[aboveIndex] === 1 || world.water[aboveIndex] <= EPSILON;
+  if (amount < FULL_WATER_RENDER_THRESHOLD) {
+    return (
+      !gameplayMode ||
+      debugMode ||
+      y <= 0 ||
+      isSolidWaterNeighbor(world, x, y - 1, z) ||
+      getWaterAmountAt(world, x, y - 1, z) > 0.28
+    );
+  }
+
+  return true;
 }
 
 function shouldRenderWaterFoam(
@@ -384,11 +873,21 @@ function shouldRenderWaterFoam(
   }
 
   const dropScore = getWaterDropScore(world, x, y, z, amount);
-  return dropScore >= 1 || (amount > 0.62 && dropScore > 0 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode));
+  const verticalDrop = isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount);
+  if (verticalDrop && amount > 0.28) {
+    return getCellVariation(x, y + 41, z) > 0.62;
+  }
+
+  return (
+    dropScore >= 1 &&
+    amount > 0.78 &&
+    getCellVariation(x, y + 41, z) > 0.96 &&
+    shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)
+  );
 }
 
 function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
-  return Math.min(1.55, 0.82 + getWaterDropScore(world, x, y, z, amount) * 0.22 + amount * 0.18);
+  return Math.min(0.9, 0.34 + getWaterDropScore(world, x, y, z, amount) * 0.09 + amount * 0.1);
 }
 
 function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {

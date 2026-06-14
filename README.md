@@ -50,15 +50,11 @@ best-score fixtures stay deterministic.
 
 Useful URL parameters for repeatable captures:
 
-- `?scene=splitter`
-- `?scene=braid`
-- `?scene=divide`
 - `?game=1`
-- `?game=1&level=challenge`
-- `?game=1&level=splitpath`
-- `?game=1&level=splitbasin`
+- `?game=1&level=generated-cavern`
+- `?scene=generated-cavern`
 - `?game=1&debugUi=1`
-- `?game=0&scene=sluice`
+- `?game=0&scene=generated-cavern`
 - `?camera=fps`
 - `?camera=orbit`
 - `?spawn=overview`
@@ -81,13 +77,9 @@ terrain removal in the highlighted work zone.
 
 The root URL starts in a focused first-person game slice. It uses the same
 terrain destruction and grid-water simulation as the sandbox, then adds a
-lightweight mission loop on top:
+lightweight mission loop on top. The default and only map is:
 
-- **Sluice Tutorial**: cut highlighted weak rock gates in order and drain the reservoir through the lower cave.
-- **Forked Cavern Challenge**: mine into a forked cave network, hand-carve the final water route, and avoid red spill seams.
-- **Split Path Challenge**: open the reservoir, then choose and carve one of two lower branches without relying on an authored fork gate.
-- **Split Basin Challenge**: carve two outlets from one release chamber and fill both lower basins before the route settles.
-- **Deep Cavern Expedition**: route a high reservoir through a much larger vertical cavern and split it into two distant lower basins.
+- **Seeded Cavern Expedition**: route the same water contract through a deterministic cave-plan generator with linked template rooms, seeded side pockets, debris plugs, CC0 cave props, and twin lower basins.
 
 In game mode, the full solid cave is destructible. Highlighted route markers
 show the intended water-routing milestones, and red seams mark risky cuts. Once
@@ -100,10 +92,10 @@ judged by delivered water, per-basin targets, waste, settling, and red-seam
 risk. The best completion score for each level is saved locally in the browser
 and shown when that level is revisited. Best scores are keyed by level id in `localStorage` as
 `voxel-water-best-scores-v1`, with `{ version: 1, scores }` as the stored
-payload. The challenge selector lists every level and its local best score so a
-level can be entered directly without cycling through the campaign.
+payload. The expedition summary shows the local best score without cycling
+through a campaign.
 The debug panels are hidden on the root view by default; press F3 or backquote,
-or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
+or add `debugUi=1`, to bring them back. Use `?scene=generated-cavern` or `?game=0` to
 start directly in the full sandbox/debug workflow.
 
 ## Controls
@@ -126,13 +118,9 @@ start directly in the full sandbox/debug workflow.
 - [ / ]: move the slice plane through the z axis
 - O: open the next guided route marker
 - Shift+O: open all remaining guided route markers
-- 1: Sluice Tutorial / Sluice Gates scene
-- 2: Forked Cavern Challenge / Forked Cavern scene
-- 3: Split Path Challenge / Split Path Cavern scene
-- 4: Split Basin Challenge / Twin Basin Divide scene
-- 5: Deep Cavern Expedition / Deep Cavern scene
+- 1: Seeded Cavern Expedition
 - R: reset the world
-- Challenge list buttons: enter a level directly and preview local best scores
+- Expedition list button: preview the local best score for the expedition
 
 The debug panel also provides scene selection, pause/step/reset, **Open next**,
 **Open all**, water debug, separate active-cell and flow-glyph toggles, slice
@@ -143,10 +131,10 @@ storage.
 
 ## What is implemented
 
-- 48 x 32 x 48 typed-array voxel world for the focused scenes, plus a 72 x 48 x 72 deep-cavern preset
+- 72 x 48 x 72 typed-array voxel world for the generated cavern preset
 - Solid terrain cells and water volume cells
 - Face-culled terrain mesh with triangle-to-cell raycast mapping
-- Partial-height water cubes driven by real grid water values
+- Partial-height grid water with rebuilt surface sheets, side curtains, foam, and spray driven by real water values
 - Click-and-hold spherical digging through any raycasted solid terrain cell
 - Deterministic fixed-step water simulation
 - Downward-first water movement, lateral spreading, sleeping active cells, and neighbor wake-up
@@ -154,22 +142,25 @@ storage.
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
 - Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
 - Height- and zone-colored cave terrain with destructible physical landmarks in the large cavern
-- Five authored scenes: a focused sluice tutorial, forked cavern challenge, split-path manual carve challenge, twin-basin split challenge, and large vertical deep cavern
+- One deterministic template-generated cavern scene exposed as the default map
+- Deep Rock Galactic-inspired cave planning for the seeded cavern: a fixed seed chooses side-room variants, stitches hand-authored room templates with tunnels, then applies debris and biome dressing while preserving tested route plugs and basins
+- Small CC0 Kenney Nature Kit GLB props for large-cavern rocks, waterfall pieces, river stones, and mushrooms, with license/notice files under `public/assets/kenney-nature-kit/`
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
 - Hover cell inspection for coordinates, solid/open state, water amount, active/sleep state, and hit source
 - Interactive debug panel for scene switching, pause/step/reset, water debug, and slice controls
-- Browser-free simulation harness covering focused scenes across all tuning presets, plus the large deep-cavern preset on the default gameplay tuning, staged openings, game completion, manual route choices, per-basin delivery targets, and focused dig/opening edge cases
+- Browser-free simulation harness covering the generated cavern, staged openings, game completion, manual route choices, per-basin delivery targets, and focused dig/opening edge cases
 - Active water cell outlines in water debug mode
 - Separate active-cell and flow-glyph debug toggles
 - Empty-space probing on the current z slice
 - Scene tool buttons for opening each scene's guided drain path
 - Progressive scene opening timeline for multi-stage scenarios
 - Runtime metrics for ticks, last moved volume, max water delta, idle ticks, and stable/moving state
+- Mission HUD feedback for basin shortfalls, spill breaches, manual route water capture, and settling progress
 - Completion scoring that grades route efficiency, wasted water, and time to stable delivery
 - Local best-score persistence for completed levels
-- Level-select summary with direct challenge entry and best-score readouts
-- Headless screenshot comparison for all scenes with slice off/on, staged openings, and game screens
+- Expedition summary with direct entry and best-score readouts
+- Headless screenshot comparison for the generated cavern with slice off/on, staged openings, and game screens
 - Durable screenshot baselines under `test/baselines/visual`, with generated actual/diff images under `.sim-build/screenshots`
 - Flow direction debug: recent downward and lateral flow glyphs in water debug mode
 - Dig brush preview showing the cells that will be removed
@@ -177,13 +168,13 @@ storage.
 - Named tuning presets for fast drain, slow viscous, stable spread, and aggressive debug passes
 - Local-storage save/load/clear controls for one custom tuning profile
 - URL support for staged captures with `?openStages=N`
-- First-person game slice with weak-rock-only digging, red spill hazards, fork choices, manual carve routes, per-basin delivery goals, mission HUD, and completion/failure state
+- First-person game slice with faster centered digging, distinct valid/blocked/hazard reticle states, red spill hazards, fork choices, manual carve routes, per-basin delivery goals, mission HUD, and completion/failure state
 
 ## Known limitations
 
 - This is not a physically accurate fluid solver and intentionally avoids pressure, CFD, SPH, and particles.
 - Water does not push upward to equalize fully enclosed pressure systems.
-- The renderer draws all visible water cells as simple translucent boxes.
+- The renderer is visual rather than physical: water surfaces, curtains, foam, and spray still derive from simple voxel water, not pressure or particles.
 - Terrain rendering is face-culled but not greedy-merged; individual voxel picking is preserved.
 - Orbit uses right mouse so left mouse can stay dedicated to digging.
 - The sonar is player/camera centered and top-down; it is a readability aid, not a full minimap.
@@ -191,13 +182,12 @@ storage.
 - Flow glyphs show the most recent dominant direction per receiving cell, not a full velocity field.
 - Screenshot comparison uses a simple normalized pixel-difference threshold.
 - Renderer update timings are coarse browser-side measurements, not a profiler.
-- The failure loop is intentionally light; only the challenge levels have authored spill hazards.
+- The failure loop is intentionally light; the generated expedition has authored spill hazards.
 - There is no cross-device or campaign-level persistence yet.
-- The large deep-cavern preset is intentionally heavier than the focused scenes and is not yet chunked or greedy-meshed.
+- The generated cavern is intentionally heavier than the old focused scenes and is not yet chunked or greedy-meshed.
 
 ## Recommended next steps
 
-- Add more branch-choice levels where safe cuts and risky shortcuts compete for the same water.
 - Add greedy meshing only if a separate voxel picking path is introduced.
-- Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
-- Add more authored cave scenarios with distinct staged release patterns.
+- Add a faster large-cavern harness tier if validation becomes too slow for every local run.
+- Promote the seeded-cavern plan generator to more room variants only after the current seed has stronger playtest coverage.
