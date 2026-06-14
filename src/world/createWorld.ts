@@ -206,8 +206,8 @@ function carveDivideScene(world: VoxelWorld): void {
 }
 
 function carveDeepCavernScene(world: VoxelWorld): void {
-  carveEllipsoid(world, 36, 23, 36, 20, 16, 18);
-  carveEllipsoid(world, 38, 11, 36, 23, 9, 23);
+  carveEllipsoid(world, 36, 23, 36, 16, 13, 14);
+  carveEllipsoid(world, 38, 11, 36, 18, 7, 18);
   carveEllipsoid(world, 32, 36, 35, 16, 8, 15);
   carveEllipsoid(world, 52, 23, 24, 14, 9, 11);
   carveEllipsoid(world, 53, 20, 54, 14, 10, 12);
@@ -304,6 +304,7 @@ function carveDeepCavernScene(world: VoxelWorld): void {
     2.8,
     3.4,
   );
+  carveDeepCavernGalleries(world);
 
   addSolidEllipsoid(world, 36, 6, 36, 5, 9, 5);
   addSolidEllipsoid(world, 30, 14, 27, 4, 10, 4);
@@ -316,6 +317,7 @@ function carveDeepCavernScene(world: VoxelWorld): void {
   addSolidEllipsoid(world, 18, 41, 39, 3, 5, 3);
   addSolidEllipsoid(world, 58, 38, 28, 3, 6, 3);
   addSolidEllipsoid(world, 47, 34, 18, 2.5, 5, 2.5);
+  addDeepCavernStrata(world);
 
   addSolidBox(world, 19, 33, 24, 23, 43, 31);
   addSolidBox(world, 28, 22, 28, 36, 31, 36);
@@ -332,6 +334,50 @@ function carveDeepCavernScene(world: VoxelWorld): void {
   fillWaterBox(world, 8, 21, 33, 44, 19, 32);
   fillWaterBox(world, 14, 25, 4, 5, 48, 57);
   fillWaterBox(world, 42, 51, 4, 5, 17, 27);
+}
+
+function carveDeepCavernGalleries(world: VoxelWorld): void {
+  carveTunnel(
+    world,
+    [
+      { x: 29, y: 27, z: 38 },
+      { x: 24, y: 27, z: 43 },
+      { x: 18, y: 26, z: 49 },
+    ],
+    2.2,
+    2.6,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 48, y: 23, z: 29 },
+      { x: 53, y: 24, z: 22 },
+      { x: 56, y: 24, z: 16 },
+    ],
+    2.1,
+    2.4,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 32, y: 12, z: 29 },
+      { x: 27, y: 13, z: 22 },
+      { x: 23, y: 13, z: 16 },
+    ],
+    2,
+    2.4,
+  );
+
+  carveEllipsoid(world, 18, 26, 49, 8, 3, 6);
+  carveEllipsoid(world, 56, 24, 16, 7, 3, 6);
+  carveEllipsoid(world, 23, 13, 16, 7, 4, 5);
+}
+
+function addDeepCavernStrata(world: VoxelWorld): void {
+  addSolidBox(world, 24, 14, 38, 32, 29, 42);
+  addSolidBox(world, 43, 14, 30, 50, 27, 35);
+  addSolidBox(world, 24, 4, 35, 31, 13, 43);
+  addSolidBox(world, 10, 4, 47, 13, 9, 54);
 }
 
 function fillWaterBox(

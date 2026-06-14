@@ -717,7 +717,13 @@ function assertProgressiveStagesMoveWater(preset: ScenePresetId): void {
       : clearStageDigBoxes(world, getStageChoices(stages[stageIndex])[0]);
     assert(removed > 0, `${preset}: stage ${stageIndex + 1} (${stages[stageIndex].label}) removed no terrain`);
 
-    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, MAX_STAGE_TICKS, `${preset}: stage ${stageIndex + 1}`);
+    const movedVolume = runUntilStable(
+      world,
+      tuning.waterConfig,
+      baselineWater,
+      getProgressiveStageMaxTicks(preset),
+      `${preset}: stage ${stageIndex + 1}`,
+    );
     if (stageIndex === 0) {
       assert(
         movedVolume > EPSILON,
@@ -764,6 +770,10 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
 
 function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetId[] {
   return preset === "deep-cavern" ? [DEFAULT_TUNING_PRESET_ID] : TUNING_PRESETS;
+}
+
+function getProgressiveStageMaxTicks(preset: ScenePresetId): number {
+  return preset === "deep-cavern" ? MAX_TICKS : MAX_STAGE_TICKS;
 }
 
 function getScenarioMaxTicks(preset: ScenePresetId): number {

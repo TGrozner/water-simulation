@@ -195,8 +195,8 @@ export const GAME_LEVELS: GameLevel[] = [
     ],
     hazardStages: [
       {
-        label: "Lower sinkhole",
-        boxes: [box(30, 43, 0, 3, 32, 43)],
+        label: "Lower spill rims",
+        boxes: [box(30, 43, 0, 3, 32, 43), box(10, 13, 4, 9, 47, 54)],
         digBoxes: [box(33, 41, 1, 3, 34, 41)],
       },
     ],
