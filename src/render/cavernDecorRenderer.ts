@@ -134,6 +134,9 @@ export function createCavernDecorRenderer(scene: Scene, world: VoxelWorld): Cave
     createDecorLight(58, 9, 22, 0x4fe8ff),
     createDecorLight(18, 32, 26, 0xffb95f),
     createDecorLight(20, 12, 52, 0x9b7dff),
+    createDecorLight(37, 23, 36, 0x65f0ff),
+    createDecorLight(59, 7, 20, 0x52d9ff),
+    createDecorLight(59, 7, 58, 0x7df4c1),
   ];
   for (const { light } of lights) {
     root.add(light);
@@ -260,6 +263,16 @@ function getCaveAssetPlacements(world: VoxelWorld): CaveAssetPlacement[] {
   addAssetOnFloor(placements, world, "flatRock", 54, 24, 7, 0.86, 1.7);
   addAssetOnFloor(placements, world, "tallRockA", 56, 27, 7, 0.7, 0.4);
   addAssetOnFloor(placements, world, "riverRocks", 31, 37, 7, 0.72, 0.6);
+  addAssetOnFloor(placements, world, "riverRocks", 42, 36, 8, 0.76, 1.1);
+  addAssetOnFloor(placements, world, "largeRockD", 40, 39, 8, 0.7, 2.8);
+  addAssetOnFloor(placements, world, "flatRock", 38, 36, 8, 0.82, 0.2);
+  addAssetOnFloor(placements, world, "tallRockA", 28, 29, 18, 0.74, 2.5);
+  addAssetOnFloor(placements, world, "largeRockA", 21, 29, 27, 0.72, 0.2);
+  addAssetOnFloor(placements, world, "mushrooms", 17, 24, 26, 0.86, 1.6);
+  addAssetOnFloor(placements, world, "riverRocks", 58, 20, 7, 0.8, 0.1);
+  addAssetOnFloor(placements, world, "riverRocks", 58, 58, 7, 0.8, 2.7);
+  addAssetOnFloor(placements, world, "cliffWaterfallTop", 46, 34, 13, 0.62, 2.6);
+  addAssetOnFloor(placements, world, "cliffWaterfall", 46, 35, 12, 0.68, 2.6);
   return placements;
 }
 

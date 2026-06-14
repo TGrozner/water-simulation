@@ -3,7 +3,6 @@ import {
   BufferGeometry,
   Color,
   Group,
-  InstancedMesh,
   Line,
   LineBasicMaterial,
   LineLoop,
@@ -12,11 +11,13 @@ import {
   Object3D,
   OrthographicCamera,
   PerspectiveCamera,
+  RingGeometry,
   Scene,
   SphereGeometry,
   Vector3,
   WebGLRenderer,
 } from "three";
+import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { EPSILON, type VoxelWorld } from "../world/types";
 
 export type SonarRenderer = {
@@ -40,12 +41,18 @@ const SONAR_RADIUS = 24;
 const SONAR_CAMERA_HEIGHT = 72;
 const SONAR_VERTICAL_RANGE = 16;
 const SONAR_RANGE_RINGS = [8, 16, 24] as const;
+const SONAR_MISSION_BEACONS = [
+  { x: 21, z: 27, color: 0xffc247, scale: 1.12 },
+  { x: 33, z: 32, color: 0xeaf4ff, scale: 0.98 },
+  { x: 58, z: 20, color: 0x52d9ff, scale: 1.08 },
+  { x: 58, z: 58, color: 0x7df4c1, scale: 1.08 },
+] as const;
 
 export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): SonarRenderer {
   const panel = document.createElement("section");
   panel.className = "sonar-panel";
   panel.innerHTML = `
-    <div class="sonar-panel-title"><span>Cave sonar</span><b>N</b></div>
+    <div class="sonar-panel-title"><span>Cave sonar</span><em>route</em><b>N</b></div>
     <div class="sonar-panel-legend"><span>low</span><i></i><span>high</span><strong>water</strong></div>
   `;
   parent.appendChild(panel);
@@ -67,6 +74,8 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
 
   const rangeGuides = createRangeGuides();
   root.add(rangeGuides.group);
+  const missionBeacons = createMissionBeacons();
+  root.add(missionBeacons.group);
 
   const terrainGeometry = new BoxGeometry(0.92, 0.035, 0.92);
   const terrainMaterial = new MeshBasicMaterial({
@@ -74,9 +83,14 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
     transparent: true,
     opacity: 0.78,
   });
-  const terrainMesh = new InstancedMesh(terrainGeometry, terrainMaterial, world.solid.length);
-  terrainMesh.frustumCulled = false;
-  root.add(terrainMesh);
+  const terrainBatch = new InstancedMeshBatch({
+    scene,
+    geometry: terrainGeometry,
+    material: terrainMaterial,
+    chunkCapacity: 1000,
+    frustumCulled: false,
+    name: "sonar-terrain-batch",
+  });
 
   const waterGeometry = new BoxGeometry(1.02, 0.045, 1.02);
   const waterMaterial = new MeshBasicMaterial({
@@ -84,9 +98,14 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
     transparent: true,
     opacity: 0.68,
   });
-  const waterMesh = new InstancedMesh(waterGeometry, waterMaterial, world.water.length);
-  waterMesh.frustumCulled = false;
-  root.add(waterMesh);
+  const waterBatch = new InstancedMeshBatch({
+    scene,
+    geometry: waterGeometry,
+    material: waterMaterial,
+    chunkCapacity: 1000,
+    frustumCulled: false,
+    name: "sonar-water-batch",
+  });
 
   const playerMarker = new Mesh(
     new SphereGeometry(0.85, 12, 8),
@@ -123,16 +142,19 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
       sonarWorld = nextWorld;
     },
     render: (sourceCamera) => {
-      updateProjectedTerrainMesh(terrainMesh, sonarWorld, sourceCamera);
-      updateProjectedWaterMesh(waterMesh, sonarWorld, sourceCamera);
+      updateProjectedTerrainMesh(terrainBatch, sonarWorld, sourceCamera);
+      updateProjectedWaterMesh(waterBatch, sonarWorld, sourceCamera);
       updateCameraMarker(playerMarker, directionLine, sourceCamera, sonarWorld);
       updateRangeGuides(rangeGuides.group, sourceCamera, sonarWorld);
+      updateMissionBeacons(missionBeacons.group, sonarWorld);
       updateMapCamera(camera, sourceCamera, sonarWorld);
       renderer.render(scene, camera);
     },
     dispose: () => {
       resizeObserver.disconnect();
       parent.removeChild(panel);
+      terrainBatch.dispose();
+      waterBatch.dispose();
       terrainGeometry.dispose();
       terrainMaterial.dispose();
       waterGeometry.dispose();
@@ -140,6 +162,7 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
       playerMarker.geometry.dispose();
       playerMarker.material.dispose();
       disposeRangeGuides(rangeGuides);
+      disposeMissionBeacons(missionBeacons);
       directionGeometry.dispose();
       directionLine.material.dispose();
       renderer.dispose();
@@ -158,6 +181,13 @@ type RangeGuides = {
   material: LineBasicMaterial;
 };
 
+type MissionBeacons = {
+  group: Group;
+  markers: Mesh[];
+  geometry: RingGeometry;
+  materials: MeshBasicMaterial[];
+};
+
 function createRangeGuides(): RangeGuides {
   const group = new Group();
   const material = new LineBasicMaterial({ color: 0x69e7ff, transparent: true, opacity: 0.18 });
@@ -174,9 +204,40 @@ function createRangeGuides(): RangeGuides {
   return { group, rings, material };
 }
 
+function createMissionBeacons(): MissionBeacons {
+  const group = new Group();
+  const geometry = new RingGeometry(0.72, 1.04, 32);
+  const materials: MeshBasicMaterial[] = [];
+  const markers = SONAR_MISSION_BEACONS.map((beacon) => {
+    const material = new MeshBasicMaterial({
+      color: beacon.color,
+      transparent: true,
+      opacity: 0.86,
+      depthWrite: false,
+    });
+    materials.push(material);
+    const marker = new Mesh(geometry, material);
+    marker.rotation.x = -Math.PI / 2;
+    marker.scale.setScalar(beacon.scale);
+    group.add(marker);
+    return marker;
+  });
+
+  return { group, markers, geometry, materials };
+}
+
 function updateRangeGuides(group: Group, sourceCamera: PerspectiveCamera, world: VoxelWorld): void {
   const playerPosition = getClampedCameraPosition(sourceCamera, world);
   group.position.set(playerPosition.x, 0, playerPosition.z);
+}
+
+function updateMissionBeacons(group: Group, world: VoxelWorld): void {
+  group.visible = world.width >= 64 && world.depth >= 64;
+  for (let i = 0; i < group.children.length; i += 1) {
+    const beacon = SONAR_MISSION_BEACONS[i];
+    const marker = group.children[i];
+    marker.position.set(beacon.x - world.width / 2 + 0.5, 0.26, beacon.z - world.depth / 2 + 0.5);
+  }
 }
 
 function disposeRangeGuides(guides: RangeGuides): void {
@@ -184,6 +245,13 @@ function disposeRangeGuides(guides: RangeGuides): void {
     ring.geometry.dispose();
   }
   guides.material.dispose();
+}
+
+function disposeMissionBeacons(beacons: MissionBeacons): void {
+  beacons.geometry.dispose();
+  for (const material of beacons.materials) {
+    material.dispose();
+  }
 }
 
 function updateMapCamera(
@@ -203,14 +271,18 @@ function updateMapCamera(
   mapCamera.updateMatrixWorld();
 }
 
-function updateProjectedTerrainMesh(mesh: InstancedMesh, world: VoxelWorld, sourceCamera: PerspectiveCamera): void {
-  let instanceCount = 0;
+function updateProjectedTerrainMesh(
+  batch: InstancedMeshBatch<BoxGeometry, MeshBasicMaterial>,
+  world: VoxelWorld,
+  sourceCamera: PerspectiveCamera,
+): void {
   const playerPosition = getClampedCameraPosition(sourceCamera, world);
   const minX = Math.max(0, Math.floor(playerPosition.x + world.width / 2 - SONAR_RADIUS));
   const maxX = Math.min(world.width - 1, Math.ceil(playerPosition.x + world.width / 2 + SONAR_RADIUS));
   const minZ = Math.max(0, Math.floor(playerPosition.z + world.depth / 2 - SONAR_RADIUS));
   const maxZ = Math.min(world.depth - 1, Math.ceil(playerPosition.z + world.depth / 2 + SONAR_RADIUS));
 
+  batch.begin();
   for (let z = minZ; z <= maxZ; z += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       if (!isInsideSonarBounds(world, x, 0, z) || getColumnDistance(playerPosition, world, x, z) > SONAR_RADIUS) {
@@ -225,28 +297,25 @@ function updateProjectedTerrainMesh(mesh: InstancedMesh, world: VoxelWorld, sour
       terrainDummy.position.set(x - world.width / 2 + 0.5, 0.01, z - world.depth / 2 + 0.5);
       terrainDummy.scale.setScalar(1);
       terrainDummy.updateMatrix();
-      mesh.setMatrixAt(instanceCount, terrainDummy.matrix);
-      mesh.setColorAt(instanceCount, getSonarTerrainColor(world, openY, playerPosition.y));
-      instanceCount += 1;
+      batch.pushMatrix(terrainDummy.matrix, undefined, getSonarTerrainColor(world, openY, playerPosition.y));
     }
   }
 
-  mesh.count = instanceCount;
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) {
-    mesh.instanceColor.needsUpdate = true;
-  }
-  mesh.computeBoundingSphere();
+  batch.finish();
 }
 
-function updateProjectedWaterMesh(mesh: InstancedMesh, world: VoxelWorld, sourceCamera: PerspectiveCamera): void {
-  let instanceCount = 0;
+function updateProjectedWaterMesh(
+  batch: InstancedMeshBatch<BoxGeometry, MeshBasicMaterial>,
+  world: VoxelWorld,
+  sourceCamera: PerspectiveCamera,
+): void {
   const playerPosition = getClampedCameraPosition(sourceCamera, world);
   const minX = Math.max(0, Math.floor(playerPosition.x + world.width / 2 - SONAR_RADIUS));
   const maxX = Math.min(world.width - 1, Math.ceil(playerPosition.x + world.width / 2 + SONAR_RADIUS));
   const minZ = Math.max(0, Math.floor(playerPosition.z + world.depth / 2 - SONAR_RADIUS));
   const maxZ = Math.min(world.depth - 1, Math.ceil(playerPosition.z + world.depth / 2 + SONAR_RADIUS));
 
+  batch.begin();
   for (let z = minZ; z <= maxZ; z += 1) {
     for (let x = minX; x <= maxX; x += 1) {
       if (!isInsideSonarBounds(world, x, 0, z) || getColumnDistance(playerPosition, world, x, z) > SONAR_RADIUS) {
@@ -261,18 +330,11 @@ function updateProjectedWaterMesh(mesh: InstancedMesh, world: VoxelWorld, source
       waterDummy.position.set(x - world.width / 2 + 0.5, 0.055, z - world.depth / 2 + 0.5);
       waterDummy.scale.setScalar(1);
       waterDummy.updateMatrix();
-      mesh.setMatrixAt(instanceCount, waterDummy.matrix);
-      mesh.setColorAt(instanceCount, getSonarWaterColor(world, columnWater.y, columnWater.amount));
-      instanceCount += 1;
+      batch.pushMatrix(waterDummy.matrix, undefined, getSonarWaterColor(world, columnWater.y, columnWater.amount));
     }
   }
 
-  mesh.count = instanceCount;
-  mesh.instanceMatrix.needsUpdate = true;
-  if (mesh.instanceColor) {
-    mesh.instanceColor.needsUpdate = true;
-  }
-  mesh.computeBoundingSphere();
+  batch.finish();
 }
 
 function updateCameraMarker(

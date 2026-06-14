@@ -1,7 +1,8 @@
-import { ConeGeometry, InstancedMesh, Matrix4, MeshBasicMaterial, Object3D, Quaternion, Scene, Vector3 } from "three";
+import { ConeGeometry, MeshBasicMaterial, Object3D, Quaternion, Scene, Vector3 } from "three";
 import { cellCenter, coords } from "../world/grid";
 import type { VoxelWorld } from "../world/types";
 import type { FlowDirection } from "../sim/waterSimulation";
+import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 
 export type RecentFlow = {
@@ -20,7 +21,7 @@ export type FlowDebugRenderer = {
 
 type DirectionMesh = {
   direction: FlowDirection;
-  mesh: InstancedMesh;
+  batch: InstancedMeshBatch<ConeGeometry, MeshBasicMaterial>;
   material: MeshBasicMaterial;
   geometry: ConeGeometry;
 };
@@ -29,12 +30,12 @@ const dummy = new Object3D();
 const upVector = new Vector3(0, 1, 0);
 const directionVector = new Vector3();
 const rotation = new Quaternion();
-const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
+const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 
-export function createFlowDebugRenderer(scene: Scene, world: VoxelWorld): FlowDebugRenderer {
+export function createFlowDebugRenderer(scene: Scene, _world: VoxelWorld): FlowDebugRenderer {
   const meshes: DirectionMesh[] = [
-    createDirectionMesh(scene, world, "down", 0x66d9ff),
-    createDirectionMesh(scene, world, "side", 0x78ff7a),
+    createDirectionMesh(scene, "down", 0x66d9ff),
+    createDirectionMesh(scene, "side", 0x78ff7a),
   ];
 
   return {
@@ -42,7 +43,7 @@ export function createFlowDebugRenderer(scene: Scene, world: VoxelWorld): FlowDe
       updateFlowDebug(meshes, nextWorld, flows, enabled, options),
     dispose: () => {
       for (const entry of meshes) {
-        scene.remove(entry.mesh);
+        entry.batch.dispose();
         entry.geometry.dispose();
         entry.material.dispose();
       }
@@ -52,7 +53,6 @@ export function createFlowDebugRenderer(scene: Scene, world: VoxelWorld): FlowDe
 
 function createDirectionMesh(
   scene: Scene,
-  world: VoxelWorld,
   direction: FlowDirection,
   color: number,
 ): DirectionMesh {
@@ -63,11 +63,16 @@ function createDirectionMesh(
     opacity: 0.9,
     depthWrite: false,
   });
-  const mesh = new InstancedMesh(geometry, material, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
-  mesh.frustumCulled = false;
-  scene.add(mesh);
+  const batch = new InstancedMeshBatch({
+    scene,
+    geometry,
+    material,
+    chunkCapacity: WEBGPU_SAFE_BATCH_CAPACITY,
+    frustumCulled: false,
+    name: `flow-${direction}-batch`,
+  });
 
-  return { direction, mesh, material, geometry };
+  return { direction, batch, material, geometry };
 }
 
 function updateFlowDebug(
@@ -89,34 +94,18 @@ function updateDirectionMesh(
   enabled: boolean,
   options: RenderOptions,
 ): void {
-  const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
-
   if (!enabled) {
-    if (entry.mesh.count === 0) {
-      return;
-    }
-
-    for (let i = 0; i < entry.mesh.count; i += 1) {
-      entry.mesh.setMatrixAt(i, hiddenMatrix);
-    }
-    entry.mesh.count = 0;
-    entry.mesh.instanceMatrix.needsUpdate = true;
+    entry.batch.clear();
     return;
   }
 
-  let instanceCount = 0;
-  const capacity = entry.mesh.instanceMatrix.count;
   if (flows.size === 0) {
-    entry.mesh.count = 0;
-    entry.mesh.instanceMatrix.needsUpdate = true;
+    entry.batch.clear();
     return;
   }
 
+  entry.batch.begin();
   for (const [cellIndex, flow] of flows) {
-    if (instanceCount >= capacity) {
-      break;
-    }
-
     if (flow.direction !== entry.direction || world.solid[cellIndex] === 1) {
       continue;
     }
@@ -138,16 +127,10 @@ function updateDirectionMesh(
     dummy.quaternion.copy(rotation);
     dummy.scale.setScalar(scale);
     dummy.updateMatrix();
-    entry.mesh.setMatrixAt(instanceCount, dummy.matrix);
-    instanceCount += 1;
+    entry.batch.pushMatrix(dummy.matrix);
   }
 
-  for (let i = instanceCount; i < entry.mesh.count; i += 1) {
-    entry.mesh.setMatrixAt(i, hiddenMatrix);
-  }
-
-  entry.mesh.count = instanceCount;
-  entry.mesh.instanceMatrix.needsUpdate = true;
+  entry.batch.finish();
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

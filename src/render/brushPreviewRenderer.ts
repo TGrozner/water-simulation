@@ -1,10 +1,10 @@
-import { BoxGeometry, InstancedMesh, Matrix4, MeshBasicMaterial, Object3D, Scene } from "three";
+import { BoxGeometry, MeshBasicMaterial, Object3D, Scene } from "three";
 import { cellCenter, coords } from "../world/grid";
 import type { VoxelWorld } from "../world/types";
+import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 
 export type BrushPreviewRenderer = {
-  mesh: InstancedMesh;
   update: (world: VoxelWorld, cells: number[], options?: RenderOptions) => void;
   dispose: () => void;
 };
@@ -15,8 +15,7 @@ type BrushPreviewCache = {
 };
 
 const dummy = new Object3D();
-const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
-const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
+const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 
 export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): BrushPreviewRenderer {
   const geometry = new BoxGeometry(1.12, 1.12, 1.12);
@@ -28,20 +27,24 @@ export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): Bru
     depthTest: true,
     depthWrite: false,
   });
-  const mesh = new InstancedMesh(geometry, material, Math.min(world.solid.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
+  const batch = new InstancedMeshBatch({
+    scene,
+    geometry,
+    material,
+    chunkCapacity: WEBGPU_SAFE_BATCH_CAPACITY,
+    frustumCulled: false,
+    name: "brush-preview-batch",
+  });
   const cache: BrushPreviewCache = {
     lastCells: [],
     lastOptionsKey: "",
   };
-  mesh.frustumCulled = false;
-  scene.add(mesh);
 
   const renderer: BrushPreviewRenderer = {
-    mesh,
     update: (nextWorld, cells, options = defaultRenderOptions(nextWorld)) =>
-      updateBrushPreview(renderer, nextWorld, cells, options, cache),
+      updateBrushPreview(batch, nextWorld, cells, options, cache),
     dispose: () => {
-      scene.remove(mesh);
+      batch.dispose();
       geometry.dispose();
       material.dispose();
     },
@@ -53,7 +56,7 @@ export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): Bru
 }
 
 function updateBrushPreview(
-  renderer: BrushPreviewRenderer,
+  batch: InstancedMeshBatch<BoxGeometry, MeshBasicMaterial>,
   world: VoxelWorld,
   cells: number[],
   options: RenderOptions,
@@ -67,14 +70,9 @@ function updateBrushPreview(
   cache.lastCells.length = 0;
   cache.lastCells.push(...cells);
   cache.lastOptionsKey = optionsKey;
-  let instanceCount = 0;
-  const capacity = renderer.mesh.instanceMatrix.count;
+  batch.begin();
 
   for (const cellIndex of cells) {
-    if (instanceCount >= capacity) {
-      break;
-    }
-
     if (world.solid[cellIndex] === 0) {
       continue;
     }
@@ -88,17 +86,10 @@ function updateBrushPreview(
     dummy.position.set(center.x, center.y, center.z);
     dummy.scale.setScalar(1);
     dummy.updateMatrix();
-    renderer.mesh.setMatrixAt(instanceCount, dummy.matrix);
-    instanceCount += 1;
+    batch.pushMatrix(dummy.matrix);
   }
 
-  for (let i = instanceCount; i < renderer.mesh.count; i += 1) {
-    renderer.mesh.setMatrixAt(i, hiddenMatrix);
-  }
-
-  renderer.mesh.count = instanceCount;
-  renderer.mesh.instanceMatrix.needsUpdate = true;
-  renderer.mesh.computeBoundingSphere();
+  batch.finish();
 }
 
 function areCellArraysEqual(a: number[], b: number[]): boolean {

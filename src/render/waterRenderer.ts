@@ -5,27 +5,28 @@ import {
   CircleGeometry,
   DoubleSide,
   Float32BufferAttribute,
-  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
   MeshPhongMaterial,
   Object3D,
+  Raycaster,
   RepeatWrapping,
   Scene,
 } from "three";
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
+import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 import { createRendererStats, type RendererStats } from "./renderStats";
 
 export type WaterRenderer = {
-  mesh: InstancedMesh<BoxGeometry, MeshPhongMaterial>;
+  bodyBatch: InstancedMeshBatch<BoxGeometry, MeshPhongMaterial, number>;
   surfaceMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
   curtainMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
-  foamMesh: InstancedMesh<CircleGeometry, MeshBasicMaterial>;
-  sprayMesh: InstancedMesh<CircleGeometry, MeshBasicMaterial>;
-  instanceToCell: Int32Array;
+  foamBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
+  sprayBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
   stats: RendererStats;
+  pickCell: (raycaster: Raycaster) => { cellIndex: number; distance: number } | null;
   update: (world: VoxelWorld, debugMode: boolean, options?: RenderOptions, gameplayMode?: boolean) => void;
   animate: (timeSeconds: number) => void;
   dispose: () => void;
@@ -46,8 +47,7 @@ const CURTAIN_INSET = 0.065;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 8;
-const WEBGPU_SAFE_INSTANCE_CAPACITY = 1000;
-const SPRAY_CAPACITY_LIMIT = WEBGPU_SAFE_INSTANCE_CAPACITY;
+const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
   { dx: 1, dz: 0, axis: "x", side: 1 },
@@ -108,50 +108,67 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     depthWrite: false,
     side: DoubleSide,
   });
-  const mesh = new InstancedMesh(geometry, material, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
+  const bodyBatch = new InstancedMeshBatch<BoxGeometry, MeshPhongMaterial, number>({
+    scene,
+    geometry,
+    material,
+    chunkCapacity: WEBGPU_SAFE_BATCH_CAPACITY,
+    frustumCulled: false,
+    name: "water-body-batch",
+    renderOrder: -10,
+  });
   const surfaceMesh = new Mesh(new BufferGeometry(), surfaceMaterial);
   const curtainMesh = new Mesh(new BufferGeometry(), curtainMaterial);
-  const foamMesh = new InstancedMesh(foamGeometry, foamMaterial, Math.min(world.water.length, WEBGPU_SAFE_INSTANCE_CAPACITY));
-  const sprayCapacity = Math.min(world.water.length * 2, SPRAY_CAPACITY_LIMIT);
-  const sprayMesh = new InstancedMesh(sprayGeometry, sprayMaterial, sprayCapacity);
-  const instanceToCell = new Int32Array(mesh.instanceMatrix.count);
+  const foamBatch = new InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>({
+    scene,
+    geometry: foamGeometry,
+    material: foamMaterial,
+    chunkCapacity: WEBGPU_SAFE_BATCH_CAPACITY,
+    frustumCulled: false,
+    name: "water-foam-batch",
+    renderOrder: 8,
+  });
+  const sprayBatch = new InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>({
+    scene,
+    geometry: sprayGeometry,
+    material: sprayMaterial,
+    chunkCapacity: WEBGPU_SAFE_BATCH_CAPACITY,
+    frustumCulled: false,
+    name: "water-spray-batch",
+    renderOrder: 9,
+  });
   const stats = createRendererStats(world.water.length);
 
-  mesh.frustumCulled = false;
   surfaceMesh.frustumCulled = false;
   curtainMesh.frustumCulled = false;
-  foamMesh.frustumCulled = false;
-  sprayMesh.frustumCulled = false;
-  mesh.renderOrder = -10;
   curtainMesh.renderOrder = 6;
   surfaceMesh.renderOrder = 7;
-  foamMesh.renderOrder = 8;
-  sprayMesh.renderOrder = 9;
-  scene.add(mesh);
   scene.add(curtainMesh);
   scene.add(surfaceMesh);
-  scene.add(foamMesh);
-  scene.add(sprayMesh);
 
   const waterRenderer: WaterRenderer = {
-    mesh,
+    bodyBatch,
     surfaceMesh,
     curtainMesh,
-    foamMesh,
-    sprayMesh,
-    instanceToCell,
+    foamBatch,
+    sprayBatch,
     stats,
+    pickCell: (raycaster) => {
+      const hit = bodyBatch.pick(raycaster);
+      return hit ? { cellIndex: hit.metadata, distance: hit.distance } : null;
+    },
     update: (nextWorld, debugMode, options = defaultRenderOptions(nextWorld), gameplayMode = false) =>
       updateWaterMesh(waterRenderer, nextWorld, debugMode, options, gameplayMode),
     animate: (timeSeconds) => {
       surfaceRippleTexture.offset.set(timeSeconds * 0.018, timeSeconds * 0.011);
+      surfaceRippleTexture.rotation = Math.sin(timeSeconds * 0.08) * 0.08;
     },
     dispose: () => {
-      scene.remove(mesh);
+      bodyBatch.dispose();
+      foamBatch.dispose();
+      sprayBatch.dispose();
       scene.remove(curtainMesh);
       scene.remove(surfaceMesh);
-      scene.remove(foamMesh);
-      scene.remove(sprayMesh);
       geometry.dispose();
       curtainMesh.geometry.dispose();
       surfaceMesh.geometry.dispose();
@@ -187,11 +204,11 @@ function updateWaterMesh(
   const surfaceCells: SurfaceCell[] = [];
   const curtainPositions: number[] = [];
   const curtainColors: number[] = [];
-  const material = renderer.mesh.material;
+  const material = renderer.bodyBatch.material;
   const surfaceMaterial = renderer.surfaceMesh.material;
   const curtainMaterial = renderer.curtainMesh.material;
-  const foamMaterial = renderer.foamMesh.material;
-  const sprayMaterial = renderer.sprayMesh.material;
+  const foamMaterial = renderer.foamBatch.material;
+  const sprayMaterial = renderer.sprayBatch.material;
   material.color.set(debugMode ? 0x5ef0ff : 0x32d5eb);
   material.emissive.set(debugMode ? 0x126c7c : 0x073d4d);
   material.opacity = debugMode ? 0.45 : 0;
@@ -203,9 +220,9 @@ function updateWaterMesh(
   foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.36 : 0.3;
   sprayMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.42 : 0.3;
   const layerSize = world.width * world.depth;
-  const bodyCapacity = renderer.mesh.instanceMatrix.count;
-  const foamCapacity = renderer.foamMesh.instanceMatrix.count;
-  const sprayCapacity = renderer.sprayMesh.instanceMatrix.count;
+  renderer.bodyBatch.begin();
+  renderer.foamBatch.begin();
+  renderer.sprayBatch.begin();
 
   for (const cellIndex of world.wetCells) {
     const y = Math.floor(cellIndex / layerSize);
@@ -224,21 +241,19 @@ function updateWaterMesh(
 
     const center = cellCenter(world, x, y, z);
     const waterHeight = Math.max(0.05, Math.min(1, amount));
-    if (instanceCount < bodyCapacity) {
-      bodyDummy.position.set(center.x, y + waterHeight * 0.5, center.z);
-      bodyDummy.rotation.set(0, 0, 0);
-      bodyDummy.scale.set(1, waterHeight, 1);
-      bodyDummy.updateMatrix();
-      renderer.mesh.setMatrixAt(instanceCount, bodyDummy.matrix);
-      renderer.instanceToCell[instanceCount] = cellIndex;
-      instanceCount += 1;
-    }
+    bodyDummy.position.set(center.x, y + waterHeight * 0.5, center.z);
+    bodyDummy.rotation.set(0, 0, 0);
+    bodyDummy.scale.set(1, waterHeight, 1);
+    bodyDummy.updateMatrix();
+    renderer.bodyBatch.pushMatrix(bodyDummy.matrix, cellIndex);
+    instanceCount += 1;
 
     if (shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
       surfaceCells.push({ x, y, z, waterHeight });
       surfaceFaceCount += 1;
     }
 
+    const fallingRibbon = shouldStartFallingRibbon(world, x, y, z, waterHeight);
     curtainFaceCount += appendWaterCurtains(
       curtainPositions,
       curtainColors,
@@ -250,8 +265,11 @@ function updateWaterMesh(
       debugMode,
       gameplayMode,
     );
+    if (fallingRibbon && gameplayMode && !debugMode) {
+      sprayCount = appendWaterMist(renderer, world, x, y, z, waterHeight, sprayCount);
+    }
 
-    if (foamCount < foamCapacity && shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
+    if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
       const dropScore = getWaterDropScore(world, x, y, z, amount);
       const foamScale = getWaterFoamScale(world, x, y, z, amount);
       const foamStretch = 0.72 + getCellVariation(x, y + 17, z) * 0.34;
@@ -259,32 +277,20 @@ function updateWaterMesh(
       foamDummy.rotation.set(-Math.PI / 2, 0, getCellVariation(z, y, x) * Math.PI * 2);
       foamDummy.scale.set(foamScale, foamScale * foamStretch, 1);
       foamDummy.updateMatrix();
-      renderer.foamMesh.setMatrixAt(foamCount, foamDummy.matrix);
+      renderer.foamBatch.pushMatrix(foamDummy.matrix);
       foamCount += 1;
 
-      if (sprayCount + 2 <= sprayCapacity && dropScore >= 2) {
+      if (dropScore >= 2) {
         sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount);
       }
     }
   }
 
-  renderer.mesh.count = instanceCount;
-  renderer.mesh.instanceMatrix.needsUpdate = true;
-  renderer.mesh.computeBoundingSphere();
+  renderer.bodyBatch.finish();
   replacePoolSurfaceGeometry(renderer.surfaceMesh, world, surfaceCells);
   replaceDynamicGeometry(renderer.curtainMesh, curtainPositions, curtainColors);
-  renderer.foamMesh.count = foamCount;
-  renderer.foamMesh.instanceMatrix.needsUpdate = true;
-  if (renderer.foamMesh.instanceColor) {
-    renderer.foamMesh.instanceColor.needsUpdate = true;
-  }
-  renderer.foamMesh.computeBoundingSphere();
-  renderer.sprayMesh.count = sprayCount;
-  renderer.sprayMesh.instanceMatrix.needsUpdate = true;
-  if (renderer.sprayMesh.instanceColor) {
-    renderer.sprayMesh.instanceColor.needsUpdate = true;
-  }
-  renderer.sprayMesh.computeBoundingSphere();
+  renderer.foamBatch.finish();
+  renderer.sprayBatch.finish();
   renderer.stats.instances = instanceCount + surfaceFaceCount + curtainFaceCount + foamCount + sprayCount;
   renderer.stats.updateMs = performance.now() - startedAt;
 }
@@ -466,9 +472,42 @@ function appendWaterSpray(
     sprayDummy.rotation.set(0.35 + variation * 0.7, variation * Math.PI * 2, 0.2);
     sprayDummy.scale.setScalar(0.16 + amount * 0.22 + variation * 0.08);
     sprayDummy.updateMatrix();
-    renderer.sprayMesh.setMatrixAt(sprayCount, sprayDummy.matrix);
+    renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
     sprayCount += 1;
   }
+  return sprayCount;
+}
+
+function appendWaterMist(
+  renderer: WaterRenderer,
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  amount: number,
+  sprayCount: number,
+): number {
+  const bottomY = findFallingRibbonBottomY(world, x, y, z);
+  const centerX = x - world.width / 2 + 0.5;
+  const centerZ = z - world.depth / 2 + 0.5;
+  const particleCount = 3 + Math.floor(getCellVariation(x, y + 137, z) * 3);
+
+  for (let i = 0; i < particleCount; i += 1) {
+    const angle = getCellVariation(x + i * 17, y + 149, z) * Math.PI * 2;
+    const radius = 0.18 + getCellVariation(z, y + i * 19, x) * 0.46;
+    sprayDummy.position.set(
+      centerX + Math.cos(angle) * radius,
+      bottomY + 0.08 + i * 0.035,
+      centerZ + Math.sin(angle) * radius,
+    );
+    sprayDummy.rotation.set(Math.PI / 2, 0, angle);
+    const scale = 0.32 + amount * 0.26 + getCellVariation(i, x, z) * 0.18;
+    sprayDummy.scale.set(scale * 1.4, scale * 0.72, 1);
+    sprayDummy.updateMatrix();
+    renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
+    sprayCount += 1;
+  }
+
   return sprayCount;
 }
 
@@ -560,6 +599,7 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
   const texture = new CanvasTexture(canvas);
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
+  texture.center.set(0.5, 0.5);
   texture.repeat.set(1.2, 1.2);
   return texture;
 }
