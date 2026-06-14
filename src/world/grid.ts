@@ -10,6 +10,7 @@ export function createEmptyWorld(width: number, height: number, depth: number): 
     solid: new Uint8Array(cellCount),
     water: new Float32Array(cellCount),
     activeCells: new Set<number>(),
+    wetCells: new Set<number>(),
   };
 }
 
@@ -52,8 +53,27 @@ export function setWater(world: VoxelWorld, x: number, y: number, z: number, amo
     return;
   }
 
-  const cellIndex = index(world, x, y, z);
+  setCellWater(world, index(world, x, y, z), amount);
+}
+
+export function setCellWater(world: VoxelWorld, cellIndex: number, amount: number): void {
   world.water[cellIndex] = world.solid[cellIndex] === 1 ? 0 : clampWater(amount);
+  refreshWetCell(world, cellIndex);
+}
+
+export function refreshWetCell(world: VoxelWorld, cellIndex: number): void {
+  if (world.water[cellIndex] > EPSILON && world.solid[cellIndex] === 0) {
+    world.wetCells.add(cellIndex);
+  } else {
+    world.wetCells.delete(cellIndex);
+  }
+}
+
+export function rebuildWetCells(world: VoxelWorld): void {
+  world.wetCells.clear();
+  for (let cellIndex = 0; cellIndex < world.water.length; cellIndex += 1) {
+    refreshWetCell(world, cellIndex);
+  }
 }
 
 export function getCapacity(world: VoxelWorld, x: number, y: number, z: number): number {

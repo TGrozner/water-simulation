@@ -22,4 +22,5 @@ export type VoxelWorld = {
   solid: Uint8Array;
   water: Float32Array;
   activeCells: Set<number>;
+  wetCells: Set<number>;
 };

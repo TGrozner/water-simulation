@@ -36,6 +36,7 @@ export type DigController = {
 };
 
 const DIG_INTERVAL_MS = 70;
+const PREVIEW_INTERVAL_MS = 33;
 
 export function configureOrbitControls(controls: OrbitControls): void {
   controls.mouseButtons.LEFT = null as unknown as MOUSE;
@@ -182,6 +183,9 @@ export function createDigController(
   let isDigging = false;
   let lastPointerEvent: PointerEvent | null = null;
   let lastDigTime = 0;
+  let lastPreviewTime = Number.NEGATIVE_INFINITY;
+  let lastPreviewRadius = state.digRadius;
+  let previewDirty = true;
   let previewCells: number[] = [];
   let hasPointer = false;
 
@@ -207,6 +211,7 @@ export function createDigController(
   canvas.addEventListener("pointermove", (event) => {
     lastPointerEvent = event;
     hasPointer = true;
+    previewDirty = true;
   });
 
   const stopDigging = (event: PointerEvent) => {
@@ -222,16 +227,22 @@ export function createDigController(
     isDigging = false;
     hasPointer = false;
     previewCells = [];
+    previewDirty = true;
   });
 
   function update(): void {
-    updatePreview();
+    const now = performance.now();
+    if (shouldUpdatePreview(now)) {
+      updatePreview();
+      lastPreviewTime = now;
+      lastPreviewRadius = state.digRadius;
+      previewDirty = false;
+    }
 
     if (!isDigging || !lastPointerEvent) {
       return;
     }
 
-    const now = performance.now();
     if (now - lastDigTime < DIG_INTERVAL_MS) {
       return;
     }
@@ -271,8 +282,18 @@ export function createDigController(
 
     state.terrainDirty = true;
     state.forceWaterUpdate = true;
+    previewCells = [];
+    previewDirty = true;
     lastDigTime = performance.now();
     onDig(result);
+  }
+
+  function shouldUpdatePreview(now: number): boolean {
+    if (!hasPointer || !lastPointerEvent) {
+      return previewCells.length > 0;
+    }
+
+    return previewDirty || state.digRadius !== lastPreviewRadius || now - lastPreviewTime >= PREVIEW_INTERVAL_MS;
   }
 
   function pickTerrainCell(event: PointerEvent): number | null {
@@ -285,13 +306,7 @@ export function createDigController(
     }
     raycaster.setFromCamera(pointer, camera);
 
-    const terrain = terrainProvider();
-    const hit = raycaster.intersectObject(terrain.mesh, false)[0];
-    if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) {
-      return null;
-    }
-
-    return terrain.faceToCell[hit.faceIndex];
+    return terrainProvider().pickCell(raycaster)?.cellIndex ?? null;
   }
 
   return {

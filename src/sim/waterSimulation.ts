@@ -1,10 +1,10 @@
 import {
-  clampWater,
   coords,
   getCapacity,
   index,
   inBounds,
   isSolid,
+  setCellWater,
   wakeNeighbors,
 } from "../world/grid";
 import {
@@ -25,10 +25,21 @@ const LATERAL_DIRECTIONS: CellCoords[] = [
 
 type LateralCandidate = {
   direction: CellCoords;
-  target: CellCoords;
+  x: number;
+  y: number;
+  z: number;
   targetWater: number;
   belowCapacity: number;
 };
+
+const lateralCandidates: LateralCandidate[] = LATERAL_DIRECTIONS.map((direction) => ({
+  direction,
+  x: 0,
+  y: 0,
+  z: 0,
+  targetWater: 0,
+  belowCapacity: 0,
+}));
 
 export type WaterSimulationConfig = {
   downFlowRate: number;
@@ -60,15 +71,23 @@ export type WaterStepStats = {
   flowEvents: FlowEvent[];
 };
 
+export type WaterStepOptions = {
+  collectFlowEvents?: boolean;
+};
+
+const EMPTY_FLOW_EVENTS: FlowEvent[] = [];
+
 export function stepWaterSimulation(
   world: VoxelWorld,
   config: WaterSimulationConfig = DEFAULT_WATER_SIMULATION_CONFIG,
+  options: WaterStepOptions = {},
 ): WaterStepStats {
   const currentCells = Array.from(world.activeCells).sort((a, b) => a - b);
   const nextActiveCells = new Set<number>();
   let movedVolume = 0;
   let changedCells = 0;
-  const flowEvents: FlowEvent[] = [];
+  const collectFlowEvents = options.collectFlowEvents ?? true;
+  const flowEvents: FlowEvent[] = collectFlowEvents ? [] : EMPTY_FLOW_EVENTS;
 
   world.activeCells.clear();
 
@@ -85,15 +104,17 @@ export function stepWaterSimulation(
       movedVolume += downTransfer;
       changed = downTransfer >= config.minFlow;
       changedCells += changed ? 1 : 0;
-      flowEvents.push({
-        fromCellIndex: cellIndex,
-        cellIndex: index(world, cell.x, cell.y - 1, cell.z),
-        direction: "down",
-        dx: 0,
-        dy: -1,
-        dz: 0,
-        amount: downTransfer,
-      });
+      if (collectFlowEvents) {
+        flowEvents.push({
+          fromCellIndex: cellIndex,
+          cellIndex: index(world, cell.x, cell.y - 1, cell.z),
+          direction: "down",
+          dx: 0,
+          dy: -1,
+          dz: 0,
+          amount: downTransfer,
+        });
+      }
       wakeNeighbors(world, cell.x, cell.y, cell.z, nextActiveCells);
       wakeNeighbors(world, cell.x, cell.y - 1, cell.z, nextActiveCells);
     }
@@ -103,25 +124,27 @@ export function stepWaterSimulation(
         break;
       }
 
-      const { direction, target } = candidate;
-      const lateralTransfer = transferLateralWater(world, cell, target, config);
+      const { direction } = candidate;
+      const lateralTransfer = transferLateralWater(world, cell, candidate.x, candidate.y, candidate.z, config);
 
       if (lateralTransfer > EPSILON) {
         movedVolume += lateralTransfer;
-        flowEvents.push({
-          fromCellIndex: cellIndex,
-          cellIndex: index(world, target.x, target.y, target.z),
-          direction: "side",
-          dx: direction.x,
-          dy: direction.y,
-          dz: direction.z,
-          amount: lateralTransfer,
-        });
+        if (collectFlowEvents) {
+          flowEvents.push({
+            fromCellIndex: cellIndex,
+            cellIndex: index(world, candidate.x, candidate.y, candidate.z),
+            direction: "side",
+            dx: direction.x,
+            dy: direction.y,
+            dz: direction.z,
+            amount: lateralTransfer,
+          });
+        }
         if (lateralTransfer >= config.minFlow) {
           changed = true;
           changedCells += 1;
           wakeNeighbors(world, cell.x, cell.y, cell.z, nextActiveCells);
-          wakeNeighbors(world, target.x, target.y, target.z, nextActiveCells);
+          wakeNeighbors(world, candidate.x, candidate.y, candidate.z, nextActiveCells);
         }
       }
     }
@@ -143,23 +166,21 @@ export function stepWaterSimulation(
 }
 
 function getLateralCandidates(world: VoxelWorld, cell: CellCoords): LateralCandidate[] {
-  return LATERAL_DIRECTIONS.map((direction) => {
-    const target = {
-      x: cell.x + direction.x,
-      y: cell.y,
-      z: cell.z + direction.z,
-    };
+  for (let i = 0; i < LATERAL_DIRECTIONS.length; i += 1) {
+    const direction = LATERAL_DIRECTIONS[i];
+    const candidate = lateralCandidates[i];
+    candidate.direction = direction;
+    candidate.x = cell.x + direction.x;
+    candidate.y = cell.y;
+    candidate.z = cell.z + direction.z;
+    candidate.targetWater =
+      inBounds(world, candidate.x, candidate.y, candidate.z) && !isSolid(world, candidate.x, candidate.y, candidate.z)
+        ? world.water[index(world, candidate.x, candidate.y, candidate.z)]
+        : Number.POSITIVE_INFINITY;
+    candidate.belowCapacity = getCapacity(world, candidate.x, candidate.y - 1, candidate.z);
+  }
 
-    return {
-      direction,
-      target,
-      targetWater:
-        inBounds(world, target.x, target.y, target.z) && !isSolid(world, target.x, target.y, target.z)
-          ? world.water[index(world, target.x, target.y, target.z)]
-          : Number.POSITIVE_INFINITY,
-      belowCapacity: getCapacity(world, target.x, target.y - 1, target.z),
-    };
-  }).sort((a, b) => {
+  return lateralCandidates.sort((a, b) => {
     const waterDelta = a.targetWater - b.targetWater;
     if (Math.abs(waterDelta) > EPSILON) {
       return waterDelta;
@@ -221,8 +242,8 @@ function transferWater(world: VoxelWorld, from: CellCoords, to: CellCoords, maxR
     return 0;
   }
 
-  world.water[fromIndex] = clampWater(world.water[fromIndex] - amount);
-  world.water[toIndex] = clampWater(world.water[toIndex] + amount);
+  setCellWater(world, fromIndex, world.water[fromIndex] - amount);
+  setCellWater(world, toIndex, world.water[toIndex] + amount);
 
   return amount;
 }
@@ -230,15 +251,17 @@ function transferWater(world: VoxelWorld, from: CellCoords, to: CellCoords, maxR
 function transferLateralWater(
   world: VoxelWorld,
   from: CellCoords,
-  to: CellCoords,
+  toX: number,
+  toY: number,
+  toZ: number,
   config: WaterSimulationConfig,
 ): number {
-  if (!inBounds(world, to.x, to.y, to.z) || isSolid(world, to.x, to.y, to.z)) {
+  if (!inBounds(world, toX, toY, toZ) || isSolid(world, toX, toY, toZ)) {
     return 0;
   }
 
   const fromIndex = index(world, from.x, from.y, from.z);
-  const toIndex = index(world, to.x, to.y, to.z);
+  const toIndex = index(world, toX, toY, toZ);
   const fromWater = world.water[fromIndex];
   const toWater = world.water[toIndex];
   const levelDifference = fromWater - toWater;
@@ -247,15 +270,15 @@ function transferLateralWater(
     return 0;
   }
 
-  const capacity = getCapacity(world, to.x, to.y, to.z);
+  const capacity = getCapacity(world, toX, toY, toZ);
   const amount = Math.min(levelDifference * 0.5, config.sideFlowRate, fromWater, capacity);
 
   if (amount <= EPSILON) {
     return 0;
   }
 
-  world.water[fromIndex] = clampWater(fromWater - amount);
-  world.water[toIndex] = clampWater(toWater + amount);
+  setCellWater(world, fromIndex, fromWater - amount);
+  setCellWater(world, toIndex, toWater + amount);
 
   return amount;
 }

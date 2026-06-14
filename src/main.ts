@@ -56,6 +56,7 @@ import {
   openSceneStage,
   type SceneOpeningStage,
 } from "./world/sceneTools";
+import type { DigResult } from "./world/dig";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) {
@@ -342,7 +343,8 @@ function canDigCell(_cellIndex: number): boolean {
   return true;
 }
 
-function handleDig(): void {
+function handleDig(result: DigResult): void {
+  terrainRenderer.markCellsDirty(result.changedCells);
   advanceClearedGameStages();
   openClearedHazards();
 }
@@ -569,6 +571,7 @@ function resetTuning(): void {
 }
 
 function markRenderOptionsChanged(): void {
+  terrainRenderer.markAllDirty();
   inputState.terrainDirty = true;
   inputState.forceWaterUpdate = true;
 }
@@ -874,7 +877,7 @@ function runInitialSimulationWarmup(): number {
   let idleTicks = 0;
 
   for (let i = 0; i < warmupTicks; i += 1) {
-    stepWaterSimulation(world, waterConfig);
+    stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
     tickCount += 1;
     if (world.activeCells.size === 0) {
       idleTicks += 1;
@@ -1125,8 +1128,10 @@ function animate(now: number): void {
   if (sceneContext.controls.enabled) {
     sceneContext.controls.update();
   }
+  let rebuiltTerrainThisFrame = flushTerrainUpdate();
   firstPersonController.update(world, deltaSeconds);
   digController.update();
+  rebuiltTerrainThisFrame = flushTerrainUpdate() || rebuiltTerrainThisFrame;
   cellInspector.update();
   brushPreviewRenderer.update(world, digController.getPreviewCells(), getRenderOptions());
   stageGuideRenderer.update(world, getVisibleGuideStage(), getRenderOptions());
@@ -1138,9 +1143,10 @@ function animate(now: number): void {
     const simulationStartedAt = performance.now();
     const stepCount = queuedStep ? 1 : simStepsPerFrame;
     const activeCellsBeforeStep = world.activeCells.size;
+    const collectFlowEvents = inputState.debugWater && inputState.showFlowDebug;
     let waterChanged = false;
     for (let i = 0; i < stepCount; i += 1) {
-      const stats = stepWaterSimulation(world, waterConfig);
+      const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents });
       movedLastFrame += stats.movedVolume;
       recordFlowEvents(stats.flowEvents);
       if (stats.movedVolume > 0 || stats.changedCells > 0 || stats.flowEvents.length > 0) {
@@ -1158,14 +1164,6 @@ function animate(now: number): void {
   advanceClearedGameStages();
   decayFlowEvents();
   stableTicks = isStable() ? stableTicks + 1 : 0;
-
-  let rebuiltTerrainThisFrame = false;
-  if (inputState.terrainDirty) {
-    terrainRenderer.update(world, getRenderOptions());
-    pendingSonarTerrainUpdate = true;
-    inputState.terrainDirty = false;
-    rebuiltTerrainThisFrame = true;
-  }
 
   if (inputState.forceWaterUpdate) {
     waterRenderer.update(world, inputState.debugWater, getRenderOptions(), gameModeEnabled);
@@ -1219,6 +1217,17 @@ function animate(now: number): void {
     sonarRenderer.render(sceneContext.camera);
     lastSonarRenderAt = now;
   }
+}
+
+function flushTerrainUpdate(): boolean {
+  if (!inputState.terrainDirty) {
+    return false;
+  }
+
+  terrainRenderer.update(world, getRenderOptions());
+  pendingSonarTerrainUpdate = true;
+  inputState.terrainDirty = false;
+  return true;
 }
 
 function updateGamePanelIfNeeded(now: number): void {

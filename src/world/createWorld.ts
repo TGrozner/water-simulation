@@ -1,4 +1,4 @@
-import { createEmptyWorld, index, setWater, wakeCell } from "./grid";
+import { createEmptyWorld, index, setCellWater, setWater, wakeCell } from "./grid";
 import { WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH, type VoxelWorld } from "./types";
 
 export const SCENE_PRESETS = ["sluice", "splitter", "braid", "divide", "deep-cavern"] as const;
@@ -396,7 +396,7 @@ function addSolidBox(
     for (let z = minZ; z <= maxZ; z += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         world.solid[index(world, x, y, z)] = 1;
-        world.water[index(world, x, y, z)] = 0;
+        setCellWater(world, index(world, x, y, z), 0);
       }
     }
   }
@@ -430,7 +430,7 @@ function addSolidEllipsoid(
         const dz = (z - centerZ) / radiusZ;
         if (dx * dx + dy * dy + dz * dz <= 1) {
           world.solid[index(world, x, y, z)] = 1;
-          world.water[index(world, x, y, z)] = 0;
+          setCellWater(world, index(world, x, y, z), 0);
         }
       }
     }

@@ -783,7 +783,7 @@ function runUntilStable(
   const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
 
   for (let tick = 0; tick < maxTicks; tick += 1) {
-    const stats = stepWaterSimulation(world, waterConfig);
+    const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
     movedVolume += stats.movedVolume;
     const volumeDelta = Math.abs(totalWater(world) - baselineWater);
     onVolumeDelta?.(volumeDelta);

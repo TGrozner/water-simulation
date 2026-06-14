@@ -52,7 +52,7 @@ export function createCellInspector(
     }
 
     raycaster.setFromCamera(pointer, camera);
-    const terrainHit = raycaster.intersectObject(terrainProvider().mesh, false)[0];
+    const terrainHit = terrainProvider().pickCell(raycaster);
     const waterHit = raycaster.intersectObject(waterProvider().mesh, false)[0];
     const terrainDistance = terrainHit?.distance ?? Number.POSITIVE_INFINITY;
     const waterDistance = waterHit?.distance ?? Number.POSITIVE_INFINITY;
@@ -62,15 +62,9 @@ export function createCellInspector(
       return;
     }
 
-    const source = waterDistance <= terrainDistance ? "water" : "terrain";
-    const hit = source === "water" ? waterHit : terrainHit;
-    if (!hit) {
-      inspectedCell = null;
-      return;
-    }
-
     const world = worldProvider();
-    const cellIndex = getHitCellIndex(source, hit);
+    const source = waterDistance <= terrainDistance ? "water" : "terrain";
+    const cellIndex = source === "water" ? getWaterHitCellIndex(waterHit) : terrainHit?.cellIndex ?? null;
     if (cellIndex === null) {
       inspectedCell = null;
       return;
@@ -86,12 +80,8 @@ export function createCellInspector(
     };
   }
 
-  function getHitCellIndex(source: "terrain" | "water", hit: { instanceId?: number; faceIndex?: number | null }): number | null {
-    if (source === "water") {
-      return hit.instanceId === undefined ? null : waterProvider().instanceToCell[hit.instanceId];
-    }
-
-    return hit.faceIndex === undefined || hit.faceIndex === null ? null : terrainProvider().faceToCell[hit.faceIndex];
+  function getWaterHitCellIndex(hit: { instanceId?: number }): number | null {
+    return hit.instanceId === undefined ? null : waterProvider().instanceToCell[hit.instanceId];
   }
 
   function inspectRaymarchedCell(): InspectedCell {

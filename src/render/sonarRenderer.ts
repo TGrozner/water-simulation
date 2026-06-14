@@ -163,7 +163,7 @@ function updateTerrainMesh(mesh: InstancedMesh, world: VoxelWorld): void {
         }
 
         terrainDummy.position.set(x - world.width / 2 + 0.5, y + 0.5, z - world.depth / 2 + 0.5);
-        terrainDummy.scale.setScalar(world.water[cellIndex] > EPSILON ? 0.55 : 1);
+        terrainDummy.scale.setScalar(1);
         terrainDummy.updateMatrix();
         mesh.setMatrixAt(instanceCount, terrainDummy.matrix);
         instanceCount += 1;
@@ -178,23 +178,23 @@ function updateTerrainMesh(mesh: InstancedMesh, world: VoxelWorld): void {
 
 function updateWaterMesh(mesh: InstancedMesh, world: VoxelWorld): void {
   let instanceCount = 0;
+  const layerSize = world.width * world.depth;
 
-  for (let y = 0; y < world.height; y += 1) {
-    for (let z = 0; z < world.depth; z += 1) {
-      for (let x = 0; x < world.width; x += 1) {
-        const cellIndex = x + world.width * (z + world.depth * y);
-        const water = world.water[cellIndex];
-        if (water <= EPSILON || world.solid[cellIndex] === 1 || !isInsideSonarBounds(world, x, y, z)) {
-          continue;
-        }
-
-        waterDummy.position.set(x - world.width / 2 + 0.5, y + Math.max(0.08, water) * 0.5, z - world.depth / 2 + 0.5);
-        waterDummy.scale.set(0.85, Math.max(0.08, water), 0.85);
-        waterDummy.updateMatrix();
-        mesh.setMatrixAt(instanceCount, waterDummy.matrix);
-        instanceCount += 1;
-      }
+  for (const cellIndex of world.wetCells) {
+    const y = Math.floor(cellIndex / layerSize);
+    const layerIndex = cellIndex - y * layerSize;
+    const z = Math.floor(layerIndex / world.width);
+    const x = layerIndex - z * world.width;
+    const water = world.water[cellIndex];
+    if (water <= EPSILON || world.solid[cellIndex] === 1 || !isInsideSonarBounds(world, x, y, z)) {
+      continue;
     }
+
+    waterDummy.position.set(x - world.width / 2 + 0.5, y + Math.max(0.08, water) * 0.5, z - world.depth / 2 + 0.5);
+    waterDummy.scale.set(0.85, Math.max(0.08, water), 0.85);
+    waterDummy.updateMatrix();
+    mesh.setMatrixAt(instanceCount, waterDummy.matrix);
+    instanceCount += 1;
   }
 
   mesh.count = instanceCount;
@@ -245,7 +245,7 @@ function isSonarOpenCell(world: VoxelWorld, x: number, y: number, z: number, cel
   return (
     world.solid[cellIndex] === 0 &&
     isInsideSonarBounds(world, x, y, z) &&
-    (world.water[cellIndex] > EPSILON || countAdjacentSolidCells(world, x, y, z) > 0)
+    countAdjacentSolidCells(world, x, y, z) > 0
   );
 }
 

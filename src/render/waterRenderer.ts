@@ -67,32 +67,32 @@ function updateWaterMesh(
   const material = renderer.mesh.material as MeshBasicMaterial;
   material.color.set(debugMode ? 0x5ef0ff : gameplayMode ? 0x28b8d4 : 0x36a4ff);
   material.opacity = debugMode ? 0.88 : gameplayMode ? 0.34 : 0.56;
+  const layerSize = world.width * world.depth;
 
-  for (let y = 0; y < world.height; y += 1) {
-    for (let z = 0; z < world.depth; z += 1) {
-      for (let x = 0; x < world.width; x += 1) {
-        const cellIndex = x + world.width * (z + world.depth * y);
-        const amount = world.water[cellIndex];
-        if (
-          amount <= EPSILON ||
-          world.solid[cellIndex] === 1 ||
-          !shouldRenderCell(world, z, options) ||
-          !shouldRenderWaterCell(world, x, y, z, amount, debugMode, gameplayMode)
-        ) {
-          continue;
-        }
-
-        const center = cellCenter(world, x, y, z);
-        const waterHeight = Math.max(0.05, amount);
-        dummy.position.set(center.x, y + waterHeight * 0.5, center.z);
-        dummy.scale.set(1, waterHeight, 1);
-        dummy.updateMatrix();
-        renderer.mesh.setMatrixAt(instanceCount, dummy.matrix);
-
-        renderer.instanceToCell[instanceCount] = cellIndex;
-        instanceCount += 1;
-      }
+  for (const cellIndex of world.wetCells) {
+    const y = Math.floor(cellIndex / layerSize);
+    const layerIndex = cellIndex - y * layerSize;
+    const z = Math.floor(layerIndex / world.width);
+    const x = layerIndex - z * world.width;
+    const amount = world.water[cellIndex];
+    if (
+      amount <= EPSILON ||
+      world.solid[cellIndex] === 1 ||
+      !shouldRenderCell(world, z, options) ||
+      !shouldRenderWaterCell(world, x, y, z, amount, debugMode, gameplayMode)
+    ) {
+      continue;
     }
+
+    const center = cellCenter(world, x, y, z);
+    const waterHeight = Math.max(0.05, amount);
+    dummy.position.set(center.x, y + waterHeight * 0.5, center.z);
+    dummy.scale.set(1, waterHeight, 1);
+    dummy.updateMatrix();
+    renderer.mesh.setMatrixAt(instanceCount, dummy.matrix);
+
+    renderer.instanceToCell[instanceCount] = cellIndex;
+    instanceCount += 1;
   }
 
   renderer.mesh.count = instanceCount;

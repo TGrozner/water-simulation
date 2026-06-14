@@ -9,7 +9,13 @@ export type BrushPreviewRenderer = {
   dispose: () => void;
 };
 
+type BrushPreviewCache = {
+  lastCells: number[];
+  lastOptionsKey: string;
+};
+
 const dummy = new Object3D();
+const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
 
 export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): BrushPreviewRenderer {
   const geometry = new BoxGeometry(1.12, 1.12, 1.12);
@@ -21,13 +27,17 @@ export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): Bru
     depthWrite: false,
   });
   const mesh = new InstancedMesh(geometry, material, world.solid.length);
+  const cache: BrushPreviewCache = {
+    lastCells: [],
+    lastOptionsKey: "",
+  };
   mesh.frustumCulled = false;
   scene.add(mesh);
 
   const renderer: BrushPreviewRenderer = {
     mesh,
     update: (nextWorld, cells, options = defaultRenderOptions(nextWorld)) =>
-      updateBrushPreview(renderer, nextWorld, cells, options),
+      updateBrushPreview(renderer, nextWorld, cells, options, cache),
     dispose: () => {
       scene.remove(mesh);
       geometry.dispose();
@@ -45,8 +55,16 @@ function updateBrushPreview(
   world: VoxelWorld,
   cells: number[],
   options: RenderOptions,
+  cache: BrushPreviewCache,
 ): void {
-  const hiddenMatrix = new Matrix4().makeScale(0, 0, 0);
+  const optionsKey = getRenderOptionsKey(options);
+  if (optionsKey === cache.lastOptionsKey && areCellArraysEqual(cells, cache.lastCells)) {
+    return;
+  }
+
+  cache.lastCells.length = 0;
+  cache.lastCells.push(...cells);
+  cache.lastOptionsKey = optionsKey;
   let instanceCount = 0;
 
   for (const cellIndex of cells) {
@@ -74,6 +92,24 @@ function updateBrushPreview(
   renderer.mesh.count = instanceCount;
   renderer.mesh.instanceMatrix.needsUpdate = true;
   renderer.mesh.computeBoundingSphere();
+}
+
+function areCellArraysEqual(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function getRenderOptionsKey(options: RenderOptions): string {
+  return options.slice.enabled ? `slice:${options.slice.z}` : "full";
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {
