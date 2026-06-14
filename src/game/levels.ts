@@ -171,6 +171,36 @@ export const GAME_LEVELS: GameLevel[] = [
       },
     ],
   },
+  {
+    id: "deep-cavern",
+    name: "Deep Cavern Expedition",
+    scene: "deep-cavern",
+    brief: "Breach the high reservoir, drop the flow through the main cavern, then carve both lower sluices into distant basins.",
+    successText: "Deep cavern stabilized",
+    failText: "The cavern swallowed too much water",
+    deliveryTargetWater: 680,
+    maxWastedWater: 120,
+    scoreParTicks: 2800,
+    deliveryBoxes: [box(54, 68, 1, 12, 14, 31), box(52, 68, 1, 12, 48, 66)],
+    deliveryRequirements: [
+      { label: "south basin", targetWater: 330, boxes: [box(54, 68, 1, 12, 14, 31)] },
+      { label: "north basin", targetWater: 330, boxes: [box(52, 68, 1, 12, 48, 66)] },
+    ],
+    safeWaterBoxes: [
+      box(7, 22, 32, 45, 18, 33),
+      box(16, 43, 20, 43, 20, 42),
+      box(14, 60, 1, 28, 14, 58),
+      box(54, 68, 1, 12, 14, 31),
+      box(52, 68, 1, 12, 48, 66),
+    ],
+    hazardStages: [
+      {
+        label: "Lower sinkhole",
+        boxes: [box(30, 43, 0, 3, 32, 43)],
+        digBoxes: [box(33, 41, 1, 3, 34, 41)],
+      },
+    ],
+  },
 ];
 
 export function getLevel(id: string): GameLevel | null {

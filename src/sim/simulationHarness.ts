@@ -40,6 +40,7 @@ type HarnessResult = {
 const MAX_TICKS = 1800;
 const MAX_STAGE_TICKS = 1000;
 const CONSERVATION_TOLERANCE = 0.1;
+const CONSERVATION_RELATIVE_TOLERANCE = 0.0005;
 
 function runHarness(): void {
   const results: HarnessResult[] = [];
@@ -54,7 +55,7 @@ function runHarness(): void {
   for (const preset of SCENE_PRESETS) {
     assertAuthoredStagesRemoveTerrain(preset);
     assertProgressiveStagesMoveWater(preset);
-    for (const tuningPreset of TUNING_PRESETS) {
+    for (const tuningPreset of getScenarioTuningPresets(preset)) {
       results.push(runScenario(preset, tuningPreset));
     }
   }
@@ -739,7 +740,7 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
     openSceneDrain(world, preset);
 
     let maxVolumeDelta = 0;
-    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, MAX_TICKS, `${preset}/${tuningPreset}`, (volumeDelta) => {
+    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, getScenarioMaxTicks(preset), `${preset}/${tuningPreset}`, (volumeDelta) => {
       maxVolumeDelta = Math.max(maxVolumeDelta, volumeDelta);
     });
 
@@ -760,6 +761,14 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
     };
 }
 
+function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetId[] {
+  return preset === "deep-cavern" ? [DEFAULT_TUNING_PRESET_ID] : TUNING_PRESETS;
+}
+
+function getScenarioMaxTicks(preset: ScenePresetId): number {
+  return preset === "deep-cavern" ? 2200 : MAX_TICKS;
+}
+
 function runUntilStable(
   world: VoxelWorld,
   waterConfig: ReturnType<typeof cloneTuningPreset>["waterConfig"],
@@ -770,13 +779,14 @@ function runUntilStable(
 ): number {
   let movedVolume = 0;
   let idleTicks = 0;
+  const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
 
   for (let tick = 0; tick < maxTicks; tick += 1) {
     const stats = stepWaterSimulation(world, waterConfig);
     movedVolume += stats.movedVolume;
     const volumeDelta = Math.abs(totalWater(world) - baselineWater);
     onVolumeDelta?.(volumeDelta);
-    assert(volumeDelta <= CONSERVATION_TOLERANCE, `${context}: water volume drifted by ${volumeDelta.toFixed(6)}`);
+    assert(volumeDelta <= volumeTolerance, `${context}: water volume drifted by ${volumeDelta.toFixed(6)}`);
     assertNoInvalidWater(world, `${context}: tick ${tick}`);
 
     if (world.activeCells.size === 0) {

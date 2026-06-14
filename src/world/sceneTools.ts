@@ -95,6 +95,24 @@ export const SCENE_OPENING_STAGES: Record<ScenePresetId, SceneOpeningStage[]> = 
       autoOpen: false,
     },
   ],
+  "deep-cavern": [
+    {
+      label: "High reservoir breach",
+      boxes: [box(19, 23, 33, 43, 24, 31)],
+      digBoxes: [box(19, 23, 33, 43, 24, 31)],
+    },
+    {
+      label: "Main gallery throat",
+      boxes: [box(28, 36, 22, 31, 28, 36)],
+      digBoxes: [box(29, 35, 23, 30, 29, 35)],
+    },
+    {
+      label: "Twin lower sluices",
+      boxes: [],
+      digBoxes: [box(44, 56, 4, 11, 21, 31), box(44, 56, 4, 11, 47, 57)],
+      autoOpen: false,
+    },
+  ],
 };
 
 export function getSceneOpeningStages(preset: ScenePresetId): SceneOpeningStage[] {

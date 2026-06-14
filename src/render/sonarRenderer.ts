@@ -250,7 +250,7 @@ function isSonarOpenCell(world: VoxelWorld, x: number, y: number, z: number, cel
 }
 
 function isInsideSonarBounds(world: VoxelWorld, x: number, y: number, z: number): boolean {
-  return x >= 4 && x < world.width - 4 && y <= 25 && z >= 4 && z <= 35;
+  return x >= 4 && x < world.width - 4 && y <= world.height - 2 && z >= 4 && z < world.depth - 4;
 }
 
 function countAdjacentSolidCells(world: VoxelWorld, x: number, y: number, z: number): number {

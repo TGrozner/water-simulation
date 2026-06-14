@@ -87,6 +87,7 @@ lightweight mission loop on top:
 - **Forked Cavern Challenge**: mine into a forked cave network, hand-carve the final water route, and avoid red spill seams.
 - **Split Path Challenge**: open the reservoir, then choose and carve one of two lower branches without relying on an authored fork gate.
 - **Split Basin Challenge**: carve two outlets from one release chamber and fill both lower basins before the route settles.
+- **Deep Cavern Expedition**: route a high reservoir through a much larger vertical cavern and split it into two distant lower basins.
 
 In game mode, digging is restricted to the currently highlighted weak-rock gate
 plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
@@ -131,6 +132,7 @@ start directly in the full sandbox/debug workflow.
 - 2: Forked Cavern Challenge / Forked Cavern scene
 - 3: Split Path Challenge / Split Path Cavern scene
 - 4: Split Basin Challenge / Twin Basin Divide scene
+- 5: Deep Cavern Expedition / Deep Cavern scene
 - R: reset the world
 - Challenge list buttons: enter a level directly and preview local best scores
 
@@ -143,7 +145,7 @@ storage.
 
 ## What is implemented
 
-- 48 x 32 x 48 typed-array voxel world
+- 48 x 32 x 48 typed-array voxel world for the focused scenes, plus a 72 x 48 x 72 deep-cavern preset
 - Solid terrain cells and water volume cells
 - Face-culled terrain mesh with triangle-to-cell raycast mapping
 - Partial-height water cubes driven by real grid water values
@@ -153,12 +155,12 @@ storage.
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
 - Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
-- Four authored scenes: a focused sluice tutorial, a forked cavern challenge, a split-path manual carve challenge, and a twin-basin split challenge
+- Five authored scenes: a focused sluice tutorial, forked cavern challenge, split-path manual carve challenge, twin-basin split challenge, and large vertical deep cavern
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
 - Hover cell inspection for coordinates, solid/open state, water amount, active/sleep state, and hit source
 - Interactive debug panel for scene switching, pause/step/reset, water debug, and slice controls
-- Browser-free simulation harness covering all scenes across all tuning presets, staged openings, game completion, manual route choices, per-basin delivery targets, and focused dig/opening edge cases
+- Browser-free simulation harness covering focused scenes across all tuning presets, plus the large deep-cavern preset on the default gameplay tuning, staged openings, game completion, manual route choices, per-basin delivery targets, and focused dig/opening edge cases
 - Active water cell outlines in water debug mode
 - Separate active-cell and flow-glyph debug toggles
 - Empty-space probing on the current z slice
@@ -192,6 +194,7 @@ storage.
 - Renderer update timings are coarse browser-side measurements, not a profiler.
 - The failure loop is intentionally light; only the challenge levels have authored spill hazards.
 - There is no cross-device or campaign-level persistence yet.
+- The large deep-cavern preset is intentionally heavier than the focused scenes and is not yet chunked or greedy-meshed.
 
 ## Recommended next steps
 

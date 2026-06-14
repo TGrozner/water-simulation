@@ -1,7 +1,7 @@
 import { createEmptyWorld, index, setWater, wakeCell } from "./grid";
 import { WORLD_DEPTH, WORLD_HEIGHT, WORLD_WIDTH, type VoxelWorld } from "./types";
 
-export const SCENE_PRESETS = ["sluice", "splitter", "braid", "divide"] as const;
+export const SCENE_PRESETS = ["sluice", "splitter", "braid", "divide", "deep-cavern"] as const;
 
 export type ScenePresetId = (typeof SCENE_PRESETS)[number];
 
@@ -15,6 +15,23 @@ type CavePoint = {
   x: number;
   y: number;
   z: number;
+};
+
+type WorldSize = {
+  width: number;
+  height: number;
+  depth: number;
+};
+
+const DEFAULT_WORLD_SIZE: WorldSize = {
+  width: WORLD_WIDTH,
+  height: WORLD_HEIGHT,
+  depth: WORLD_DEPTH,
+};
+const DEEP_CAVERN_WORLD_SIZE: WorldSize = {
+  width: 72,
+  height: 48,
+  depth: 72,
 };
 
 export const SCENE_PRESET_DETAILS: Record<ScenePresetId, ScenePreset> = {
@@ -38,10 +55,22 @@ export const SCENE_PRESET_DETAILS: Record<ScenePresetId, ScenePreset> = {
     name: "Twin Basin Divide",
     description: "Carve two outlets from one release chamber so water reaches both lower basins.",
   },
+  "deep-cavern": {
+    id: "deep-cavern",
+    name: "Deep Cavern Expedition",
+    description: "Drop a high reservoir through a huge vertical cave and split the flow into two distant lower basins.",
+  },
 };
 
 export function createWorld(preset: ScenePresetId = "sluice"): VoxelWorld {
-  const world = createEmptyWorld(WORLD_WIDTH, WORLD_HEIGHT, WORLD_DEPTH);
+  const size = getSceneWorldSize(preset);
+  const world = createEmptyWorld(size.width, size.height, size.depth);
+
+  if (preset === "deep-cavern") {
+    createDeepCavernTerrainMass(world);
+    carveDeepCavernScene(world);
+    return world;
+  }
 
   createTerrainMass(world);
   if (preset === "splitter") {
@@ -57,6 +86,10 @@ export function createWorld(preset: ScenePresetId = "sluice"): VoxelWorld {
   return world;
 }
 
+function getSceneWorldSize(preset: ScenePresetId): WorldSize {
+  return preset === "deep-cavern" ? DEEP_CAVERN_WORLD_SIZE : DEFAULT_WORLD_SIZE;
+}
+
 function createTerrainMass(world: VoxelWorld): void {
   for (let y = 0; y < 24; y += 1) {
     for (let z = 4; z < 35; z += 1) {
@@ -65,6 +98,18 @@ function createTerrainMass(world: VoxelWorld): void {
       }
     }
   }
+}
+
+function createDeepCavernTerrainMass(world: VoxelWorld): void {
+  for (let y = 0; y < world.height - 4; y += 1) {
+    for (let z = 0; z < world.depth - 3; z += 1) {
+      for (let x = 0; x < world.width; x += 1) {
+        world.solid[index(world, x, y, z)] = 1;
+      }
+    }
+  }
+
+  carveBox(world, 0, 0, world.depth - 3, world.width - 1, world.height - 1, world.depth - 1);
 }
 
 function carveSharedCutaway(world: VoxelWorld): void {
@@ -160,6 +205,102 @@ function carveDivideScene(world: VoxelWorld): void {
   addSolidBox(world, 30, 1, 23, 40, 9, 27);
 }
 
+function carveDeepCavernScene(world: VoxelWorld): void {
+  carveEllipsoid(world, 36, 23, 36, 20, 16, 18);
+  carveEllipsoid(world, 38, 11, 36, 23, 9, 23);
+  carveEllipsoid(world, 32, 36, 35, 16, 8, 15);
+  carveEllipsoid(world, 52, 23, 24, 14, 9, 11);
+  carveEllipsoid(world, 53, 20, 54, 14, 10, 12);
+  carveEllipsoid(world, 18, 24, 23, 12, 8, 10);
+  carveEllipsoid(world, 22, 9, 51, 13, 6, 11);
+  carveEllipsoid(world, 59, 7, 20, 11, 5, 9);
+  carveEllipsoid(world, 58, 7, 58, 11, 5, 9);
+
+  carveTunnel(
+    world,
+    [
+      { x: 21, y: 37, z: 26 },
+      { x: 27, y: 34, z: 29 },
+      { x: 33, y: 29, z: 33 },
+      { x: 37, y: 24, z: 36 },
+    ],
+    4.2,
+    4.5,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 37, y: 23, z: 36 },
+      { x: 39, y: 17, z: 36 },
+      { x: 40, y: 9, z: 36 },
+    ],
+    5,
+    5.2,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 40, y: 8, z: 33 },
+      { x: 47, y: 8, z: 27 },
+      { x: 57, y: 7, z: 21 },
+      { x: 64, y: 6, z: 19 },
+    ],
+    3.5,
+    5.4,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 40, y: 8, z: 41 },
+      { x: 48, y: 8, z: 49 },
+      { x: 57, y: 7, z: 58 },
+      { x: 64, y: 6, z: 60 },
+    ],
+    3.5,
+    5.4,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 27, y: 27, z: 26 },
+      { x: 20, y: 23, z: 24 },
+      { x: 16, y: 15, z: 32 },
+      { x: 22, y: 9, z: 46 },
+      { x: 29, y: 7, z: 52 },
+    ],
+    3.8,
+    4.2,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 49, y: 22, z: 29 },
+      { x: 58, y: 18, z: 36 },
+      { x: 50, y: 14, z: 47 },
+      { x: 40, y: 11, z: 41 },
+    ],
+    3.2,
+    3.8,
+  );
+
+  addSolidEllipsoid(world, 36, 6, 36, 5, 9, 5);
+  addSolidEllipsoid(world, 30, 14, 27, 4, 10, 4);
+  addSolidEllipsoid(world, 47, 17, 48, 4, 12, 4);
+  addSolidEllipsoid(world, 25, 2, 48, 5, 6, 5);
+  addSolidEllipsoid(world, 53, 2, 29, 4, 6, 4);
+  addSolidEllipsoid(world, 19, 34, 25, 4, 6, 4);
+
+  addSolidBox(world, 19, 33, 24, 23, 43, 31);
+  addSolidBox(world, 28, 22, 28, 36, 31, 36);
+  addSolidBox(world, 44, 4, 21, 56, 11, 31);
+  addSolidBox(world, 44, 4, 47, 56, 11, 57);
+  addSolidBox(world, 61, 3, 32, 68, 10, 43);
+  addSolidBox(world, 30, 0, 32, 43, 3, 43);
+
+  addReservoirTank(world, 7, 22, 32, 44, 18, 33);
+  fillWaterBox(world, 8, 21, 33, 44, 19, 32);
+}
+
 function fillWaterBox(
   world: VoxelWorld,
   minX: number,
@@ -223,6 +364,41 @@ function addSolidBox(
       for (let x = minX; x <= maxX; x += 1) {
         world.solid[index(world, x, y, z)] = 1;
         world.water[index(world, x, y, z)] = 0;
+      }
+    }
+  }
+}
+
+function addSolidEllipsoid(
+  world: VoxelWorld,
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  radiusX: number,
+  radiusY: number,
+  radiusZ: number,
+): void {
+  const minX = Math.floor(centerX - radiusX);
+  const maxX = Math.ceil(centerX + radiusX);
+  const minY = Math.floor(centerY - radiusY);
+  const maxY = Math.ceil(centerY + radiusY);
+  const minZ = Math.floor(centerZ - radiusZ);
+  const maxZ = Math.ceil(centerZ + radiusZ);
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+          continue;
+        }
+
+        const dx = (x - centerX) / radiusX;
+        const dy = (y - centerY) / radiusY;
+        const dz = (z - centerZ) / radiusZ;
+        if (dx * dx + dy * dy + dz * dz <= 1) {
+          world.solid[index(world, x, y, z)] = 1;
+          world.water[index(world, x, y, z)] = 0;
+        }
       }
     }
   }

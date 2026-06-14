@@ -758,6 +758,34 @@ function getCurrentBestScore() {
 }
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
+  if (currentPreset === "deep-cavern") {
+    if (initialUrlParams.get("spawn") === "overview") {
+      return {
+        position: new Vector3(-6.5, 36.75, -8.5),
+        lookAt: new Vector3(4.5, 12, 1.5),
+      };
+    }
+
+    if (openedStageCount >= 2) {
+      return {
+        position: new Vector3(22.5, 8.75, -11.5),
+        lookAt: new Vector3(4.5, 7.5, 0.5),
+      };
+    }
+
+    if (openedStageCount >= 1) {
+      return {
+        position: new Vector3(-6.5, 36.75, -8.5),
+        lookAt: new Vector3(4.5, 12, 1.5),
+      };
+    }
+
+    return {
+      position: new Vector3(-6.5, 36.75, -8.5),
+      lookAt: new Vector3(4.5, 12, 1.5),
+    };
+  }
+
   if (currentPreset === "braid" || currentPreset === "divide") {
     if (initialUrlParams.get("spawn") === "overview") {
       return {

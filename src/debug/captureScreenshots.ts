@@ -18,7 +18,7 @@ const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
 const CAPTURE_TIMEOUT_MS = 90_000;
-const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid", "divide"];
+const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["sluice", "splitter", "braid", "divide", "deep-cavern"];
 type GameCapture = {
   url: string;
   filename: string;
@@ -107,6 +107,25 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-splitbasin-hazard.png",
   },
   {
+    url: `${BASE_URL}/?game=1&level=deep-cavern&camera=fps&spawn=overview`,
+    filename: "game-deep-cavern-start.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&camera=fps&spawn=overview`,
+    filename: "game-deep-cavern-open-2.png",
+    timeoutMs: 700,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=overview`,
+    filename: "game-deep-cavern-complete.png",
+    timeoutMs: 5000,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=overview`,
+    filename: "game-deep-cavern-hazard.png",
+    timeoutMs: 5000,
+  },
+  {
     url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&camera=fps`,
     filename: "game-level-select-summary.png",
   },
@@ -133,10 +152,10 @@ async function run(): Promise<void> {
     const chrome = findChromeCommand();
 
     for (const preset of SCENE_PRESETS) {
-      await captureAndCompare(chrome, `${BASE_URL}/?scene=${preset}`, `${preset}.png`, updateBaseline);
+      await captureAndCompare(chrome, getSceneCaptureUrl(preset), `${preset}.png`, updateBaseline);
       await capture(
         chrome,
-        `${BASE_URL}/?scene=${preset}&slice=1&sliceZ=28&debug=1`,
+        getSceneSliceCaptureUrl(preset),
         `${ACTUAL_DIR}/${preset}-slice.png`,
       );
       await compareOrUpdateBaseline(`${preset}-slice.png`, updateBaseline);
@@ -157,6 +176,22 @@ async function run(): Promise<void> {
   } finally {
     await stopProcess(server);
   }
+}
+
+function getSceneCaptureUrl(preset: ScenePresetId): string {
+  if (preset === "deep-cavern") {
+    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=overview&debugUi=1`;
+  }
+
+  return `${BASE_URL}/?scene=${preset}`;
+}
+
+function getSceneSliceCaptureUrl(preset: ScenePresetId): string {
+  if (preset === "deep-cavern") {
+    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=overview&slice=1&sliceZ=36&debug=1&debugUi=1`;
+  }
+
+  return `${BASE_URL}/?scene=${preset}&slice=1&sliceZ=28&debug=1`;
 }
 
 async function captureAndCompare(
