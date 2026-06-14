@@ -68,6 +68,11 @@ configureOrbitControls(sceneContext.controls);
 const VOLUME_WARNING_TOLERANCE = 0.05;
 const FLOW_DEBUG_TTL = 16;
 const STABLE_COMPLETE_TICKS = 18;
+const SONAR_TERRAIN_UPDATE_INTERVAL_MS = 250;
+const SONAR_WATER_UPDATE_INTERVAL_MS = 125;
+const SONAR_RENDER_INTERVAL_MS = 66;
+const GAME_PANEL_UPDATE_INTERVAL_MS = 100;
+const DEBUG_UI_UPDATE_INTERVAL_MS = 250;
 const initialUrlParams = new URLSearchParams(window.location.search);
 seedCaptureBestScores();
 
@@ -137,6 +142,14 @@ let maxVolumeDelta = 0;
 let stableTicks = 0;
 let fps = 0;
 let lastTime = performance.now();
+let pendingSonarTerrainUpdate = false;
+let pendingSonarWaterUpdate = false;
+let lastSonarTerrainUpdateAt = lastTime;
+let lastSonarWaterUpdateAt = lastTime;
+let lastSonarRenderAt = 0;
+let lastGamePanelUpdateAt = Number.NEGATIVE_INFINITY;
+let lastGamePanelStatusKey = "";
+let lastDebugUiUpdateAt = Number.NEGATIVE_INFINITY;
 let debugUiVisible = getInitialDebugUiVisible();
 const initialWarmupStableTicks = runInitialSimulationWarmup();
 if (initialWarmupStableTicks > 0) {
@@ -144,7 +157,7 @@ if (initialWarmupStableTicks > 0) {
 }
 baselineWaterVolume = totalWater(world);
 scoreStartTick = tickCount;
-levelProgress = evaluateCurrentLevelProgress(stableTicks >= STABLE_COMPLETE_TICKS);
+levelProgress = evaluateCurrentLevelProgress(stableTicks >= STABLE_COMPLETE_TICKS, baselineWaterVolume);
 
 const overlay = createDebugOverlay();
 const gamePanel = createGamePanel({
@@ -309,6 +322,7 @@ function queueStep(): void {
 
 function toggleDebugUi(): void {
   debugUiVisible = !debugUiVisible;
+  lastDebugUiUpdateAt = Number.NEGATIVE_INFINITY;
   syncBodyModeClasses();
 }
 
@@ -584,10 +598,12 @@ function resetWorld(): void {
   completedAtTick = null;
   completedScoreRecorded = false;
   currentScoreIsNewBest = false;
+  lastGamePanelUpdateAt = Number.NEGATIVE_INFINITY;
+  lastGamePanelStatusKey = "";
   maxVolumeDelta = 0;
   stableTicks = 0;
   baselineWaterVolume = totalWater(world);
-  levelProgress = evaluateCurrentLevelProgress(false);
+  levelProgress = evaluateCurrentLevelProgress(false, baselineWaterVolume);
   recentFlows = new Map<number, RecentFlow>();
   terrainRenderer = createTerrainRenderer(sceneContext.scene, world);
   waterRenderer = createWaterRenderer(sceneContext.scene, world);
@@ -611,6 +627,10 @@ function resetWorld(): void {
   terrainRenderer.update(world, getRenderOptions());
   sonarRenderer.updateTerrain(world);
   sonarRenderer.updateWater(world);
+  lastSonarTerrainUpdateAt = performance.now();
+  lastSonarWaterUpdateAt = lastSonarTerrainUpdateAt;
+  pendingSonarTerrainUpdate = false;
+  pendingSonarWaterUpdate = false;
   if (firstPersonMode) {
     firstPersonController.reset(world, getFirstPersonSpawnPose());
   }
@@ -717,18 +737,18 @@ function getCurrentLevel(): GameLevel {
   return GAME_LEVELS[currentLevelIndex] ?? GAME_LEVELS[0];
 }
 
-function evaluateCurrentLevelProgress(settled: boolean): LevelProgress | null {
+function evaluateCurrentLevelProgress(settled: boolean, currentWaterVolume = totalWater(world)): LevelProgress | null {
   if (!gameModeEnabled) {
     return null;
   }
 
   const level = getCurrentLevel();
   const stageProgress = getMissionStageProgress();
-  let progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() });
+  let progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() }, currentWaterVolume);
 
   if (progress.complete && completedAtTick === null) {
     completedAtTick = tickCount;
-    progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() });
+    progress = evaluateLevel(world, level, stageProgress, settled, { ticks: getScoreTicks() }, currentWaterVolume);
   }
 
   if (progress.complete && progress.score && !completedScoreRecorded) {
@@ -1139,19 +1159,22 @@ function animate(now: number): void {
   decayFlowEvents();
   stableTicks = isStable() ? stableTicks + 1 : 0;
 
+  let rebuiltTerrainThisFrame = false;
   if (inputState.terrainDirty) {
     terrainRenderer.update(world, getRenderOptions());
-    sonarRenderer.updateTerrain(world);
+    pendingSonarTerrainUpdate = true;
     inputState.terrainDirty = false;
+    rebuiltTerrainThisFrame = true;
   }
 
   if (inputState.forceWaterUpdate) {
     waterRenderer.update(world, inputState.debugWater, getRenderOptions(), gameModeEnabled);
     activeCellRenderer.update(world, inputState.debugWater && inputState.showActiveCells, getRenderOptions());
     flowDebugRenderer.update(world, recentFlows, inputState.debugWater && inputState.showFlowDebug, getRenderOptions());
-    sonarRenderer.updateWater(world);
+    pendingSonarWaterUpdate = true;
     inputState.forceWaterUpdate = false;
   }
+  updateQueuedSonar(now, rebuiltTerrainThisFrame);
 
   const currentWaterVolume = totalWater(world);
   const volumeDelta = currentWaterVolume - baselineWaterVolume;
@@ -1159,37 +1182,79 @@ function animate(now: number): void {
   const volumeWarning = Math.abs(volumeDelta) > VOLUME_WARNING_TOLERANCE;
   const preset = SCENE_PRESET_DETAILS[currentPreset];
   const settledForMission = stableTicks >= STABLE_COMPLETE_TICKS;
-  levelProgress = evaluateCurrentLevelProgress(settledForMission);
+  levelProgress = evaluateCurrentLevelProgress(settledForMission, currentWaterVolume);
 
-  updateDebugOverlay(overlay, {
-    presetName: preset.name,
-    paused: inputState.paused,
-    debugWater: inputState.debugWater,
-    sliceEnabled: inputState.sliceEnabled,
-    sliceZ: getRenderOptions().slice.z,
-    activeCells: world.activeCells.size,
-    totalWater: currentWaterVolume,
-    baselineWater: baselineWaterVolume,
-    volumeDelta,
-    volumeWarning,
-    fps,
-    movedVolume: movedLastFrame,
-    inspectedCell: cellInspector.getCell(),
-    tickCount,
-    stableTicks,
-    stable: isStable(),
-    terrainInstances: terrainRenderer.stats.instances,
-    waterInstances: waterRenderer.stats.instances,
-    terrainUpdateMs: terrainRenderer.stats.updateMs,
-    waterUpdateMs: waterRenderer.stats.updateMs,
-    simulationUpdateMs: lastSimulationMs,
-  });
-  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled, getCurrentBestScore(), bestScores, currentScoreIsNewBest);
-  debugPanel.update();
+  if (debugUiVisible && now - lastDebugUiUpdateAt >= DEBUG_UI_UPDATE_INTERVAL_MS) {
+    updateDebugOverlay(overlay, {
+      presetName: preset.name,
+      paused: inputState.paused,
+      debugWater: inputState.debugWater,
+      sliceEnabled: inputState.sliceEnabled,
+      sliceZ: getRenderOptions().slice.z,
+      activeCells: world.activeCells.size,
+      totalWater: currentWaterVolume,
+      baselineWater: baselineWaterVolume,
+      volumeDelta,
+      volumeWarning,
+      fps,
+      movedVolume: movedLastFrame,
+      inspectedCell: cellInspector.getCell(),
+      tickCount,
+      stableTicks,
+      stable: isStable(),
+      terrainInstances: terrainRenderer.stats.instances,
+      waterInstances: waterRenderer.stats.instances,
+      terrainUpdateMs: terrainRenderer.stats.updateMs,
+      waterUpdateMs: waterRenderer.stats.updateMs,
+      simulationUpdateMs: lastSimulationMs,
+    });
+    debugPanel.update();
+    lastDebugUiUpdateAt = now;
+  }
+  updateGamePanelIfNeeded(now);
   syncBodyModeClasses();
 
   sceneContext.renderer.render(sceneContext.scene, sceneContext.camera);
-  sonarRenderer.render(sceneContext.camera);
+  if (now - lastSonarRenderAt >= SONAR_RENDER_INTERVAL_MS) {
+    sonarRenderer.render(sceneContext.camera);
+    lastSonarRenderAt = now;
+  }
+}
+
+function updateGamePanelIfNeeded(now: number): void {
+  const statusKey = [
+    currentLevelIndex,
+    levelProgress?.complete ?? false,
+    levelProgress?.failed ?? false,
+    levelProgress?.score?.total ?? "-",
+    currentScoreIsNewBest,
+    gameModeEnabled,
+  ].join(":");
+  if (statusKey === lastGamePanelStatusKey && now - lastGamePanelUpdateAt < GAME_PANEL_UPDATE_INTERVAL_MS) {
+    return;
+  }
+
+  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled, getCurrentBestScore(), bestScores, currentScoreIsNewBest);
+  lastGamePanelUpdateAt = now;
+  lastGamePanelStatusKey = statusKey;
+}
+
+function updateQueuedSonar(now: number, deferTerrainUpdate: boolean): void {
+  if (
+    pendingSonarTerrainUpdate &&
+    !deferTerrainUpdate &&
+    now - lastSonarTerrainUpdateAt >= SONAR_TERRAIN_UPDATE_INTERVAL_MS
+  ) {
+    sonarRenderer.updateTerrain(world);
+    pendingSonarTerrainUpdate = false;
+    lastSonarTerrainUpdateAt = now;
+  }
+
+  if (pendingSonarWaterUpdate && now - lastSonarWaterUpdateAt >= SONAR_WATER_UPDATE_INTERVAL_MS) {
+    sonarRenderer.updateWater(world);
+    pendingSonarWaterUpdate = false;
+    lastSonarWaterUpdateAt = now;
+  }
 }
 
 function getVisibleGuideStage() {

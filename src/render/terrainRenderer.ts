@@ -23,7 +23,10 @@ type FaceDirection = {
   nx: number;
   ny: number;
   nz: number;
+  vertices: readonly FaceVertex[];
 };
+
+type FaceVertex = readonly [x: 0 | 1, y: 0 | 1, z: 0 | 1];
 
 type FaceColor = {
   r: number;
@@ -32,12 +35,12 @@ type FaceColor = {
 };
 
 const FACE_DIRECTIONS: FaceDirection[] = [
-  { nx: 1, ny: 0, nz: 0 },
-  { nx: -1, ny: 0, nz: 0 },
-  { nx: 0, ny: 1, nz: 0 },
-  { nx: 0, ny: -1, nz: 0 },
-  { nx: 0, ny: 0, nz: 1 },
-  { nx: 0, ny: 0, nz: -1 },
+  { nx: 1, ny: 0, nz: 0, vertices: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1]] },
+  { nx: -1, ny: 0, nz: 0, vertices: [[0, 0, 1], [0, 1, 1], [0, 1, 0], [0, 0, 1], [0, 1, 0], [0, 0, 0]] },
+  { nx: 0, ny: 1, nz: 0, vertices: [[0, 1, 1], [1, 1, 1], [1, 1, 0], [0, 1, 1], [1, 1, 0], [0, 1, 0]] },
+  { nx: 0, ny: -1, nz: 0, vertices: [[0, 0, 0], [1, 0, 0], [1, 0, 1], [0, 0, 0], [1, 0, 1], [0, 0, 1]] },
+  { nx: 0, ny: 0, nz: 1, vertices: [[0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 0, 1], [1, 1, 1], [0, 1, 1]] },
+  { nx: 0, ny: 0, nz: -1, vertices: [[1, 0, 0], [0, 0, 0], [0, 1, 0], [1, 0, 0], [0, 1, 0], [1, 1, 0]] },
 ];
 
 export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainRenderer {
@@ -150,14 +153,33 @@ function appendFace(
   const maxY = y + 1;
   const minZ = z - world.depth / 2;
   const maxZ = minZ + 1;
-  const vertices = getFaceVertices(minX, maxX, minY, maxY, minZ, maxZ, direction);
   const faceColor = getTerrainFaceColor(world, x, y, z, direction);
 
-  for (const vertex of vertices) {
-    positions.push(vertex[0], vertex[1], vertex[2]);
-    normals.push(direction.nx, direction.ny, direction.nz);
-    colors.push(faceColor.r, faceColor.g, faceColor.b);
+  for (const vertex of direction.vertices) {
+    appendVertex(positions, normals, colors, direction, faceColor, minX, maxX, minY, maxY, minZ, maxZ, vertex);
   }
+}
+
+function appendVertex(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  direction: FaceDirection,
+  color: FaceColor,
+  minX: number,
+  maxX: number,
+  minY: number,
+  maxY: number,
+  minZ: number,
+  maxZ: number,
+  vertex: FaceVertex,
+): void {
+  const x = vertex[0] === 0 ? minX : maxX;
+  const y = vertex[1] === 0 ? minY : maxY;
+  const z = vertex[2] === 0 ? minZ : maxZ;
+  positions.push(x, y, z);
+  normals.push(direction.nx, direction.ny, direction.nz);
+  colors.push(color.r, color.g, color.b);
 }
 
 function getTerrainFaceColor(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): FaceColor {
@@ -231,82 +253,11 @@ function getDeepCavernColor(x: number, y: number, z: number): number {
 }
 
 function getCellVariation(x: number, y: number, z: number): number {
-  const hash = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
-  return hash - Math.floor(hash);
-}
-
-function getFaceVertices(
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number,
-  minZ: number,
-  maxZ: number,
-  direction: FaceDirection,
-): Array<[number, number, number]> {
-  if (direction.nx === 1) {
-    return [
-      [maxX, minY, minZ],
-      [maxX, maxY, minZ],
-      [maxX, maxY, maxZ],
-      [maxX, minY, minZ],
-      [maxX, maxY, maxZ],
-      [maxX, minY, maxZ],
-    ];
-  }
-
-  if (direction.nx === -1) {
-    return [
-      [minX, minY, maxZ],
-      [minX, maxY, maxZ],
-      [minX, maxY, minZ],
-      [minX, minY, maxZ],
-      [minX, maxY, minZ],
-      [minX, minY, minZ],
-    ];
-  }
-
-  if (direction.ny === 1) {
-    return [
-      [minX, maxY, maxZ],
-      [maxX, maxY, maxZ],
-      [maxX, maxY, minZ],
-      [minX, maxY, maxZ],
-      [maxX, maxY, minZ],
-      [minX, maxY, minZ],
-    ];
-  }
-
-  if (direction.ny === -1) {
-    return [
-      [minX, minY, minZ],
-      [maxX, minY, minZ],
-      [maxX, minY, maxZ],
-      [minX, minY, minZ],
-      [maxX, minY, maxZ],
-      [minX, minY, maxZ],
-    ];
-  }
-
-  if (direction.nz === 1) {
-    return [
-      [minX, minY, maxZ],
-      [maxX, minY, maxZ],
-      [maxX, maxY, maxZ],
-      [minX, minY, maxZ],
-      [maxX, maxY, maxZ],
-      [minX, maxY, maxZ],
-    ];
-  }
-
-  return [
-    [maxX, minY, minZ],
-    [minX, minY, minZ],
-    [minX, maxY, minZ],
-    [maxX, minY, minZ],
-    [minX, maxY, minZ],
-    [maxX, maxY, minZ],
-  ];
+  let hash = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, -2048144789);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 1274126177);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967295;
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

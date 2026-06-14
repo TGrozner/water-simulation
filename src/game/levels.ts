@@ -213,11 +213,11 @@ export function evaluateLevel(
   stageProgress: StageProgress,
   settled: boolean,
   scoreInput?: ScoreInput,
+  currentTotalWater = totalWater(world),
 ): LevelProgress {
   const deliveredWater = measureBoxWater(world, level.deliveryBoxes);
   const deliveryRequirements = getDeliveryRequirementProgress(world, level);
   const safeWater = measureBoxWater(world, level.safeWaterBoxes);
-  const currentTotalWater = totalWater(world);
   const wastedWater = Math.max(0, currentTotalWater - safeWater);
   const allStagesOpen = stageProgress.completedStages >= stageProgress.stageCount;
   const hazardTriggered = stageProgress.openedHazardCount > 0;
@@ -291,8 +291,20 @@ function getDeliveryRequirementProgress(world: VoxelWorld, level: GameLevel): De
   });
 }
 
+let measureVisitMarks = new Uint32Array(0);
+let measureVisitStamp = 0;
+
 export function measureBoxWater(world: VoxelWorld, boxes: ClearBox[]): number {
-  const visited = new Uint8Array(world.water.length);
+  if (boxes.length === 0) {
+    return 0;
+  }
+
+  if (boxes.length === 1) {
+    return measureSingleBoxWater(world, boxes[0]);
+  }
+
+  const visited = getMeasureVisitMarks(world.water.length);
+  const stamp = nextMeasureVisitStamp(visited);
   let water = 0;
 
   for (const waterBox of boxes) {
@@ -304,11 +316,11 @@ export function measureBoxWater(world: VoxelWorld, boxes: ClearBox[]): number {
           }
 
           const cellIndex = x + world.width * (z + world.depth * y);
-          if (visited[cellIndex] === 1) {
+          if (visited[cellIndex] === stamp) {
             continue;
           }
 
-          visited[cellIndex] = 1;
+          visited[cellIndex] = stamp;
           water += world.water[cellIndex];
         }
       }
@@ -316,6 +328,43 @@ export function measureBoxWater(world: VoxelWorld, boxes: ClearBox[]): number {
   }
 
   return water;
+}
+
+function measureSingleBoxWater(world: VoxelWorld, waterBox: ClearBox): number {
+  let water = 0;
+
+  for (let y = waterBox.minY; y <= waterBox.maxY; y += 1) {
+    for (let z = waterBox.minZ; z <= waterBox.maxZ; z += 1) {
+      for (let x = waterBox.minX; x <= waterBox.maxX; x += 1) {
+        if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+          continue;
+        }
+
+        water += world.water[x + world.width * (z + world.depth * y)];
+      }
+    }
+  }
+
+  return water;
+}
+
+function getMeasureVisitMarks(length: number): Uint32Array {
+  if (measureVisitMarks.length !== length) {
+    measureVisitMarks = new Uint32Array(length);
+    measureVisitStamp = 0;
+  }
+
+  return measureVisitMarks;
+}
+
+function nextMeasureVisitStamp(visited: Uint32Array): number {
+  measureVisitStamp += 1;
+  if (measureVisitStamp >= 0xffffffff) {
+    visited.fill(0);
+    measureVisitStamp = 1;
+  }
+
+  return measureVisitStamp;
 }
 
 function getStatusText(
