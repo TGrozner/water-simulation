@@ -118,6 +118,10 @@ canvas {
   display: none;
 }
 
+.debug-ui-visible .fps-reticle {
+  display: none;
+}
+
 .debug-panel {
   position: fixed;
   top: 12px;
@@ -269,8 +273,10 @@ canvas {
   z-index: 12;
   display: grid;
   width: min(330px, calc(100vw - 24px));
+  max-height: calc(100vh - 24px);
   gap: 8px;
   padding: 10px;
+  overflow-y: auto;
   border: 1px solid rgba(185, 215, 255, 0.24);
   border-radius: 8px;
   background: rgba(8, 13, 18, 0.86);
@@ -283,6 +289,12 @@ canvas {
 
 .game-panel[hidden] {
   display: none;
+}
+
+@media (min-width: 960px) {
+  .debug-ui-visible .game-panel {
+    right: 304px;
+  }
 }
 
 .game-panel-heading {
@@ -310,6 +322,47 @@ canvas {
 
 .game-panel p {
   color: #d7e5f5;
+}
+
+.game-panel-level-select {
+  display: grid;
+  gap: 5px;
+}
+
+.game-panel-level-select button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 28px;
+  padding: 5px 7px;
+  text-align: left;
+}
+
+.game-panel-level-select button[data-selected="true"] {
+  border-color: rgba(255, 194, 71, 0.72);
+  background: rgba(255, 194, 71, 0.14);
+}
+
+.game-panel-level-select button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.game-panel-level-select span,
+.game-panel-level-select strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.game-panel-level-select span {
+  font-weight: 800;
+}
+
+.game-panel-level-select strong {
+  color: #9bc4ff;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
 }
 
 .game-panel-progress {

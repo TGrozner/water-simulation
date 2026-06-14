@@ -19,6 +19,7 @@ import {
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { getBestScore, isBetterScore, mergeBestScore, parseStoredBestScores } from "../game/bestScoreStorage";
+import { getLevelSelectRows } from "../game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, scoreLevel } from "../game/levels";
 import {
   ROUTE_FLOW_STAGE_COMPLETE_WATER,
@@ -47,6 +48,7 @@ function runHarness(): void {
   assertStageCompletionRules();
   assertLevelScoreRules();
   assertBestScoreRules();
+  assertLevelSelectRows();
   assertGameLevelsComplete();
 
   for (const preset of SCENE_PRESETS) {
@@ -256,6 +258,21 @@ function assertBestScoreRules(): void {
   assert(getBestScore(parsedScores, "invalidRatio") === null, "best-score: invalid ratio should be ignored");
   assert(Object.keys(parseStoredBestScores({ version: 2, scores: { [level.id]: firstScore } })).length === 0, "best-score: unknown version should be ignored");
   assert(Object.keys(parseStoredBestScores(null)).length === 0, "best-score: corrupt stored value should be ignored");
+}
+
+function assertLevelSelectRows(): void {
+  const level = GAME_LEVELS[0];
+  const score = scoreLevel(level, level.deliveryTargetWater, 0, level.scoreParTicks ?? MAX_TICKS);
+  const emptyRows = getLevelSelectRows(1, {});
+
+  assert(emptyRows.length === GAME_LEVELS.length, "level-select: should render every game level");
+  assert(emptyRows[1]?.selected, "level-select: current level should be marked selected");
+  assert(emptyRows.every((row) => row.bestLabel === "No best"), "level-select: empty score table should show No best");
+
+  const rowsWithBest = getLevelSelectRows(0, { [level.id]: score });
+  assert(rowsWithBest[0]?.selected, "level-select: selected row should follow current level index");
+  assert(rowsWithBest[0]?.bestLabel === `${score.grade} ${score.total}`, "level-select: stored best should be formatted");
+  assert(rowsWithBest[1]?.bestLabel === "No best", "level-select: missing best score should stay explicit");
 }
 
 function makeProgress(

@@ -1,8 +1,18 @@
+import { getBestScore, type BestScoresByLevel } from "./bestScoreStorage";
 import { GAME_LEVELS, type LevelProgress, type LevelScore } from "./levels";
 
 export type GamePanelActions = {
   resetLevel: () => void;
   nextLevel: () => void;
+  selectLevel: (levelIndex: number) => void;
+};
+
+export type LevelSelectRow = {
+  levelIndex: number;
+  levelId: string;
+  name: string;
+  bestLabel: string;
+  selected: boolean;
 };
 
 export type GamePanel = {
@@ -11,6 +21,7 @@ export type GamePanel = {
     levelIndex: number,
     enabled: boolean,
     bestScore: LevelScore | null,
+    bestScores: BestScoresByLevel,
     scoreIsNewBest: boolean,
   ) => void;
 };
@@ -23,6 +34,16 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
       <span data-game-level-count>Level 1/2</span>
       <h2 data-game-title>Level</h2>
       <p data-game-brief></p>
+    </div>
+    <div class="game-panel-level-select">
+      ${GAME_LEVELS.map(
+        (level, index) => `
+          <button type="button" data-game-level-option="${index}">
+            <span>${level.name}</span>
+            <strong data-game-level-best="${level.id}">No best</strong>
+          </button>
+        `,
+      ).join("")}
     </div>
     <div class="game-panel-progress">
       <div class="game-panel-progress-row">
@@ -52,11 +73,19 @@ export function createGamePanel(actions: GamePanelActions): GamePanel {
 
   panel.querySelector<HTMLButtonElement>('[data-game-action="reset"]')?.addEventListener("click", actions.resetLevel);
   panel.querySelector<HTMLButtonElement>('[data-game-action="next"]')?.addEventListener("click", actions.nextLevel);
+  for (const button of panel.querySelectorAll<HTMLButtonElement>("[data-game-level-option]")) {
+    button.addEventListener("click", () => {
+      const levelIndex = Number.parseInt(button.dataset.gameLevelOption ?? "", 10);
+      if (Number.isFinite(levelIndex)) {
+        actions.selectLevel(levelIndex);
+      }
+    });
+  }
   document.body.appendChild(panel);
 
   return {
-    update: (progress, levelIndex, enabled, bestScore, scoreIsNewBest) =>
-      updateGamePanel(panel, progress, levelIndex, enabled, bestScore, scoreIsNewBest),
+    update: (progress, levelIndex, enabled, bestScore, bestScores, scoreIsNewBest) =>
+      updateGamePanel(panel, progress, levelIndex, enabled, bestScore, bestScores, scoreIsNewBest),
   };
 }
 
@@ -66,6 +95,7 @@ function updateGamePanel(
   levelIndex: number,
   enabled: boolean,
   bestScore: LevelScore | null,
+  bestScores: BestScoresByLevel,
   scoreIsNewBest: boolean,
 ): void {
   panel.hidden = !enabled || progress === null;
@@ -101,6 +131,7 @@ function updateGamePanel(
   setText(panel, "[data-game-level-count]", `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
   setText(panel, "[data-game-title]", progress.level.name);
   setText(panel, "[data-game-brief]", progress.level.brief);
+  updateLevelSelect(panel, levelIndex, bestScores);
   setText(
     panel,
     "[data-game-stage-label]",
@@ -213,6 +244,41 @@ function formatBestScore(score: LevelScore | null, isNewBest: boolean): string {
 
   const prefix = isNewBest ? "new " : "";
   return `${prefix}${score.grade} ${score.total}`;
+}
+
+export function getLevelSelectRows(currentLevelIndex: number, bestScores: BestScoresByLevel): LevelSelectRow[] {
+  return GAME_LEVELS.map((level, levelIndex) => ({
+    levelIndex,
+    levelId: level.id,
+    name: level.name,
+    bestLabel: formatLevelSelectBestScore(getBestScore(bestScores, level.id)),
+    selected: levelIndex === currentLevelIndex,
+  }));
+}
+
+function updateLevelSelect(panel: HTMLElement, currentLevelIndex: number, bestScores: BestScoresByLevel): void {
+  for (const row of getLevelSelectRows(currentLevelIndex, bestScores)) {
+    const button = panel.querySelector<HTMLButtonElement>(`[data-game-level-option="${row.levelIndex}"]`);
+    if (!button) {
+      continue;
+    }
+
+    button.dataset.selected = String(row.selected);
+    button.disabled = row.selected;
+    button.setAttribute("aria-pressed", String(row.selected));
+    const bestValue = button.querySelector<HTMLElement>(`[data-game-level-best="${row.levelId}"]`);
+    if (bestValue) {
+      bestValue.textContent = row.bestLabel;
+    }
+  }
+}
+
+function formatLevelSelectBestScore(score: LevelScore | null): string {
+  if (!score) {
+    return "No best";
+  }
+
+  return `${score.grade} ${score.total}`;
 }
 
 function setText(parent: HTMLElement, selector: string, value: string): void {

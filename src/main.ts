@@ -69,6 +69,7 @@ const VOLUME_WARNING_TOLERANCE = 0.05;
 const FLOW_DEBUG_TTL = 16;
 const STABLE_COMPLETE_TICKS = 18;
 const initialUrlParams = new URLSearchParams(window.location.search);
+seedCaptureBestScores();
 
 let gameModeEnabled = getInitialGameModeEnabled();
 let currentLevelIndex = getInitialLevelIndex();
@@ -149,6 +150,7 @@ const overlay = createDebugOverlay();
 const gamePanel = createGamePanel({
   resetLevel: resetCurrentLevel,
   nextLevel: advanceToNextLevel,
+  selectLevel: selectGameLevel,
 });
 const firstPersonController = createFirstPersonController(sceneContext.renderer, sceneContext.camera, firstPersonMode);
 if (firstPersonMode) {
@@ -245,6 +247,19 @@ function selectPreset(preset: ScenePresetId): void {
 
 function resetCurrentLevel(): void {
   gameModeEnabled = true;
+  setFirstPersonMode(true);
+  currentPreset = getCurrentLevel().scene;
+  resetWorld();
+  firstPersonController.requestPointerLock();
+}
+
+function selectGameLevel(levelIndex: number): void {
+  if (!GAME_LEVELS[levelIndex]) {
+    return;
+  }
+
+  gameModeEnabled = true;
+  currentLevelIndex = levelIndex;
   setFirstPersonMode(true);
   currentPreset = getCurrentLevel().scene;
   resetWorld();
@@ -635,6 +650,32 @@ function getInitialGameModeEnabled(): boolean {
   }
 
   return !initialUrlParams.has("scene");
+}
+
+function seedCaptureBestScores(): void {
+  if (initialUrlParams.get("seedBestScores") !== "1" || typeof window === "undefined") {
+    return;
+  }
+
+  const seedScores = Object.fromEntries(
+    GAME_LEVELS.map((level, levelIndex) => [
+      level.id,
+      {
+        total: Math.max(70, 96 - levelIndex * 5),
+        grade: levelIndex === 0 ? "S" : "A",
+        efficiency: 1,
+        waste: 1,
+        time: Math.max(0.5, 1 - levelIndex * 0.1),
+        ticks: level.scoreParTicks ?? 1200,
+      },
+    ]),
+  );
+
+  try {
+    window.localStorage.setItem("voxel-water-best-scores-v1", JSON.stringify({ version: 1, scores: seedScores }));
+  } catch {
+    // Capture-only fixture; ignore storage failures.
+  }
 }
 
 function getInitialDebugUiVisible(): boolean {
@@ -1120,7 +1161,7 @@ function animate(now: number): void {
     waterUpdateMs: waterRenderer.stats.updateMs,
     simulationUpdateMs: lastSimulationMs,
   });
-  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled, getCurrentBestScore(), currentScoreIsNewBest);
+  gamePanel.update(levelProgress, currentLevelIndex, gameModeEnabled, getCurrentBestScore(), bestScores, currentScoreIsNewBest);
   debugPanel.update();
   syncBodyModeClasses();
 

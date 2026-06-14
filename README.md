@@ -44,9 +44,9 @@ npm run screenshots:update
 ```
 
 Durable baseline PNGs live in `test/baselines/visual`. Generated actual and diff
-images are written under `.sim-build/screenshots`. Screenshot runs use a fresh
-Chrome profile under `.sim-build/screenshots/chrome-profile` so persisted
-best-score captures stay deterministic.
+images are written under `.sim-build/screenshots`. Screenshot captures use fresh
+Chrome profiles under `.sim-build/screenshots/chrome-profile` so persisted
+best-score fixtures stay deterministic.
 
 Useful URL parameters for repeatable captures:
 
@@ -69,6 +69,7 @@ Useful URL parameters for repeatable captures:
 - `?branch=north` or `?branch=south`
 - `?choice2=1`
 - `?warmupTicks=1800`
+- `?seedBestScores=1`
 - `?tuning=fast-drain`
 - `?debug=1&active=0&flow=0`
 - `?slice=1&sliceZ=28`
@@ -100,7 +101,8 @@ completion score for efficient routes. The best completion score for each level
 is saved locally in the browser and shown when that level is revisited. Best
 scores are keyed by level id in `localStorage` as
 `voxel-water-best-scores-v1`, with `{ version: 1, scores }` as the stored
-payload.
+payload. The challenge selector lists every level and its local best score so a
+level can be entered directly without cycling through the campaign.
 The debug panels are hidden on the root view by default; press F3 or backquote,
 or add `debugUi=1`, to bring them back. Use `?scene=<name>` or `?game=0` to
 start directly in the full sandbox/debug workflow.
@@ -130,6 +132,7 @@ start directly in the full sandbox/debug workflow.
 - 3: Split Path Challenge / Split Path Cavern scene
 - 4: Split Basin Challenge / Twin Basin Divide scene
 - R: reset the world
+- Challenge list buttons: enter a level directly and preview local best scores
 
 The debug panel also provides scene selection, pause/step/reset, **Open next**,
 **Open all**, water debug, separate active-cell and flow-glyph toggles, slice
@@ -164,6 +167,7 @@ storage.
 - Runtime metrics for ticks, last moved volume, max water delta, idle ticks, and stable/moving state
 - Completion scoring that grades route efficiency, wasted water, and time to stable delivery
 - Local best-score persistence for completed levels
+- Level-select summary with direct challenge entry and best-score readouts
 - Headless screenshot comparison for all scenes with slice off/on, staged openings, and game screens
 - Durable screenshot baselines under `test/baselines/visual`, with generated actual/diff images under `.sim-build/screenshots`
 - Flow direction debug: recent downward and lateral flow glyphs in water debug mode
@@ -192,7 +196,6 @@ storage.
 ## Recommended next steps
 
 - Add more branch-choice levels where safe cuts and risky shortcuts compete for the same water.
-- Add a level-select summary that shows best scores before entering each challenge.
 - Add greedy meshing only if a separate voxel picking path is introduced.
 - Add a stronger settling metric that distinguishes true rest from small-but-continuing ripples.
 - Add more authored cave scenarios with distinct staged release patterns.

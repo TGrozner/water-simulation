@@ -35,11 +35,11 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-tutorial-complete.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&camera=fps`,
+    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&camera=fps`,
     filename: "game-tutorial-best-start.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=tutorial&openStages=2&warmupTicks=1800&camera=fps`,
+    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&openStages=2&warmupTicks=1800&camera=fps`,
     filename: "game-tutorial-repeat-complete.png",
   },
   {
@@ -106,12 +106,21 @@ const GAME_CAPTURES: GameCapture[] = [
     url: `${BASE_URL}/?game=1&level=splitbasin&openStages=1&carveManual=1&openHazards=1&warmupTicks=1800&camera=fps&spawn=overview`,
     filename: "game-splitbasin-hazard.png",
   },
+  {
+    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&camera=fps`,
+    filename: "game-level-select-summary.png",
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=tutorial&seedBestScores=1&debugUi=1&camera=fps`,
+    filename: "game-level-select-debug-ui.png",
+  },
 ];
 
 async function run(): Promise<void> {
   const updateBaseline = process.argv.includes("--update-baseline");
   await mkdir(BASELINE_DIR, { recursive: true });
   await rm(CHROME_PROFILE_DIR, { recursive: true, force: true });
+  await mkdir(CHROME_PROFILE_DIR, { recursive: true });
   await mkdir(ACTUAL_DIR, { recursive: true });
   await mkdir(DIFF_DIR, { recursive: true });
 
@@ -279,13 +288,15 @@ function findChromeCommand(): string {
   return process.env.CHROME_BIN || CHROME_CANDIDATES[0];
 }
 
-function capture(chrome: string, url: string, outputPath: string, timeoutMs = 1500): Promise<void> {
+async function capture(chrome: string, url: string, outputPath: string, timeoutMs = 1500): Promise<void> {
+  const profilePath = getCaptureProfilePath(outputPath);
+  await rm(profilePath, { recursive: true, force: true });
   const args = [
     "--headless=new",
     "--disable-gpu",
     "--disable-dev-shm-usage",
     "--no-sandbox",
-    `--user-data-dir=${CHROME_PROFILE_DIR}`,
+    `--user-data-dir=${profilePath}`,
     "--window-size=1280,720",
     `--timeout=${timeoutMs}`,
     `--screenshot=${outputPath}`,
@@ -316,6 +327,11 @@ function capture(chrome: string, url: string, outputPath: string, timeoutMs = 15
       reject(new Error(`Chrome screenshot failed for ${url} with code ${code}\n${stderr}`));
     });
   });
+}
+
+function getCaptureProfilePath(outputPath: string): string {
+  const filename = outputPath.split("/").pop() ?? "capture";
+  return `${CHROME_PROFILE_DIR}/${filename.replace(/[^a-z0-9_-]+/gi, "-")}`;
 }
 
 run().catch((error: unknown) => {
