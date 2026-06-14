@@ -4,12 +4,12 @@ import {
   Float32BufferAttribute,
   Group,
   Mesh,
-  MeshLambertMaterial,
+  MeshStandardMaterial,
   Raycaster,
   Scene,
 } from "three";
 import { coords, inBounds, isSolid } from "../world/grid";
-import type { VoxelWorld } from "../world/types";
+import { EPSILON, type VoxelWorld } from "../world/types";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 import { createRendererStats, type RendererStats } from "./renderStats";
 
@@ -29,7 +29,7 @@ export type TerrainRenderer = {
 };
 
 type TerrainChunk = {
-  mesh: Mesh<BufferGeometry, MeshLambertMaterial>;
+  mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
   faceToCell: Int32Array;
   minX: number;
   maxX: number;
@@ -56,6 +56,8 @@ type FaceColor = {
 };
 
 const TERRAIN_CHUNK_SIZE = 12;
+const DEEP_CAVERN_VERTEX_JITTER = 0.16;
+const DEFAULT_VERTEX_JITTER = 0.06;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
   { nx: 1, ny: 0, nz: 0, vertices: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1]] },
@@ -68,13 +70,20 @@ const FACE_DIRECTIONS: FaceDirection[] = [
 
 export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainRenderer {
   const root = new Group();
-  const material = new MeshLambertMaterial({ color: 0xffffff, side: DoubleSide, vertexColors: true });
+  const material = new MeshStandardMaterial({
+    color: 0xffffff,
+    side: DoubleSide,
+    vertexColors: true,
+    roughness: 0.96,
+    metalness: 0.03,
+    flatShading: true,
+  });
   const stats = createRendererStats(world.solid.length * 6);
   const chunkXCount = Math.ceil(world.width / TERRAIN_CHUNK_SIZE);
   const chunkYCount = Math.ceil(world.height / TERRAIN_CHUNK_SIZE);
   const chunkZCount = Math.ceil(world.depth / TERRAIN_CHUNK_SIZE);
   const chunks = createTerrainChunks(root, material, world, chunkXCount, chunkYCount, chunkZCount);
-  const visibleChunkMeshes: Mesh<BufferGeometry, MeshLambertMaterial>[] = [];
+  const visibleChunkMeshes: Mesh<BufferGeometry, MeshStandardMaterial>[] = [];
   const dirtyChunks = new Set<number>();
   let allDirty = true;
   let lastOptionsKey = "";
@@ -175,7 +184,7 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
 
 function createTerrainChunks(
   root: Group,
-  material: MeshLambertMaterial,
+  material: MeshStandardMaterial,
   world: VoxelWorld,
   chunkXCount: number,
   chunkYCount: number,
@@ -293,10 +302,9 @@ function appendFace(
   const maxY = y + 1;
   const minZ = z - world.depth / 2;
   const maxZ = minZ + 1;
-  const faceColor = getTerrainFaceColor(world, x, y, z, direction);
 
   for (const vertex of direction.vertices) {
-    appendVertex(positions, normals, colors, direction, faceColor, minX, maxX, minY, maxY, minZ, maxZ, vertex);
+    appendVertex(positions, normals, colors, world, x, y, z, direction, minX, maxX, minY, maxY, minZ, maxZ, vertex);
   }
 }
 
@@ -304,8 +312,11 @@ function appendVertex(
   positions: number[],
   normals: number[],
   colors: number[],
+  world: VoxelWorld,
+  cellX: number,
+  cellY: number,
+  cellZ: number,
   direction: FaceDirection,
-  color: FaceColor,
   minX: number,
   maxX: number,
   minY: number,
@@ -314,26 +325,43 @@ function appendVertex(
   maxZ: number,
   vertex: FaceVertex,
 ): void {
+  const gridX = cellX + vertex[0];
+  const gridY = cellY + vertex[1];
+  const gridZ = cellZ + vertex[2];
   const x = vertex[0] === 0 ? minX : maxX;
   const y = vertex[1] === 0 ? minY : maxY;
   const z = vertex[2] === 0 ? minZ : maxZ;
-  positions.push(x, y, z);
+  const jitter = getTerrainVertexJitter(world, gridX, gridY, gridZ);
+  const color = getTerrainVertexColor(world, cellX, cellY, cellZ, direction, gridX, gridY, gridZ);
+  positions.push(x + jitter.x, y + jitter.y, z + jitter.z);
   normals.push(direction.nx, direction.ny, direction.nz);
   colors.push(color.r, color.g, color.b);
 }
 
-function getTerrainFaceColor(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): FaceColor {
-  const baseColor = getBaseTerrainColor(world, x, y, z);
-  const heightFactor = world.height <= 1 ? 0 : y / (world.height - 1);
-  const variation = getCellVariation(x, y, z);
-  const light = 0.78 + heightFactor * 0.26 + variation * 0.1;
-  const faceLight = direction.ny === 1 ? 1.12 : direction.ny === -1 ? 0.66 : 0.9;
-  const scalar = light * faceLight;
-  return {
-    r: (((baseColor >> 16) & 0xff) / 255) * scalar,
-    g: (((baseColor >> 8) & 0xff) / 255) * scalar,
-    b: ((baseColor & 0xff) / 255) * scalar,
-  };
+function getTerrainVertexColor(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  direction: FaceDirection,
+  gridX: number,
+  gridY: number,
+  gridZ: number,
+): FaceColor {
+  let baseColor = getBaseTerrainColor(world, x, y, z);
+  const adjacentWater = getAdjacentWaterAmount(world, x, y, z, direction);
+  if (adjacentWater > EPSILON) {
+    const wetColor = isDeepCavernWorld(world) ? 0x1f6472 : 0x2f7a86;
+    baseColor = mixHexColors(baseColor, wetColor, Math.min(0.72, 0.28 + adjacentWater * 0.34));
+  }
+
+  const heightFactor = world.height <= 1 ? 0 : gridY / world.height;
+  const variation = getCellVariation(gridX, gridY, gridZ);
+  const largeVariation = getCellVariation(Math.floor(gridX / 3), Math.floor(gridY / 2), Math.floor(gridZ / 3));
+  const strata = 0.5 + Math.sin(gridY * 1.9 + gridX * 0.28 + gridZ * 0.17) * 0.5;
+  const light = 0.68 + heightFactor * 0.34 + variation * 0.12 + largeVariation * 0.06 + strata * 0.08;
+  const faceLight = direction.ny === 1 ? 1.18 : direction.ny === -1 ? 0.58 : 0.86 + Math.abs(direction.nx) * 0.04;
+  return scaleHexColor(baseColor, light * faceLight);
 }
 
 function getBaseTerrainColor(world: VoxelWorld, x: number, y: number, z: number): number {
@@ -357,39 +385,110 @@ function isDeepCavernWorld(world: VoxelWorld): boolean {
 }
 
 function getDeepCavernColor(x: number, y: number, z: number): number {
+  let color = y <= 7 ? 0x51635e : y >= 34 ? 0x596171 : y >= 24 ? 0x8b7658 : 0x84603e;
+
+  const band = positiveModulo(y + Math.floor(x * 0.21) + Math.floor(z * 0.13), 7);
+  if (band <= 1) {
+    color = mixHexColors(color, y >= 28 ? 0xb28b57 : 0x4c4438, 0.26);
+  }
+
   if (y <= 6 && ((x >= 48 && z <= 32) || (x >= 46 && z >= 47))) {
-    return 0x2f7182;
+    color = mixHexColors(color, 0x25788b, 0.58);
   }
 
   if (x >= 50 && z <= 32 && y <= 17) {
-    return 0x355f6a;
+    color = mixHexColors(color, 0x2f7683, 0.5);
   }
 
   if (x >= 48 && z >= 47 && y <= 17) {
-    return 0x594d81;
+    color = mixHexColors(color, 0x5b4e86, 0.48);
   }
 
   if (x <= 24 && z >= 42 && y <= 16) {
-    return 0x4b7b72;
+    color = mixHexColors(color, 0x347f74, 0.5);
   }
 
   if (x >= 26 && x <= 44 && z >= 30 && z <= 44 && y <= 16) {
-    return 0xbd7043;
+    color = mixHexColors(color, 0xc77a42, 0.55);
   }
 
   if (x >= 7 && x <= 23 && z >= 18 && z <= 34 && y >= 29) {
-    return 0xc79a4d;
+    color = mixHexColors(color, 0xd0a14e, 0.48);
   }
 
-  if (y >= 34) {
-    return 0x58606f;
+  if (isAzureVein(x, y, z)) {
+    color = mixHexColors(color, 0x67f1ff, 0.62);
   }
 
-  if (y <= 8) {
-    return 0x5f5f4d;
+  if (isAmberVein(x, y, z)) {
+    color = mixHexColors(color, 0xffb95f, 0.56);
   }
 
-  return 0x8c6742;
+  if (isVioletPocket(x, y, z)) {
+    color = mixHexColors(color, 0x8d6dce, 0.52);
+  }
+
+  return color;
+}
+
+function isAzureVein(x: number, y: number, z: number): boolean {
+  const inBasin = (x >= 50 && x <= 66 && z >= 13 && z <= 28 && y <= 18) || (x >= 51 && x <= 68 && z >= 48 && y <= 17);
+  const inGallery = x >= 52 && x <= 60 && z >= 13 && z <= 24 && y >= 18 && y <= 28;
+  return (inBasin || inGallery) && positiveModulo(x * 5 + y * 7 + z * 3, 11) <= 2;
+}
+
+function isAmberVein(x: number, y: number, z: number): boolean {
+  const inThroat = x >= 27 && x <= 45 && z >= 28 && z <= 45 && y >= 9 && y <= 28;
+  const inReservoir = x >= 8 && x <= 24 && z >= 18 && z <= 34 && y >= 28;
+  return (inThroat || inReservoir) && positiveModulo(x * 3 + y * 11 + z * 5, 13) <= 2;
+}
+
+function isVioletPocket(x: number, y: number, z: number): boolean {
+  return x >= 15 && x <= 27 && z >= 43 && z <= 58 && y >= 9 && y <= 28 && positiveModulo(x * 7 + y * 2 + z * 9, 17) <= 3;
+}
+
+function getAdjacentWaterAmount(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): number {
+  const nx = x + direction.nx;
+  const ny = y + direction.ny;
+  const nz = z + direction.nz;
+  if (!inBounds(world, nx, ny, nz)) {
+    return 0;
+  }
+
+  return world.water[nx + world.width * (nz + world.depth * ny)];
+}
+
+function getTerrainVertexJitter(world: VoxelWorld, gridX: number, gridY: number, gridZ: number): { x: number; y: number; z: number } {
+  const amount = isDeepCavernWorld(world) ? DEEP_CAVERN_VERTEX_JITTER : DEFAULT_VERTEX_JITTER;
+  return {
+    x: (getCellVariation(gridX, gridY, gridZ) - 0.5) * amount,
+    y: (getCellVariation(gridX + 17, gridY - 11, gridZ + 5) - 0.5) * amount * 0.7,
+    z: (getCellVariation(gridX - 23, gridY + 3, gridZ + 29) - 0.5) * amount,
+  };
+}
+
+function mixHexColors(a: number, b: number, amount: number): number {
+  const inverse = 1 - amount;
+  const r = ((a >> 16) & 0xff) * inverse + ((b >> 16) & 0xff) * amount;
+  const g = ((a >> 8) & 0xff) * inverse + ((b >> 8) & 0xff) * amount;
+  const blue = (a & 0xff) * inverse + (b & 0xff) * amount;
+  return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(blue);
+}
+
+function scaleHexColor(color: number, scalar: number): FaceColor {
+  return {
+    r: clamp01((((color >> 16) & 0xff) / 255) * scalar),
+    g: clamp01((((color >> 8) & 0xff) / 255) * scalar),
+    b: clamp01(((color & 0xff) / 255) * scalar),
+  };
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
 }
 
 function getCellVariation(x: number, y: number, z: number): number {

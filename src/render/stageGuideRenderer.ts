@@ -1,4 +1,14 @@
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Scene } from "three";
+import {
+  BoxGeometry,
+  EdgesGeometry,
+  Group,
+  LineBasicMaterial,
+  LineSegments,
+  Mesh,
+  MeshBasicMaterial,
+  Object3D,
+  Scene,
+} from "three";
 import { getStageDigBoxes, type ClearBox, type SceneOpeningStage } from "../world/sceneTools";
 import type { VoxelWorld } from "../world/types";
 import type { RenderOptions } from "./renderOptions";
@@ -30,14 +40,14 @@ export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = 
   const outlineScale = style.outlineScale ?? scale * 1.02;
   const group = new Group();
   const fillMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
-  const outlineMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
+  const outlineMeshes: LineSegments<EdgesGeometry, LineBasicMaterial>[] = [];
   scene.add(group);
 
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
       ensureMeshCount(group, fillMeshes, boxes.length, color, opacity, wireframe);
-      ensureMeshCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity, true);
+      ensureOutlineCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity);
 
       for (let i = 0; i < fillMeshes.length; i += 1) {
         const mesh = fillMeshes[i];
@@ -100,11 +110,39 @@ function ensureMeshCount(
   }
 }
 
+function ensureOutlineCount(
+  group: Group,
+  meshes: LineSegments<EdgesGeometry, LineBasicMaterial>[],
+  count: number,
+  color: number,
+  opacity: number,
+): void {
+  while (meshes.length < count) {
+    const mesh = new LineSegments(
+      new EdgesGeometry(new BoxGeometry(1, 1, 1)),
+      new LineBasicMaterial({
+        color,
+        transparent: true,
+        opacity,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+    mesh.frustumCulled = false;
+    group.add(mesh);
+    meshes.push(mesh);
+  }
+
+  for (let i = count; i < meshes.length; i += 1) {
+    meshes[i].visible = false;
+  }
+}
+
 function boxContainsSlice(box: ClearBox, sliceZ: number): boolean {
   return sliceZ >= box.minZ && sliceZ <= box.maxZ;
 }
 
-function positionGuideMesh(mesh: Mesh, world: VoxelWorld, box: ClearBox, scale: number): void {
+function positionGuideMesh(mesh: Object3D, world: VoxelWorld, box: ClearBox, scale: number): void {
   const width = box.maxX - box.minX + 1;
   const height = box.maxY - box.minY + 1;
   const depth = box.maxZ - box.minZ + 1;
