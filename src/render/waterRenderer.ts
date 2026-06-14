@@ -31,7 +31,7 @@ const EXPOSED_WATER_DELTA = 0.05;
 
 export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRenderer {
   const geometry = new BoxGeometry(0.96, 1, 0.96);
-  const foamGeometry = new BoxGeometry(0.64, 0.036, 0.64);
+  const foamGeometry = new BoxGeometry(0.78, 0.045, 0.78);
   const material = new MeshPhongMaterial({
     color: 0x2fc4df,
     emissive: 0x073d4d,
@@ -115,11 +115,11 @@ function updateWaterMesh(
   const foamMaterial = renderer.foamMesh.material;
   material.color.set(debugMode ? 0x5ef0ff : gameplayMode ? 0x25b9d2 : 0x2fc4df);
   material.emissive.set(debugMode ? 0x126c7c : gameplayMode ? 0x043946 : 0x073d4d);
-  material.opacity = debugMode ? 0.82 : gameplayMode ? 0.2 : 0.26;
+  material.opacity = debugMode ? 0.82 : gameplayMode ? 0.24 : 0.26;
   surfaceMaterial.color.set(debugMode ? 0xd6ffff : gameplayMode ? 0xbff8ff : 0xc6fbff);
   surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x0f5262 : 0x125d68);
-  surfaceMaterial.opacity = debugMode ? 0.58 : gameplayMode ? 0.62 : 0.66;
-  foamMaterial.opacity = debugMode ? 0.44 : gameplayMode ? 0.3 : 0.32;
+  surfaceMaterial.opacity = debugMode ? 0.58 : gameplayMode ? 0.7 : 0.66;
+  foamMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.46 : 0.36;
   const layerSize = world.width * world.depth;
 
   for (const cellIndex of world.wetCells) {
@@ -152,8 +152,9 @@ function updateWaterMesh(
     }
 
     if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
+      const foamScale = getWaterFoamScale(world, x, y, z, amount);
       foamDummy.position.set(center.x, y + waterHeight + 0.035, center.z);
-      foamDummy.scale.setScalar(1);
+      foamDummy.scale.set(foamScale, 1, foamScale);
       foamDummy.updateMatrix();
       renderer.foamMesh.setMatrixAt(foamCount, foamDummy.matrix);
       foamCount += 1;
@@ -378,17 +379,26 @@ function shouldRenderWaterFoam(
   debugMode: boolean,
   gameplayMode: boolean,
 ): boolean {
-  if (!gameplayMode || debugMode || amount < 0.18) {
+  if (!gameplayMode || debugMode || amount < 0.12) {
     return false;
   }
 
-  const lowerDrop = isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount);
-  const sideDrop =
-    isWaterExposedToLowerNeighbor(world, x - 1, y, z, amount) ||
-    isWaterExposedToLowerNeighbor(world, x + 1, y, z, amount) ||
-    isWaterExposedToLowerNeighbor(world, x, y, z - 1, amount) ||
-    isWaterExposedToLowerNeighbor(world, x, y, z + 1, amount);
-  return lowerDrop || (amount > 0.72 && sideDrop && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode));
+  const dropScore = getWaterDropScore(world, x, y, z, amount);
+  return dropScore >= 1 || (amount > 0.62 && dropScore > 0 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode));
+}
+
+function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
+  return Math.min(1.55, 0.82 + getWaterDropScore(world, x, y, z, amount) * 0.22 + amount * 0.18);
+}
+
+function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
+  let score = 0;
+  score += isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount) ? 2 : 0;
+  score += isWaterExposedToLowerNeighbor(world, x - 1, y, z, amount) ? 1 : 0;
+  score += isWaterExposedToLowerNeighbor(world, x + 1, y, z, amount) ? 1 : 0;
+  score += isWaterExposedToLowerNeighbor(world, x, y, z - 1, amount) ? 1 : 0;
+  score += isWaterExposedToLowerNeighbor(world, x, y, z + 1, amount) ? 1 : 0;
+  return score;
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

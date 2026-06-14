@@ -22,6 +22,7 @@ import {
 } from "./input/controls";
 import { createActiveCellRenderer, type ActiveCellRenderer } from "./render/activeCellRenderer";
 import { createBrushPreviewRenderer, type BrushPreviewRenderer } from "./render/brushPreviewRenderer";
+import { createCavernDecorRenderer, type CavernDecorRenderer } from "./render/cavernDecorRenderer";
 import { createFlowDebugRenderer, type FlowDebugRenderer, type RecentFlow } from "./render/flowDebugRenderer";
 import { createSceneContext } from "./render/scene";
 import { createSonarRenderer } from "./render/sonarRenderer";
@@ -90,6 +91,7 @@ let hazardInitialSolidCounts = getHazardSolidCounts(world, getCurrentLevel());
 openedStageCount = carveInitialManualStage(world, currentPreset, openedStageChoices, openedStageCount);
 let terrainRenderer: TerrainRenderer = createTerrainRenderer(sceneContext.scene, world);
 let waterRenderer: WaterRenderer = createWaterRenderer(sceneContext.scene, world);
+let cavernDecorRenderer: CavernDecorRenderer = createCavernDecorRenderer(sceneContext.scene, world);
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
@@ -579,6 +581,7 @@ function markRenderOptionsChanged(): void {
 function resetWorld(): void {
   terrainRenderer.dispose();
   waterRenderer.dispose();
+  cavernDecorRenderer.dispose();
   activeCellRenderer.dispose();
   flowDebugRenderer.dispose();
   brushPreviewRenderer.dispose();
@@ -610,6 +613,7 @@ function resetWorld(): void {
   recentFlows = new Map<number, RecentFlow>();
   terrainRenderer = createTerrainRenderer(sceneContext.scene, world);
   waterRenderer = createWaterRenderer(sceneContext.scene, world);
+  cavernDecorRenderer = createCavernDecorRenderer(sceneContext.scene, world);
   activeCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
@@ -777,10 +781,32 @@ function getCurrentBestScore() {
 
 function getFirstPersonSpawnPose(): SpawnPose | undefined {
   if (currentPreset === "deep-cavern") {
-    if (initialUrlParams.get("spawn") === "overview") {
+    const spawn = initialUrlParams.get("spawn");
+    if (spawn === "drop") {
       return {
         position: new Vector3(-6.5, 36.75, -8.5),
-        lookAt: new Vector3(4.5, 12, 1.5),
+        lookAt: new Vector3(7.5, 8.5, 1.5),
+      };
+    }
+
+    if (spawn === "south-basin") {
+      return {
+        position: new Vector3(22.5, 8.75, -11.5),
+        lookAt: new Vector3(4.5, 8, 0.5),
+      };
+    }
+
+    if (spawn === "basins" || spawn === "north-basin") {
+      return {
+        position: new Vector3(15.5, 9.2, 22.5),
+        lookAt: new Vector3(2.5, 8, 2.5),
+      };
+    }
+
+    if (spawn === "overview") {
+      return {
+        position: new Vector3(-17.5, 24.5, -13.5),
+        lookAt: new Vector3(7, 10, 1.5),
       };
     }
 
@@ -793,14 +819,14 @@ function getFirstPersonSpawnPose(): SpawnPose | undefined {
 
     if (openedStageCount >= 1) {
       return {
-        position: new Vector3(-6.5, 36.75, -8.5),
-        lookAt: new Vector3(4.5, 12, 1.5),
+        position: new Vector3(-17.5, 24.5, -13.5),
+        lookAt: new Vector3(7, 10, 1.5),
       };
     }
 
     return {
-      position: new Vector3(-6.5, 36.75, -8.5),
-      lookAt: new Vector3(4.5, 12, 1.5),
+      position: new Vector3(-17.5, 24.5, -13.5),
+      lookAt: new Vector3(7, 10, 1.5),
     };
   }
 
@@ -1225,6 +1251,7 @@ function flushTerrainUpdate(): boolean {
   }
 
   terrainRenderer.update(world, getRenderOptions());
+  cavernDecorRenderer.update(world);
   pendingSonarTerrainUpdate = true;
   inputState.terrainDirty = false;
   return true;

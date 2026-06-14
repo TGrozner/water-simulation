@@ -30,7 +30,7 @@ export type TerrainRenderer = {
 
 type TerrainChunk = {
   mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
-  faceToCell: Int32Array;
+  faceSpans: FaceSpan[];
   minX: number;
   maxX: number;
   minY: number;
@@ -38,6 +38,18 @@ type TerrainChunk = {
   minZ: number;
   maxZ: number;
   faceCount: number;
+};
+
+type FaceAxis = "x" | "y" | "z";
+
+type FaceSpan = {
+  originX: number;
+  originY: number;
+  originZ: number;
+  uAxis: FaceAxis;
+  vAxis: FaceAxis;
+  width: number;
+  height: number;
 };
 
 type FaceDirection = {
@@ -56,7 +68,7 @@ type FaceColor = {
 };
 
 const TERRAIN_CHUNK_SIZE = 12;
-const DEEP_CAVERN_VERTEX_JITTER = 0.16;
+const DEEP_CAVERN_VERTEX_JITTER = 0.22;
 const DEFAULT_VERTEX_JITTER = 0.06;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
@@ -177,8 +189,18 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
       return null;
     }
 
-    const cellIndex = chunks[chunkIndex]?.faceToCell[hit.faceIndex] ?? -1;
-    return cellIndex < 0 ? null : { cellIndex, distance: hit.distance };
+    const span = chunks[chunkIndex]?.faceSpans[hit.faceIndex];
+    if (!span || !hit.uv) {
+      return null;
+    }
+
+    const u = Math.min(span.width - 1, Math.max(0, Math.floor(hit.uv.x)));
+    const v = Math.min(span.height - 1, Math.max(0, Math.floor(hit.uv.y)));
+    const x = span.originX + getAxisOffset(span.uAxis, u) + getAxisOffset(span.vAxis, v);
+    const y = span.originY + getAxisOffsetY(span.uAxis, u) + getAxisOffsetY(span.vAxis, v);
+    const z = span.originZ + getAxisOffsetZ(span.uAxis, u) + getAxisOffsetZ(span.vAxis, v);
+    const cellIndex = x + world.width * (z + world.depth * y);
+    return inBounds(world, x, y, z) && world.solid[cellIndex] === 1 ? { cellIndex, distance: hit.distance } : null;
   }
 }
 
@@ -204,7 +226,7 @@ function createTerrainChunks(
         root.add(mesh);
         chunks.push({
           mesh,
-          faceToCell: new Int32Array(0),
+          faceSpans: [],
           minX: chunkX * TERRAIN_CHUNK_SIZE,
           maxX: Math.min(world.width, (chunkX + 1) * TERRAIN_CHUNK_SIZE),
           minY: chunkY * TERRAIN_CHUNK_SIZE,
@@ -224,39 +246,419 @@ function rebuildTerrainChunk(chunk: TerrainChunk, world: VoxelWorld, options: Re
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
-  const faceToCell: number[] = [];
+  const uvs: number[] = [];
+  const faceSpans: FaceSpan[] = [];
   let faceCount = 0;
 
-  for (let y = chunk.minY; y < chunk.maxY; y += 1) {
-    for (let z = chunk.minZ; z < chunk.maxZ; z += 1) {
-      for (let x = chunk.minX; x < chunk.maxX; x += 1) {
-        const cellIndex = x + world.width * (z + world.depth * y);
-        if (world.solid[cellIndex] === 0 || !shouldRenderCell(world, z, options)) {
-          continue;
-        }
-
-        for (const direction of FACE_DIRECTIONS) {
-          if (!shouldRenderFace(world, x, y, z, direction, options)) {
-            continue;
-          }
-
-          appendFace(positions, normals, colors, world, x, y, z, direction);
-          faceToCell.push(cellIndex, cellIndex);
-          faceCount += 1;
-        }
-      }
-    }
+  for (const direction of FACE_DIRECTIONS) {
+    faceCount += appendGreedyFacesForDirection(positions, normals, colors, uvs, faceSpans, chunk, world, options, direction);
   }
 
   const nextGeometry = new BufferGeometry();
   nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   nextGeometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  nextGeometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   nextGeometry.computeBoundingSphere();
   chunk.mesh.geometry.dispose();
   chunk.mesh.geometry = nextGeometry;
-  chunk.faceToCell = Int32Array.from(faceToCell);
+  chunk.faceSpans = faceSpans;
   chunk.faceCount = faceCount;
+}
+
+function appendGreedyFacesForDirection(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  chunk: TerrainChunk,
+  world: VoxelWorld,
+  options: RenderOptions,
+  direction: FaceDirection,
+): number {
+  if (direction.nx !== 0) {
+    return appendGreedyXFaces(positions, normals, colors, uvs, faceSpans, chunk, world, options, direction);
+  }
+  if (direction.ny !== 0) {
+    return appendGreedyYFaces(positions, normals, colors, uvs, faceSpans, chunk, world, options, direction);
+  }
+  return appendGreedyZFaces(positions, normals, colors, uvs, faceSpans, chunk, world, options, direction);
+}
+
+function appendGreedyXFaces(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  chunk: TerrainChunk,
+  world: VoxelWorld,
+  options: RenderOptions,
+  direction: FaceDirection,
+): number {
+  let faceCount = 0;
+  const maskWidth = chunk.maxZ - chunk.minZ;
+  const maskHeight = chunk.maxY - chunk.minY;
+  const mask = new Int32Array(maskWidth * maskHeight);
+  const keys = new Int32Array(mask.length);
+
+  for (let x = chunk.minX; x < chunk.maxX; x += 1) {
+    fillFaceMask(mask, keys, maskWidth, maskHeight, (u, v) => {
+      const z = chunk.minZ + u;
+      const y = chunk.minY + v;
+      return getVisibleFaceEntry(world, x, y, z, direction, options);
+    });
+    faceCount += appendGreedyMaskFaces(positions, normals, colors, uvs, faceSpans, world, mask, keys, maskWidth, maskHeight, (u, v, width, height) => ({
+      direction,
+      minX: x,
+      maxX: x + 1,
+      minY: chunk.minY + v,
+      maxY: chunk.minY + v + height,
+      minZ: chunk.minZ + u,
+      maxZ: chunk.minZ + u + width,
+      originX: x,
+      originY: chunk.minY + v,
+      originZ: chunk.minZ + u,
+      uAxis: "z",
+      vAxis: "y",
+      width,
+      height,
+    }));
+  }
+
+  return faceCount;
+}
+
+function appendGreedyYFaces(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  chunk: TerrainChunk,
+  world: VoxelWorld,
+  options: RenderOptions,
+  direction: FaceDirection,
+): number {
+  let faceCount = 0;
+  const maskWidth = chunk.maxX - chunk.minX;
+  const maskHeight = chunk.maxZ - chunk.minZ;
+  const mask = new Int32Array(maskWidth * maskHeight);
+  const keys = new Int32Array(mask.length);
+
+  for (let y = chunk.minY; y < chunk.maxY; y += 1) {
+    fillFaceMask(mask, keys, maskWidth, maskHeight, (u, v) => {
+      const x = chunk.minX + u;
+      const z = chunk.minZ + v;
+      return getVisibleFaceEntry(world, x, y, z, direction, options);
+    });
+    faceCount += appendGreedyMaskFaces(positions, normals, colors, uvs, faceSpans, world, mask, keys, maskWidth, maskHeight, (u, v, width, height) => ({
+      direction,
+      minX: chunk.minX + u,
+      maxX: chunk.minX + u + width,
+      minY: y,
+      maxY: y + 1,
+      minZ: chunk.minZ + v,
+      maxZ: chunk.minZ + v + height,
+      originX: chunk.minX + u,
+      originY: y,
+      originZ: chunk.minZ + v,
+      uAxis: "x",
+      vAxis: "z",
+      width,
+      height,
+    }));
+  }
+
+  return faceCount;
+}
+
+function appendGreedyZFaces(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  chunk: TerrainChunk,
+  world: VoxelWorld,
+  options: RenderOptions,
+  direction: FaceDirection,
+): number {
+  let faceCount = 0;
+  const maskWidth = chunk.maxX - chunk.minX;
+  const maskHeight = chunk.maxY - chunk.minY;
+  const mask = new Int32Array(maskWidth * maskHeight);
+  const keys = new Int32Array(mask.length);
+
+  for (let z = chunk.minZ; z < chunk.maxZ; z += 1) {
+    fillFaceMask(mask, keys, maskWidth, maskHeight, (u, v) => {
+      const x = chunk.minX + u;
+      const y = chunk.minY + v;
+      return getVisibleFaceEntry(world, x, y, z, direction, options);
+    });
+    faceCount += appendGreedyMaskFaces(positions, normals, colors, uvs, faceSpans, world, mask, keys, maskWidth, maskHeight, (u, v, width, height) => ({
+      direction,
+      minX: chunk.minX + u,
+      maxX: chunk.minX + u + width,
+      minY: chunk.minY + v,
+      maxY: chunk.minY + v + height,
+      minZ: z,
+      maxZ: z + 1,
+      originX: chunk.minX + u,
+      originY: chunk.minY + v,
+      originZ: z,
+      uAxis: "x",
+      vAxis: "y",
+      width,
+      height,
+    }));
+  }
+
+  return faceCount;
+}
+
+type FaceMaskEntry = {
+  cellIndex: number;
+  key: number;
+};
+
+type MergedFace = {
+  direction: FaceDirection;
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+  originX: number;
+  originY: number;
+  originZ: number;
+  uAxis: FaceAxis;
+  vAxis: FaceAxis;
+  width: number;
+  height: number;
+};
+
+function fillFaceMask(
+  mask: Int32Array,
+  keys: Int32Array,
+  width: number,
+  height: number,
+  getEntry: (u: number, v: number) => FaceMaskEntry | null,
+): void {
+  mask.fill(-1);
+  keys.fill(0);
+
+  for (let v = 0; v < height; v += 1) {
+    for (let u = 0; u < width; u += 1) {
+      const entry = getEntry(u, v);
+      if (!entry) {
+        continue;
+      }
+
+      const maskIndex = u + width * v;
+      mask[maskIndex] = entry.cellIndex;
+      keys[maskIndex] = entry.key;
+    }
+  }
+}
+
+function getVisibleFaceEntry(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  direction: FaceDirection,
+  options: RenderOptions,
+): FaceMaskEntry | null {
+  const cellIndex = x + world.width * (z + world.depth * y);
+  if (world.solid[cellIndex] === 0 || !shouldRenderCell(world, z, options) || !shouldRenderFace(world, x, y, z, direction, options)) {
+    return null;
+  }
+
+  return {
+    cellIndex,
+    key: getTerrainMergeKey(world, x, y, z, direction),
+  };
+}
+
+function appendGreedyMaskFaces(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  world: VoxelWorld,
+  mask: Int32Array,
+  keys: Int32Array,
+  maskWidth: number,
+  maskHeight: number,
+  createFace: (u: number, v: number, width: number, height: number) => MergedFace,
+): number {
+  const visited = new Uint8Array(mask.length);
+  const maxSpan = getGreedyFaceSpanLimit(world);
+  let faceCount = 0;
+
+  for (let v = 0; v < maskHeight; v += 1) {
+    for (let u = 0; u < maskWidth; u += 1) {
+      const startIndex = u + maskWidth * v;
+      if (visited[startIndex] === 1 || mask[startIndex] < 0) {
+        continue;
+      }
+
+      const key = keys[startIndex];
+      let width = 1;
+      while (width < maxSpan && u + width < maskWidth) {
+        const nextIndex = u + width + maskWidth * v;
+        if (visited[nextIndex] === 1 || mask[nextIndex] < 0 || keys[nextIndex] !== key) {
+          break;
+        }
+        width += 1;
+      }
+
+      let height = 1;
+      let canExtend = true;
+      while (height < maxSpan && v + height < maskHeight && canExtend) {
+        for (let dx = 0; dx < width; dx += 1) {
+          const nextIndex = u + dx + maskWidth * (v + height);
+          if (visited[nextIndex] === 1 || mask[nextIndex] < 0 || keys[nextIndex] !== key) {
+            canExtend = false;
+            break;
+          }
+        }
+        if (canExtend) {
+          height += 1;
+        }
+      }
+
+      for (let dy = 0; dy < height; dy += 1) {
+        for (let dx = 0; dx < width; dx += 1) {
+          visited[u + dx + maskWidth * (v + dy)] = 1;
+        }
+      }
+
+      appendMergedFace(positions, normals, colors, uvs, faceSpans, world, createFace(u, v, width, height));
+      faceCount += 1;
+    }
+  }
+
+  return faceCount;
+}
+
+function appendMergedFace(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  world: VoxelWorld,
+  face: MergedFace,
+): void {
+  const vertices = getMergedFaceVertices(face);
+  const span = {
+    originX: face.originX,
+    originY: face.originY,
+    originZ: face.originZ,
+    uAxis: face.uAxis,
+    vAxis: face.vAxis,
+    width: face.width,
+    height: face.height,
+  };
+
+  for (const vertex of vertices) {
+    appendMergedVertex(positions, normals, colors, uvs, world, face, vertex);
+  }
+  faceSpans.push(span, span);
+}
+
+function getMergedFaceVertices(face: MergedFace): readonly { x: number; y: number; z: number; u: number; v: number }[] {
+  if (face.direction.nx > 0) {
+    return [
+      { x: face.maxX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.maxY, z: face.minZ, u: 0, v: face.height },
+      { x: face.maxX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.maxX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.maxX, y: face.minY, z: face.maxZ, u: face.width, v: 0 },
+    ];
+  }
+
+  if (face.direction.nx < 0) {
+    return [
+      { x: face.minX, y: face.minY, z: face.maxZ, u: face.width, v: 0 },
+      { x: face.minX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.minX, y: face.maxY, z: face.minZ, u: 0, v: face.height },
+      { x: face.minX, y: face.minY, z: face.maxZ, u: face.width, v: 0 },
+      { x: face.minX, y: face.maxY, z: face.minZ, u: 0, v: face.height },
+      { x: face.minX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+    ];
+  }
+
+  if (face.direction.ny > 0) {
+    return [
+      { x: face.minX, y: face.maxY, z: face.maxZ, u: 0, v: face.height },
+      { x: face.maxX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.maxX, y: face.maxY, z: face.minZ, u: face.width, v: 0 },
+      { x: face.minX, y: face.maxY, z: face.maxZ, u: 0, v: face.height },
+      { x: face.maxX, y: face.maxY, z: face.minZ, u: face.width, v: 0 },
+      { x: face.minX, y: face.maxY, z: face.minZ, u: 0, v: 0 },
+    ];
+  }
+
+  if (face.direction.ny < 0) {
+    return [
+      { x: face.minX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.minY, z: face.minZ, u: face.width, v: 0 },
+      { x: face.maxX, y: face.minY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.minX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.minY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.minX, y: face.minY, z: face.maxZ, u: 0, v: face.height },
+    ];
+  }
+
+  if (face.direction.nz > 0) {
+    return [
+      { x: face.minX, y: face.minY, z: face.maxZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.minY, z: face.maxZ, u: face.width, v: 0 },
+      { x: face.maxX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.minX, y: face.minY, z: face.maxZ, u: 0, v: 0 },
+      { x: face.maxX, y: face.maxY, z: face.maxZ, u: face.width, v: face.height },
+      { x: face.minX, y: face.maxY, z: face.maxZ, u: 0, v: face.height },
+    ];
+  }
+
+  return [
+    { x: face.maxX, y: face.minY, z: face.minZ, u: face.width, v: 0 },
+    { x: face.minX, y: face.minY, z: face.minZ, u: 0, v: 0 },
+    { x: face.minX, y: face.maxY, z: face.minZ, u: 0, v: face.height },
+    { x: face.maxX, y: face.minY, z: face.minZ, u: face.width, v: 0 },
+    { x: face.minX, y: face.maxY, z: face.minZ, u: 0, v: face.height },
+    { x: face.maxX, y: face.maxY, z: face.minZ, u: face.width, v: face.height },
+  ];
+}
+
+function appendMergedVertex(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  world: VoxelWorld,
+  face: MergedFace,
+  vertex: { x: number; y: number; z: number; u: number; v: number },
+): void {
+  const gridX = vertex.x;
+  const gridY = vertex.y;
+  const gridZ = vertex.z;
+  const sampleX = clampInt(gridX, face.minX, face.maxX - 1);
+  const sampleY = clampInt(gridY, face.minY, face.maxY - 1);
+  const sampleZ = clampInt(gridZ, face.minZ, face.maxZ - 1);
+  const jitter = getTerrainVertexJitter(world, gridX, gridY, gridZ);
+  const color = getTerrainVertexColor(world, sampleX, sampleY, sampleZ, face.direction, gridX, gridY, gridZ);
+  positions.push(gridX - world.width / 2 + jitter.x, gridY + jitter.y, gridZ - world.depth / 2 + jitter.z);
+  normals.push(face.direction.nx, face.direction.ny, face.direction.nz);
+  colors.push(color.r, color.g, color.b);
+  uvs.push(vertex.u, vertex.v);
 }
 
 function shouldRenderFace(
@@ -284,58 +686,6 @@ function shouldRenderFace(
   }
 
   return !isSolid(world, nx, ny, nz);
-}
-
-function appendFace(
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  world: VoxelWorld,
-  x: number,
-  y: number,
-  z: number,
-  direction: FaceDirection,
-): void {
-  const minX = x - world.width / 2;
-  const maxX = minX + 1;
-  const minY = y;
-  const maxY = y + 1;
-  const minZ = z - world.depth / 2;
-  const maxZ = minZ + 1;
-
-  for (const vertex of direction.vertices) {
-    appendVertex(positions, normals, colors, world, x, y, z, direction, minX, maxX, minY, maxY, minZ, maxZ, vertex);
-  }
-}
-
-function appendVertex(
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  world: VoxelWorld,
-  cellX: number,
-  cellY: number,
-  cellZ: number,
-  direction: FaceDirection,
-  minX: number,
-  maxX: number,
-  minY: number,
-  maxY: number,
-  minZ: number,
-  maxZ: number,
-  vertex: FaceVertex,
-): void {
-  const gridX = cellX + vertex[0];
-  const gridY = cellY + vertex[1];
-  const gridZ = cellZ + vertex[2];
-  const x = vertex[0] === 0 ? minX : maxX;
-  const y = vertex[1] === 0 ? minY : maxY;
-  const z = vertex[2] === 0 ? minZ : maxZ;
-  const jitter = getTerrainVertexJitter(world, gridX, gridY, gridZ);
-  const color = getTerrainVertexColor(world, cellX, cellY, cellZ, direction, gridX, gridY, gridZ);
-  positions.push(x + jitter.x, y + jitter.y, z + jitter.z);
-  normals.push(direction.nx, direction.ny, direction.nz);
-  colors.push(color.r, color.g, color.b);
 }
 
 function getTerrainVertexColor(
@@ -458,6 +808,16 @@ function getAdjacentWaterAmount(world: VoxelWorld, x: number, y: number, z: numb
   return world.water[nx + world.width * (nz + world.depth * ny)];
 }
 
+function getTerrainMergeKey(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): number {
+  const baseColor = getBaseTerrainColor(world, x, y, z);
+  const isWet = getAdjacentWaterAmount(world, x, y, z, direction) > EPSILON ? 1 : 0;
+  return baseColor * 2 + isWet;
+}
+
+function getGreedyFaceSpanLimit(world: VoxelWorld): number {
+  return isDeepCavernWorld(world) ? 4 : 8;
+}
+
 function getTerrainVertexJitter(world: VoxelWorld, gridX: number, gridY: number, gridZ: number): { x: number; y: number; z: number } {
   const amount = isDeepCavernWorld(world) ? DEEP_CAVERN_VERTEX_JITTER : DEFAULT_VERTEX_JITTER;
   return {
@@ -485,6 +845,22 @@ function scaleHexColor(color: number, scalar: number): FaceColor {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getAxisOffset(axis: FaceAxis, amount: number): number {
+  return axis === "x" ? amount : 0;
+}
+
+function getAxisOffsetY(axis: FaceAxis, amount: number): number {
+  return axis === "y" ? amount : 0;
+}
+
+function getAxisOffsetZ(axis: FaceAxis, amount: number): number {
+  return axis === "z" ? amount : 0;
 }
 
 function positiveModulo(value: number, divisor: number): number {

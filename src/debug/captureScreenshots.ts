@@ -111,17 +111,17 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-deep-cavern-start.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&camera=fps&spawn=overview`,
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&camera=fps&spawn=drop`,
     filename: "game-deep-cavern-open-2.png",
     timeoutMs: 700,
   },
   {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=overview`,
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=basins`,
     filename: "game-deep-cavern-complete.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=overview`,
+    url: `${BASE_URL}/?game=1&level=deep-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=south-basin`,
     filename: "game-deep-cavern-hazard.png",
     timeoutMs: 5000,
   },
@@ -188,7 +188,7 @@ function getSceneCaptureUrl(preset: ScenePresetId): string {
 
 function getSceneSliceCaptureUrl(preset: ScenePresetId): string {
   if (preset === "deep-cavern") {
-    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=overview&slice=1&sliceZ=36&debug=1&debugUi=1`;
+    return `${BASE_URL}/?scene=${preset}&camera=fps&spawn=drop&slice=1&sliceZ=36&debug=1&debugUi=1`;
   }
 
   return `${BASE_URL}/?scene=${preset}&slice=1&sliceZ=28&debug=1`;
