@@ -89,18 +89,16 @@ lightweight mission loop on top:
 - **Split Basin Challenge**: carve two outlets from one release chamber and fill both lower basins before the route settles.
 - **Deep Cavern Expedition**: route a high reservoir through a much larger vertical cavern and split it into two distant lower basins.
 
-In game mode, digging is restricted to the currently highlighted weak-rock gate
-plus authored red spill hazards. Once a weak core is mostly destroyed, the gate
-collapses open and the next gate is highlighted. Some gates are branch choices:
-clear either highlighted route and only that route opens. Manual carve zones
-dig only the cells hit by the player, without an authored collapse, and
-completion waits for water to enter the hand-cut tunnel. Opening a red hazard can route water into
-a waste pocket and fail the mission. The HUD tracks gate progress, selected
-route, water inside the selected path, delivered water, per-basin targets,
-wasted water, red-seam risk, settling state, failure, level completion, and a
-completion score for efficient routes. The best completion score for each level
-is saved locally in the browser and shown when that level is revisited. Best
-scores are keyed by level id in `localStorage` as
+In game mode, the full solid cave is destructible. Highlighted route markers
+show the intended water-routing milestones, and red seams mark risky cuts. Once
+a guided route marker is mostly destroyed, its authored breach opens and the
+next marker is highlighted. Some markers are branch choices: clear either
+highlighted route and only that route opens. Manual carve markers are completed
+by the player's own tunnel once water enters it. Freeform shortcuts, bypasses,
+side mining, and accidental leaks are allowed; the mission contract is still
+judged by delivered water, per-basin targets, waste, settling, and red-seam
+risk. The best completion score for each level is saved locally in the browser
+and shown when that level is revisited. Best scores are keyed by level id in `localStorage` as
 `voxel-water-best-scores-v1`, with `{ version: 1, scores }` as the stored
 payload. The challenge selector lists every level and its local best score so a
 level can be entered directly without cycling through the campaign.
@@ -110,7 +108,7 @@ start directly in the full sandbox/debug workflow.
 
 ## Controls
 
-- Left mouse: lock mouse in FPS mode and dig terrain
+- Left mouse: lock mouse in FPS mode and dig any solid terrain
 - F: request FPS pointer lock, then toggle FPS/orbit once locked
 - W / A / S / D or Z / Q / S / D: move in FPS mode
 - Mouse: look around in FPS mode; click the scene if the browser needs pointer lock
@@ -126,8 +124,8 @@ start directly in the full sandbox/debug workflow.
 - D: toggle water debug display
 - V: toggle slice view
 - [ / ]: move the slice plane through the z axis
-- O: open the next authored scene path stage
-- Shift+O: open all remaining authored scene path stages
+- O: open the next guided route marker
+- Shift+O: open all remaining guided route markers
 - 1: Sluice Tutorial / Sluice Gates scene
 - 2: Forked Cavern Challenge / Forked Cavern scene
 - 3: Split Path Challenge / Split Path Cavern scene
@@ -149,12 +147,13 @@ storage.
 - Solid terrain cells and water volume cells
 - Face-culled terrain mesh with triangle-to-cell raycast mapping
 - Partial-height water cubes driven by real grid water values
-- Click-and-hold spherical digging through raycasted terrain cells
+- Click-and-hold spherical digging through any raycasted solid terrain cell
 - Deterministic fixed-step water simulation
 - Downward-first water movement, lateral spreading, sleeping active cells, and neighbor wake-up
 - Debug overlay with pause state, active cells, total water volume, moved volume, FPS, and controls
 - Debug overlay with terrain face count, water instance count, simulation timing, and renderer update timings
 - Player-aligned 3D cave sonar showing nearby cave contours, water pockets, and camera heading
+- Height- and zone-colored cave terrain with destructible physical landmarks in the large cavern
 - Five authored scenes: a focused sluice tutorial, forked cavern challenge, split-path manual carve challenge, twin-basin split challenge, and large vertical deep cavern
 - Runtime slice view for inspecting the inside of the voxel volume without changing simulation data
 - Water volume baseline and delta warning to catch conservation drift while iterating
@@ -164,7 +163,7 @@ storage.
 - Active water cell outlines in water debug mode
 - Separate active-cell and flow-glyph debug toggles
 - Empty-space probing on the current z slice
-- Scene tool buttons for opening each scene's authored drain path
+- Scene tool buttons for opening each scene's guided drain path
 - Progressive scene opening timeline for multi-stage scenarios
 - Runtime metrics for ticks, last moved volume, max water delta, idle ticks, and stable/moving state
 - Completion scoring that grades route efficiency, wasted water, and time to stable delivery

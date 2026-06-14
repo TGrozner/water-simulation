@@ -320,17 +320,12 @@ function canAcceptDigInput(): boolean {
   return !gameModeEnabled || (!levelProgress?.failed && !levelProgress?.complete);
 }
 
-function canDigCell(cellIndex: number): boolean {
+function canDigCell(_cellIndex: number): boolean {
   if (levelProgress?.failed || levelProgress?.complete) {
     return false;
   }
 
-  if (!gameModeEnabled) {
-    return true;
-  }
-
-  const stage = getVisibleGuideStage();
-  return Boolean(stage && isCellInStage(world, stage, cellIndex)) || isCellInVisibleHazard(cellIndex);
+  return true;
 }
 
 function handleDig(): void {

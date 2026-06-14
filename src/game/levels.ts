@@ -337,7 +337,7 @@ function getStatusText(
         : `Carve ${stageProgress.activeStageLabel}`;
     }
 
-    return `Cut weak rock: ${stageProgress.activeStageLabel}`;
+    return `Clear route marker: ${stageProgress.activeStageLabel}`;
   }
 
   if (!delivered) {

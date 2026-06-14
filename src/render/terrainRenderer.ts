@@ -25,6 +25,12 @@ type FaceDirection = {
   nz: number;
 };
 
+type FaceColor = {
+  r: number;
+  g: number;
+  b: number;
+};
+
 const FACE_DIRECTIONS: FaceDirection[] = [
   { nx: 1, ny: 0, nz: 0 },
   { nx: -1, ny: 0, nz: 0 },
@@ -36,7 +42,7 @@ const FACE_DIRECTIONS: FaceDirection[] = [
 
 export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainRenderer {
   const geometry = new BufferGeometry();
-  const material = new MeshLambertMaterial({ color: 0xb8894d, side: DoubleSide });
+  const material = new MeshLambertMaterial({ color: 0xffffff, side: DoubleSide, vertexColors: true });
   const mesh = new Mesh(geometry, material);
   const stats = createRendererStats(world.solid.length * 6);
 
@@ -67,6 +73,7 @@ function updateTerrainMesh(renderer: TerrainRenderer, world: VoxelWorld, options
   const startedAt = performance.now();
   const positions: number[] = [];
   const normals: number[] = [];
+  const colors: number[] = [];
   const faceToCell: number[] = [];
   let faceCount = 0;
 
@@ -83,7 +90,7 @@ function updateTerrainMesh(renderer: TerrainRenderer, world: VoxelWorld, options
             continue;
           }
 
-          appendFace(positions, normals, world, x, y, z, direction);
+          appendFace(positions, normals, colors, world, x, y, z, direction);
           faceToCell.push(cellIndex, cellIndex);
           faceCount += 1;
         }
@@ -93,6 +100,7 @@ function updateTerrainMesh(renderer: TerrainRenderer, world: VoxelWorld, options
 
   renderer.mesh.geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   renderer.mesh.geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+  renderer.mesh.geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   renderer.mesh.geometry.computeBoundingSphere();
   renderer.faceToCell = Int32Array.from(faceToCell);
   renderer.stats.instances = faceCount;
@@ -129,6 +137,7 @@ function shouldRenderFace(
 function appendFace(
   positions: number[],
   normals: number[],
+  colors: number[],
   world: VoxelWorld,
   x: number,
   y: number,
@@ -142,11 +151,88 @@ function appendFace(
   const minZ = z - world.depth / 2;
   const maxZ = minZ + 1;
   const vertices = getFaceVertices(minX, maxX, minY, maxY, minZ, maxZ, direction);
+  const faceColor = getTerrainFaceColor(world, x, y, z, direction);
 
   for (const vertex of vertices) {
     positions.push(vertex[0], vertex[1], vertex[2]);
     normals.push(direction.nx, direction.ny, direction.nz);
+    colors.push(faceColor.r, faceColor.g, faceColor.b);
   }
+}
+
+function getTerrainFaceColor(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): FaceColor {
+  const baseColor = getBaseTerrainColor(world, x, y, z);
+  const heightFactor = world.height <= 1 ? 0 : y / (world.height - 1);
+  const variation = getCellVariation(x, y, z);
+  const light = 0.78 + heightFactor * 0.26 + variation * 0.1;
+  const faceLight = direction.ny === 1 ? 1.12 : direction.ny === -1 ? 0.66 : 0.9;
+  const scalar = light * faceLight;
+  return {
+    r: (((baseColor >> 16) & 0xff) / 255) * scalar,
+    g: (((baseColor >> 8) & 0xff) / 255) * scalar,
+    b: ((baseColor & 0xff) / 255) * scalar,
+  };
+}
+
+function getBaseTerrainColor(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (isDeepCavernWorld(world)) {
+    return getDeepCavernColor(x, y, z);
+  }
+
+  if (y <= 3) {
+    return 0x4f6f68;
+  }
+
+  if (y >= 18) {
+    return 0xc59a63;
+  }
+
+  return 0x9f7041;
+}
+
+function isDeepCavernWorld(world: VoxelWorld): boolean {
+  return world.width >= 64 || world.depth >= 64 || world.height >= 40;
+}
+
+function getDeepCavernColor(x: number, y: number, z: number): number {
+  if (y <= 6 && ((x >= 48 && z <= 32) || (x >= 46 && z >= 47))) {
+    return 0x2f7182;
+  }
+
+  if (x >= 50 && z <= 32 && y <= 17) {
+    return 0x355f6a;
+  }
+
+  if (x >= 48 && z >= 47 && y <= 17) {
+    return 0x594d81;
+  }
+
+  if (x <= 24 && z >= 42 && y <= 16) {
+    return 0x4b7b72;
+  }
+
+  if (x >= 26 && x <= 44 && z >= 30 && z <= 44 && y <= 16) {
+    return 0xbd7043;
+  }
+
+  if (x >= 7 && x <= 23 && z >= 18 && z <= 34 && y >= 29) {
+    return 0xc79a4d;
+  }
+
+  if (y >= 34) {
+    return 0x58606f;
+  }
+
+  if (y <= 8) {
+    return 0x5f5f4d;
+  }
+
+  return 0x8c6742;
+}
+
+function getCellVariation(x: number, y: number, z: number): number {
+  const hash = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719) * 43758.5453;
+  return hash - Math.floor(hash);
 }
 
 function getFaceVertices(

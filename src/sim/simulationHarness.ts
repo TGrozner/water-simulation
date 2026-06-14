@@ -740,14 +740,15 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
     openSceneDrain(world, preset);
 
     let maxVolumeDelta = 0;
-    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, getScenarioMaxTicks(preset), `${preset}/${tuningPreset}`, (volumeDelta) => {
+    const maxTicks = getScenarioMaxTicks(preset);
+    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, maxTicks, `${preset}/${tuningPreset}`, (volumeDelta) => {
       maxVolumeDelta = Math.max(maxVolumeDelta, volumeDelta);
     });
 
     assert(movedVolume > 0, `${preset}/${tuningPreset}: expected water to move after opening drain`);
     assert(
       world.activeCells.size === 0,
-      `${preset}/${tuningPreset}: expected water to stabilize before ${MAX_TICKS} ticks`,
+      `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
     );
 
     return {
@@ -766,7 +767,7 @@ function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetI
 }
 
 function getScenarioMaxTicks(preset: ScenePresetId): number {
-  return preset === "deep-cavern" ? 2200 : MAX_TICKS;
+  return preset === "deep-cavern" ? 2800 : MAX_TICKS;
 }
 
 function runUntilStable(

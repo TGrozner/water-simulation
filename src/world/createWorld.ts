@@ -282,6 +282,28 @@ function carveDeepCavernScene(world: VoxelWorld): void {
     3.2,
     3.8,
   );
+  carveTunnel(
+    world,
+    [
+      { x: 18, y: 24, z: 23 },
+      { x: 13, y: 21, z: 31 },
+      { x: 15, y: 15, z: 43 },
+      { x: 22, y: 9, z: 51 },
+    ],
+    2.8,
+    3.4,
+  );
+  carveTunnel(
+    world,
+    [
+      { x: 52, y: 23, z: 54 },
+      { x: 61, y: 18, z: 48 },
+      { x: 62, y: 13, z: 35 },
+      { x: 52, y: 9, z: 25 },
+    ],
+    2.8,
+    3.4,
+  );
 
   addSolidEllipsoid(world, 36, 6, 36, 5, 9, 5);
   addSolidEllipsoid(world, 30, 14, 27, 4, 10, 4);
@@ -289,6 +311,11 @@ function carveDeepCavernScene(world: VoxelWorld): void {
   addSolidEllipsoid(world, 25, 2, 48, 5, 6, 5);
   addSolidEllipsoid(world, 53, 2, 29, 4, 6, 4);
   addSolidEllipsoid(world, 19, 34, 25, 4, 6, 4);
+  addSolidEllipsoid(world, 16, 29, 28, 3, 8, 3);
+  addSolidEllipsoid(world, 56, 27, 54, 3, 9, 3);
+  addSolidEllipsoid(world, 18, 41, 39, 3, 5, 3);
+  addSolidEllipsoid(world, 58, 38, 28, 3, 6, 3);
+  addSolidEllipsoid(world, 47, 34, 18, 2.5, 5, 2.5);
 
   addSolidBox(world, 19, 33, 24, 23, 43, 31);
   addSolidBox(world, 28, 22, 28, 36, 31, 36);
@@ -296,9 +323,15 @@ function carveDeepCavernScene(world: VoxelWorld): void {
   addSolidBox(world, 44, 4, 47, 56, 11, 57);
   addSolidBox(world, 61, 3, 32, 68, 10, 43);
   addSolidBox(world, 30, 0, 32, 43, 3, 43);
+  addSolidBox(world, 10, 19, 42, 18, 22, 51);
+  addSolidBox(world, 49, 21, 18, 59, 24, 25);
+  addSolidBox(world, 13, 30, 20, 21, 32, 27);
+  addSolidBox(world, 52, 29, 47, 61, 31, 56);
 
   addReservoirTank(world, 7, 22, 32, 44, 18, 33);
   fillWaterBox(world, 8, 21, 33, 44, 19, 32);
+  fillWaterBox(world, 14, 25, 4, 5, 48, 57);
+  fillWaterBox(world, 42, 51, 4, 5, 17, 27);
 }
 
 function fillWaterBox(

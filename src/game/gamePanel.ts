@@ -136,7 +136,7 @@ function updateGamePanel(
     panel,
     "[data-game-stage-label]",
     progress.stageProgress.completedStages >= progress.stageProgress.stageCount
-      ? "All weak gates open"
+      ? "All route markers cleared"
       : progress.stageProgress.activeStageLabel,
   );
   setText(panel, "[data-game-stage-percent]", `${stagePercent}%`);
@@ -153,7 +153,7 @@ function updateGamePanel(
   );
   setText(panel, '[data-game-metric="route"]', progress.stageProgress.selectedChoiceLabel ?? "unselected");
   setText(panel, '[data-game-metric="pathWater"]', formatWater(progress.stageProgress.selectedRouteWater));
-  setText(panel, '[data-game-metric="mode"]', isManualStage ? "manual carve" : "authored gate");
+  setText(panel, '[data-game-metric="mode"]', isManualStage ? "manual carve" : "guided breach");
   setText(panel, '[data-game-metric="risk"]', hasHazards ? `avoid ${progress.level.hazardStages.length} red seams` : "none");
   setText(panel, '[data-game-metric="settled"]', progress.settled ? "settled" : "moving");
   setText(panel, '[data-game-metric="score"]', formatScore(progress));
