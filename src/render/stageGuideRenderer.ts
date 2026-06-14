@@ -96,7 +96,7 @@ function ensureMeshCount(
         transparent: true,
         opacity,
         wireframe,
-        depthTest: false,
+        depthTest: true,
         depthWrite: false,
       }),
     );
@@ -124,7 +124,7 @@ function ensureOutlineCount(
         color,
         transparent: true,
         opacity,
-        depthTest: false,
+        depthTest: true,
         depthWrite: false,
       }),
     );

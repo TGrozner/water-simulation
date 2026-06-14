@@ -68,8 +68,8 @@ type FaceColor = {
 };
 
 const TERRAIN_CHUNK_SIZE = 12;
-const DEEP_CAVERN_VERTEX_JITTER = 0.22;
-const DEFAULT_VERTEX_JITTER = 0.06;
+const DEEP_CAVERN_VERTEX_JITTER = 0;
+const DEFAULT_VERTEX_JITTER = 0;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
   { nx: 1, ny: 0, nz: 0, vertices: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1]] },
