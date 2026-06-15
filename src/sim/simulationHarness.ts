@@ -820,6 +820,7 @@ function runEdgeCaseHarness(): void {
   assertWaterDoesNotMergeDisconnectedVerticalSpans();
   assertWaterTransfersThroughRaisedPortal();
   assertWaterTransfersThroughOverlappingPortal();
+  assertWaterOutflowSplitsAcrossEqualPortals();
   assertWaterFluxMetadataTracksLateralTransfer();
   assertWaterSurfaceMetadataTracksMotion();
   assertWaterParticleCuesFollowMotion();
@@ -1027,6 +1028,48 @@ function assertWaterTransfersThroughOverlappingPortal(): void {
   );
   assertSmallWorldConserved(world, baselineWater, "edge/overlapping-portal");
   assertQuiescentAfterRewake(world, waterConfig, "edge/overlapping-portal");
+}
+
+function assertWaterOutflowSplitsAcrossEqualPortals(): void {
+  const world = createEmptyWorld(3, 1, 3);
+  setWater(world, 1, 0, 1, 0.6);
+  wakeCell(world, 1, 0, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const initialSourceWater = world.water[index(world, 1, 0, 1)];
+  const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: true });
+  const neighborWater = [
+    world.water[index(world, 0, 0, 1)],
+    world.water[index(world, 2, 0, 1)],
+    world.water[index(world, 1, 0, 0)],
+    world.water[index(world, 1, 0, 2)],
+  ];
+  const reachedNeighbors = neighborWater.filter((amount) => amount > waterConfig.minFlow).length;
+  const sideEventVolume = stats.flowEvents
+    .filter((event) => event.direction === "side")
+    .reduce((total, event) => total + event.amount, 0);
+
+  assert(stats.movedVolume > 0.55, `edge/split-outflow: expected most source water to move, got ${stats.movedVolume.toFixed(4)}`);
+  assert(
+    stats.movedVolume <= initialSourceWater,
+    `edge/split-outflow: moved more than source volume (${stats.movedVolume.toFixed(4)} > ${initialSourceWater.toFixed(4)})`,
+  );
+  assert(reachedNeighbors === 4, `edge/split-outflow: expected all four equal portals to receive water, got ${reachedNeighbors}`);
+  assert(world.waterFlux.size === 4, `edge/split-outflow: expected four pipe flux entries, got ${world.waterFlux.size}`);
+  assert(stats.flowEvents.length === 4, `edge/split-outflow: expected four side flow events, got ${stats.flowEvents.length}`);
+  assert(
+    Math.abs(sideEventVolume - stats.movedVolume) <= 0.0001,
+    `edge/split-outflow: side event volume ${sideEventVolume.toFixed(4)} did not match moved ${stats.movedVolume.toFixed(4)}`,
+  );
+  for (const amount of neighborWater) {
+    assert(
+      Math.abs(amount - neighborWater[0]) <= 0.0001,
+      `edge/split-outflow: expected symmetric neighbor water, got ${neighborWater.map((value) => value.toFixed(4)).join(",")}`,
+    );
+    assert(amount <= 1 + EPSILON, `edge/split-outflow: target exceeded capacity with ${amount.toFixed(4)}`);
+  }
+  assertSmallWorldConserved(world, baselineWater, "edge/split-outflow");
 }
 
 function assertWaterFluxMetadataTracksLateralTransfer(): void {

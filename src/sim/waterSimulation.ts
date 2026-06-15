@@ -48,6 +48,12 @@ type LateralTransfer = {
   flux: number;
 };
 
+type LateralTransferProposal = {
+  candidate: LateralCandidate;
+  targetVolume: number;
+  transfer: LateralTransfer;
+};
+
 export type WaterSimulationConfig = {
   downFlowRate: number;
   sideFlowRate: number;
@@ -239,27 +245,61 @@ function flowSpanLaterally(
   let changedCells = 0;
   let flowChanged = false;
   let surfaceChanged = false;
+  const sourceVolume = getSpanVolume(world, span);
+  if (sourceVolume <= EPSILON) {
+    return { movedVolume, changedCells, flowChanged, surfaceChanged };
+  }
 
+  const proposals: LateralTransferProposal[] = [];
   for (const candidate of getLateralCandidates(world, span)) {
-    const sourceVolume = getSpanVolume(world, span);
-    if (sourceVolume <= EPSILON) {
-      break;
-    }
-
     const targetVolume = getSpanVolume(world, candidate.span);
     const transfer = getLateralTransfer(world, span, sourceVolume, candidate, targetVolume, config);
     if (transfer.amount <= config.minFlow) {
       continue;
     }
 
-    const sourceSurfaceCellIndex = getSpanSurfaceCellIndex(world, span, sourceVolume);
-    const sourceResult = setSpanVolume(world, span, sourceVolume - transfer.amount);
+    proposals.push({ candidate, targetVolume, transfer });
+  }
+
+  if (proposals.length === 0) {
+    return { movedVolume, changedCells, flowChanged, surfaceChanged };
+  }
+
+  const desiredOutflow = proposals.reduce((total, proposal) => total + proposal.transfer.amount, 0);
+  const outflowScale = desiredOutflow > sourceVolume ? sourceVolume / desiredOutflow : 1;
+  const sourceSurfaceCellIndex = getSpanSurfaceCellIndex(world, span, sourceVolume);
+  const appliedTransfers: LateralTransferProposal[] = [];
+
+  for (const proposal of proposals) {
+    const amount = proposal.transfer.amount * outflowScale;
+    if (amount <= config.minFlow) {
+      continue;
+    }
+
+    appliedTransfers.push({
+      ...proposal,
+      transfer: {
+        amount,
+        flux: proposal.transfer.flux * outflowScale,
+      },
+    });
+    movedVolume += amount;
+  }
+
+  if (movedVolume <= config.minFlow) {
+    return { movedVolume: 0, changedCells, flowChanged, surfaceChanged };
+  }
+
+  const sourceResult = setSpanVolume(world, span, sourceVolume - movedVolume);
+  changedCells += sourceResult.changedCells;
+  markSpanActive(world, span, sourceVolume - movedVolume, nextActiveCells);
+
+  for (const proposal of appliedTransfers) {
+    const { candidate, targetVolume, transfer } = proposal;
     const targetResult = setSpanVolume(world, candidate.span, targetVolume + transfer.amount);
     const targetSurfaceCellIndex = getSpanSurfaceCellIndex(world, candidate.span, targetVolume + transfer.amount);
-    movedVolume += transfer.amount;
-    changedCells += sourceResult.changedCells + targetResult.changedCells;
+    changedCells += targetResult.changedCells;
 
-    markSpanActive(world, span, sourceVolume - transfer.amount, nextActiveCells);
     markSpanActive(world, candidate.span, targetVolume + transfer.amount, nextActiveCells);
     setSignedPipeFlux(nextFlux, span, candidate.span, transfer.flux, config.minFlow);
 
@@ -297,7 +337,7 @@ function flowSpanLaterally(
 
     if (collectFlowEvents) {
       flowEvents.push({
-        fromCellIndex: getSpanSurfaceCellIndex(world, span, sourceVolume),
+        fromCellIndex: sourceSurfaceCellIndex,
         cellIndex: targetCellIndex,
         direction: "side",
         dx: candidate.direction.x,
@@ -456,10 +496,21 @@ function canSpanStillFlow(
   volume: number,
   config: WaterSimulationConfig,
 ): boolean {
-  return getLateralCandidates(world, span).some((candidate) => {
+  if (volume <= EPSILON) {
+    return false;
+  }
+
+  const pressureTransfers = getLateralCandidates(world, span).map((candidate) => {
     const targetVolume = getSpanVolume(world, candidate.span);
-    return getPressureLateralTransferAmount(span, volume, candidate, targetVolume, config) > config.minFlow;
+    return getPressureLateralTransferAmount(span, volume, candidate, targetVolume, config);
   });
+  const desiredOutflow = pressureTransfers.reduce((total, transfer) => total + transfer, 0);
+  if (desiredOutflow <= config.minFlow) {
+    return false;
+  }
+
+  const outflowScale = desiredOutflow > volume ? volume / desiredOutflow : 1;
+  return pressureTransfers.some((transfer) => transfer * outflowScale > config.minFlow);
 }
 
 function findOverlappingNeighborSpans(
