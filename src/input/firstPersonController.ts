@@ -138,6 +138,8 @@ export function createFirstPersonController(
       syncFromCamera();
     } else {
       fallbackAimActive = false;
+      keys.clear();
+      physics.jumpQueued = false;
     }
   };
 
@@ -189,6 +191,11 @@ export function createFirstPersonController(
     }
   };
 
+  const onWindowBlur = () => {
+    keys.clear();
+    physics.jumpQueued = false;
+  };
+
   window.addEventListener("pointerdown", onPointerDown, { capture: true });
   window.addEventListener("click", onClick, { capture: true });
   document.addEventListener("pointerlockchange", onPointerLockChange);
@@ -196,6 +203,7 @@ export function createFirstPersonController(
   document.addEventListener("mousemove", onMouseMove);
   window.addEventListener("keydown", onKeyDown);
   window.addEventListener("keyup", onKeyUp);
+  window.addEventListener("blur", onWindowBlur);
 
   const controller: FirstPersonController = {
     get enabled() {
@@ -248,6 +256,7 @@ export function createFirstPersonController(
       document.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", onWindowBlur);
       reticle.remove();
     },
   };

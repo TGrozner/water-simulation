@@ -217,7 +217,11 @@ export function createDigController(
     }
 
     isDigging = true;
-    canvas.setPointerCapture(event.pointerId);
+    try {
+      canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Some automated and embedded browsers can reject capture even for a valid click.
+    }
     digFromEvent(event);
   });
 

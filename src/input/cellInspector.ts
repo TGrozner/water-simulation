@@ -29,6 +29,7 @@ export function createCellInspector(
   terrainProvider: () => TerrainRenderer,
   waterProvider: () => WaterRenderer,
   renderOptionsProvider: () => RenderOptions,
+  useCenteredAim = () => false,
 ): CellInspector {
   const raycaster = new Raycaster();
   const pointer = new Vector2();
@@ -51,7 +52,9 @@ export function createCellInspector(
   });
 
   function update(): void {
-    if (!hasPointer) {
+    if (useCenteredAim()) {
+      pointer.set(0, 0);
+    } else if (!hasPointer) {
       return;
     }
 

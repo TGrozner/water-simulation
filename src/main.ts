@@ -75,6 +75,16 @@ const SONAR_WATER_UPDATE_INTERVAL_MS = 125;
 const SONAR_RENDER_INTERVAL_MS = 66;
 const GAME_PANEL_UPDATE_INTERVAL_MS = 100;
 const DEBUG_UI_UPDATE_INTERVAL_MS = 250;
+const ACTIVE_STAGE_GUIDE_STYLE = {
+  opacity: 0.18,
+  scale: 1.035,
+  wireframe: false,
+  depthTest: false,
+  outline: true,
+  outlineOpacity: 0.84,
+  outlineScale: 1.085,
+  outlineDepthTest: false,
+};
 const initialUrlParams = new URLSearchParams(window.location.search);
 seedCaptureBestScores();
 
@@ -95,14 +105,7 @@ let cavernDecorRenderer: CavernDecorRenderer = createCavernDecorRenderer(sceneCo
 let activeCellRenderer: ActiveCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
 let flowDebugRenderer: FlowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
 let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
-let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
-  opacity: 0.1,
-  scale: 1.03,
-  wireframe: false,
-  outline: false,
-  outlineOpacity: 0.5,
-  outlineScale: 1.075,
-});
+let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, ACTIVE_STAGE_GUIDE_STYLE);
 let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
   color: 0xff4a3d,
   opacity: 0.22,
@@ -191,6 +194,7 @@ const cellInspector = createCellInspector(
   () => terrainRenderer,
   () => waterRenderer,
   () => getRenderOptions(),
+  () => firstPersonMode && firstPersonController.hasSceneAim(),
 );
 
 const debugPanel = createDebugPanel({
@@ -617,14 +621,7 @@ function resetWorld(): void {
   activeCellRenderer = createActiveCellRenderer(sceneContext.scene, world);
   flowDebugRenderer = createFlowDebugRenderer(sceneContext.scene, world);
   brushPreviewRenderer = createBrushPreviewRenderer(sceneContext.scene, world);
-  stageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
-    opacity: 0.1,
-    scale: 1.03,
-    wireframe: false,
-    outline: false,
-    outlineOpacity: 0.5,
-    outlineScale: 1.075,
-  });
+  stageGuideRenderer = createStageGuideRenderer(sceneContext.scene, ACTIVE_STAGE_GUIDE_STYLE);
   hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
     color: 0xff4a3d,
     opacity: 0.22,
@@ -822,7 +819,7 @@ function getFirstPersonSpawnPose(): SpawnPose | undefined {
   if (spawn === "overview") {
     return {
       position: new Vector3(-17.5, 24.5, -13.5),
-      lookAt: new Vector3(7, 10, 1.5),
+      lookAt: new Vector3(-14.5, 37.5, -8.5),
     };
   }
 
@@ -842,7 +839,7 @@ function getFirstPersonSpawnPose(): SpawnPose | undefined {
 
   return {
     position: new Vector3(-17.5, 24.5, -13.5),
-    lookAt: new Vector3(7, 10, 1.5),
+    lookAt: new Vector3(-14.5, 37.5, -8.5),
   };
 }
 

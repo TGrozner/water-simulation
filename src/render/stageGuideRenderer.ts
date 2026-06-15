@@ -23,10 +23,12 @@ type StageGuideStyle = {
   opacity?: number;
   scale?: number;
   wireframe?: boolean;
+  depthTest?: boolean;
   outline?: boolean;
   outlineColor?: number;
   outlineOpacity?: number;
   outlineScale?: number;
+  outlineDepthTest?: boolean;
 };
 
 export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = {}): StageGuideRenderer {
@@ -34,10 +36,12 @@ export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = 
   const opacity = style.opacity ?? 0.32;
   const scale = style.scale ?? 1;
   const wireframe = style.wireframe ?? true;
+  const depthTest = style.depthTest ?? true;
   const outline = style.outline ?? false;
   const outlineColor = style.outlineColor ?? color;
   const outlineOpacity = style.outlineOpacity ?? 0.88;
   const outlineScale = style.outlineScale ?? scale * 1.02;
+  const outlineDepthTest = style.outlineDepthTest ?? depthTest;
   const group = new Group();
   const fillMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
   const outlineMeshes: LineSegments<EdgesGeometry, LineBasicMaterial>[] = [];
@@ -46,8 +50,8 @@ export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = 
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
-      ensureMeshCount(group, fillMeshes, boxes.length, color, opacity, wireframe);
-      ensureOutlineCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity);
+      ensureMeshCount(group, fillMeshes, boxes.length, color, opacity, wireframe, depthTest);
+      ensureOutlineCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity, outlineDepthTest);
 
       for (let i = 0; i < fillMeshes.length; i += 1) {
         const mesh = fillMeshes[i];
@@ -87,6 +91,7 @@ function ensureMeshCount(
   color: number,
   opacity: number,
   wireframe: boolean,
+  depthTest: boolean,
 ): void {
   while (meshes.length < count) {
     const mesh = new Mesh(
@@ -96,7 +101,7 @@ function ensureMeshCount(
         transparent: true,
         opacity,
         wireframe,
-        depthTest: true,
+        depthTest,
         depthWrite: false,
       }),
     );
@@ -116,6 +121,7 @@ function ensureOutlineCount(
   count: number,
   color: number,
   opacity: number,
+  depthTest: boolean,
 ): void {
   while (meshes.length < count) {
     const mesh = new LineSegments(
@@ -124,7 +130,7 @@ function ensureOutlineCount(
         color,
         transparent: true,
         opacity,
-        depthTest: true,
+        depthTest,
         depthWrite: false,
       }),
     );

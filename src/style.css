@@ -128,10 +128,6 @@ canvas {
   bottom: 12px;
 }
 
-.debug-ui-visible .fps-reticle {
-  display: none;
-}
-
 .debug-panel {
   position: fixed;
   top: 12px;

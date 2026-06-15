@@ -107,6 +107,7 @@ function updateGamePanel(
   const resetButton = panel.querySelector<HTMLButtonElement>('[data-game-action="reset"]');
   const nextButton = panel.querySelector<HTMLButtonElement>('[data-game-action="next"]');
   const stageBar = panel.querySelector<HTMLElement>("[data-game-stage-bar]");
+  const levelSelect = panel.querySelector<HTMLElement>(".game-panel-level-select");
   const routeLabel = panel.querySelector<HTMLElement>("[data-game-route-label]");
   const routeValue = panel.querySelector<HTMLElement>('[data-game-metric="route"]');
   const pathWaterLabel = panel.querySelector<HTMLElement>("[data-game-path-water-label]");
@@ -128,10 +129,13 @@ function updateGamePanel(
   const isManualStage = progress.stageProgress.activeStageIsManual;
   const hasHazards = progress.level.hazardStages.length > 0;
 
-  setText(panel, "[data-game-level-count]", `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
+  setText(panel, "[data-game-level-count]", GAME_LEVELS.length === 1 ? "Expedition" : `Level ${levelIndex + 1}/${GAME_LEVELS.length}`);
   setText(panel, "[data-game-title]", progress.level.name);
   setText(panel, "[data-game-brief]", progress.level.brief);
   updateLevelSelect(panel, levelIndex, bestScores);
+  if (levelSelect) {
+    levelSelect.hidden = GAME_LEVELS.length <= 1;
+  }
   setText(
     panel,
     "[data-game-stage-label]",
@@ -213,7 +217,8 @@ function updateGamePanel(
 
   if (nextButton) {
     nextButton.disabled = !progress.complete;
-    nextButton.textContent = levelIndex >= GAME_LEVELS.length - 1 ? "Restart slice" : "Next level";
+    nextButton.textContent =
+      GAME_LEVELS.length === 1 ? "Restart expedition" : levelIndex >= GAME_LEVELS.length - 1 ? "Restart slice" : "Next level";
   }
 }
 
