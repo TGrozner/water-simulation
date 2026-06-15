@@ -19,6 +19,9 @@ const VOLUME_CORRECTION_EPSILON = 0.000_000_1;
 const PIPE_FLUX_INERTIA = 0.52;
 const PIPE_REVERSE_FLUX_INERTIA = 0.14;
 const PIPE_FLUX_RATE_MULTIPLIER = 1.75;
+const PIPE_MOMENTUM_MAX_ADVERSE_HEAD_MULTIPLIER = 3;
+const PIPE_MOMENTUM_HEADROOM = 0.08;
+const PIPE_MOMENTUM_HEADROOM_SCALE = 0.35;
 const FLOW_VECTOR_DECAY = 0.68;
 const FLOW_VECTOR_CLEAR_EPSILON = 0.000_1;
 const FLOW_VECTOR_LIMIT = 2.5;
@@ -409,11 +412,18 @@ function getLateralTransfer(
   const targetHeadY = Math.max(targetSurfaceY, candidate.portalBottomY);
   const headDelta = sourceSurfaceY - targetHeadY;
   const signedPreviousFlux = getSignedPipeFlux(world, source, candidate.span);
-  if (headDelta <= config.minFlow && signedPreviousFlux <= config.minFlow) {
+  const forwardMomentum = Math.max(0, signedPreviousFlux);
+  const canUseForwardMomentum = forwardMomentum > config.minFlow && headDelta > 0;
+  const canUseAdverseMomentum =
+    forwardMomentum > config.minFlow && headDelta < 0 && headDelta >= -config.minFlow * PIPE_MOMENTUM_MAX_ADVERSE_HEAD_MULTIPLIER;
+  if (headDelta <= config.minFlow && !canUseAdverseMomentum) {
     return { amount: 0, flux: 0 };
   }
 
-  const maxTargetSurfaceY = Math.min(candidate.span.topY + 1, sourceSurfaceY);
+  const momentumHeadroom = canUseAdverseMomentum
+    ? Math.min(PIPE_MOMENTUM_HEADROOM, forwardMomentum * PIPE_MOMENTUM_HEADROOM_SCALE)
+    : 0;
+  const maxTargetSurfaceY = Math.min(candidate.span.topY + 1, sourceSurfaceY + momentumHeadroom);
   const targetCapacityBelowSource = Math.max(0, maxTargetSurfaceY - targetSurfaceY);
   if (targetCapacityBelowSource <= EPSILON) {
     return { amount: 0, flux: 0 };
@@ -435,7 +445,10 @@ function getLateralTransfer(
   );
   const inertialTransfer = Math.max(
     0,
-    pressureTransfer + signedPreviousFlux * (signedPreviousFlux > 0 ? PIPE_FLUX_INERTIA : PIPE_REVERSE_FLUX_INERTIA),
+    pressureTransfer +
+      (canUseForwardMomentum || canUseAdverseMomentum
+        ? forwardMomentum * (headDelta >= 0 ? PIPE_FLUX_INERTIA : PIPE_REVERSE_FLUX_INERTIA)
+        : 0),
   );
   const transfer = Math.min(
     inertialTransfer,

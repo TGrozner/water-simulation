@@ -823,6 +823,7 @@ function runEdgeCaseHarness(): void {
   assertWaterTransfersThroughOverlappingPortal();
   assertWaterOutflowSplitsAcrossEqualPortals();
   assertWaterFluxMetadataTracksLateralTransfer();
+  assertPipeMomentumCarriesAcrossSmallAdverseHead();
   assertWaterSurfaceMetadataTracksMotion();
   assertContinuousWaterSurfaceMeshIsFinite();
   assertWaterParticleCuesFollowMotion();
@@ -1098,6 +1099,47 @@ function assertWaterFluxMetadataTracksLateralTransfer(): void {
   runUntilStable(world, waterConfig, baselineWater, 320, "edge/flux-metadata");
   assert(world.waterFlux.size === 0, `edge/flux-metadata: expected pipe flux to clear at rest, got ${world.waterFlux.size}`);
   assertSmallWorldConserved(world, baselineWater, "edge/flux-metadata");
+}
+
+function assertPipeMomentumCarriesAcrossSmallAdverseHead(): void {
+  const world = createEmptyWorld(2, 1, 1);
+  setWater(world, 0, 0, 0, 1);
+  wakeCell(world, 0, 0, 0);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const initialStats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+  assert(initialStats.movedVolume > 0, "edge/pipe-momentum: expected initial lateral flow");
+  const initialStoredFluxCount = world.waterFlux.size;
+  assert(initialStoredFluxCount === 1, `edge/pipe-momentum: expected one stored pipe flux, got ${initialStoredFluxCount}`);
+
+  setWater(world, 0, 0, 0, 0.49);
+  setWater(world, 1, 0, 0, 0.51);
+  wakeCell(world, 0, 0, 0);
+  wakeCell(world, 1, 0, 0);
+  const rightBeforeMomentum = world.water[index(world, 1, 0, 0)];
+  const momentumStats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+  const rightAfterMomentum = world.water[index(world, 1, 0, 0)];
+
+  assert(
+    momentumStats.movedVolume > waterConfig.minFlow,
+    `edge/pipe-momentum: expected stored flux to move water over a small adverse head, got moved=${momentumStats.movedVolume.toFixed(
+      6,
+    )}`,
+  );
+  assert(
+    rightAfterMomentum > rightBeforeMomentum,
+    `edge/pipe-momentum: expected right cell to receive inertial flow (${rightBeforeMomentum.toFixed(
+      4,
+    )} -> ${rightAfterMomentum.toFixed(4)})`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/pipe-momentum");
+  runUntilStable(world, waterConfig, baselineWater, 48, "edge/pipe-momentum");
+  const storedFluxCount = world.waterFlux.size;
+  assert(storedFluxCount === 0, `edge/pipe-momentum: expected stored flux to decay, got ${storedFluxCount}`);
+  assert(world.activeCells.size === 0, `edge/pipe-momentum: expected active cells to settle, got ${world.activeCells.size}`);
+  runFlowVectorsUntilSettled(world, waterConfig, baselineWater, 80, "edge/pipe-momentum");
+  assert(totalWaterFlowMagnitude(world) <= EPSILON, "edge/pipe-momentum: expected flow vectors to settle");
 }
 
 function assertWaterSurfaceMetadataTracksMotion(): void {
@@ -1493,6 +1535,26 @@ function runSurfaceUntilSettled(
   }
 
   assert(false, `${context}: expected water surface motion to settle within ${maxTicks} ticks`);
+}
+
+function runFlowVectorsUntilSettled(
+  world: VoxelWorld,
+  waterConfig: ReturnType<typeof cloneTuningPreset>["waterConfig"],
+  baselineWater: number,
+  maxTicks: number,
+  context: string,
+): void {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+    assert(stats.movedVolume <= EPSILON, `${context}: expected no volume movement during flow-vector settle, got ${stats.movedVolume}`);
+    scanWorldWater(world, baselineWater, 0.0001, `${context}: flow-vector settle ${tick}`);
+
+    if (world.activeFlowCells.size === 0 && totalWaterFlowMagnitude(world) <= EPSILON) {
+      return;
+    }
+  }
+
+  assert(false, `${context}: expected water flow vectors to settle within ${maxTicks} ticks`);
 }
 
 function assertQuiescentAfterRewake(
