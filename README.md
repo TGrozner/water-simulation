@@ -25,6 +25,17 @@ https://tgrozner.github.io/water-simulation/
 
 Pull requests run the same build and simulation checks without deploying.
 
+Recommended local validation tiers:
+
+```bash
+npm run validate:build
+npm run validate:smoke
+npm run validate:standard
+```
+
+See `docs/validation.md` for what each tier covers and when to refresh visual
+baselines.
+
 Run the standard non-browser simulation harness:
 
 ```bash

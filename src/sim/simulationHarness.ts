@@ -5,7 +5,7 @@ import {
   type TuningPresetId,
   cloneTuningPreset,
 } from "./tuningPresets";
-import { Vector3 } from "three";
+import { PerspectiveCamera, Vector3 } from "three";
 import { coords, createEmptyWorld, index, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
 import { createWorld, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
 import { FIRST_PERSON_MOVEMENT_TEST_HOOKS } from "../input/firstPersonController";
@@ -812,7 +812,11 @@ function assertUnfinishedManualRouteDoesNotFail(
 function runEdgeCaseHarness(): void {
   assertWaterFallsThroughOpenedShaft();
   assertWaterLeaksThroughOpenedSideWall();
-  assertFirstPersonStepUpClearsVoxelLip();
+  assertFirstPersonCornerClearanceUsesRoundFootprint();
+  assertFirstPersonVelocitySmoothsInput();
+  assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly();
+  assertFirstPersonJumpIntoVoxelWallDoesNotMantleImmediately();
+  assertFirstPersonRisingJumpDoesNotSnapToVoxelTop();
 }
 
 function assertWaterFallsThroughOpenedShaft(): void {
@@ -874,7 +878,98 @@ function assertWaterLeaksThroughOpenedSideWall(): void {
   assert(leakedWater > 0.1, "edge/opened-side-wall: expected water to leak through opened wall");
 }
 
-function assertFirstPersonStepUpClearsVoxelLip(): void {
+function assertFirstPersonVelocitySmoothsInput(): void {
+  const velocity = new Vector3(0, 0, 0);
+  const target = new Vector3(7.2, 0, 0);
+
+  FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveVectorToward(velocity, target, 0.6);
+  assert(
+    velocity.x > 0 && velocity.x < target.x,
+    `first-person/smooth-input: expected eased acceleration below target speed, got ${velocity.x.toFixed(3)}`,
+  );
+
+  velocity.set(4, 0, 0);
+  FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveVectorToward(velocity, new Vector3(0, 0, 0), 0.7);
+  assert(
+    velocity.x > 0 && velocity.x < 4,
+    `first-person/smooth-input: expected eased deceleration, got ${velocity.x.toFixed(3)}`,
+  );
+
+  const blockedVelocity = FIRST_PERSON_MOVEMENT_TEST_HOOKS.dampBlockedVelocityAxis(4, 0, 0.2, 1 / 60);
+  assert(blockedVelocity === 0, `first-person/smooth-input: expected blocked axis to damp to zero, got ${blockedVelocity}`);
+}
+
+function assertFirstPersonCornerClearanceUsesRoundFootprint(): void {
+  const world = createEmptyWorld(8, 5, 8);
+  world.solid[index(world, 4, 1, 4)] = 1;
+
+  const diagonalCornerPosition = new Vector3(gridToWorldX(world, 3.75), 2.72, gridToWorldZ(world, 3.75));
+  assert(
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.canOccupy(diagonalCornerPosition, world),
+    "first-person/corner-clearance: diagonal voxel corner should not catch the round player footprint",
+  );
+
+  const sideTouchPosition = new Vector3(gridToWorldX(world, 3.75), 2.72, gridToWorldZ(world, 4.5));
+  assert(
+    !FIRST_PERSON_MOVEMENT_TEST_HOOKS.canOccupy(sideTouchPosition, world),
+    "first-person/corner-clearance: side overlap should still block the player",
+  );
+}
+
+function assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly(): void {
+  const world = createEmptyWorld(12, 5, 8);
+  for (let z = 0; z < world.depth; z += 1) {
+    for (let x = 0; x < world.width; x += 1) {
+      world.solid[index(world, x, 0, z)] = 1;
+    }
+  }
+  for (let x = 4; x <= 9; x += 1) {
+    world.solid[index(world, x, 1, 3)] = 1;
+  }
+
+  const startPosition = new Vector3(gridToWorldX(world, 3.3), 2.72, gridToWorldZ(world, 3.5));
+  assert(
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.canOccupy(startPosition, world),
+    "first-person/smooth-slope: expected start position to be open",
+  );
+
+  const blockedBody = { position: startPosition.clone() };
+  FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveHorizontally(world, blockedBody, 0.9, 0, false);
+  assert(
+    blockedBody.position.x < gridToWorldX(world, 3.8),
+    "first-person/smooth-slope: expected one-voxel slope to block without step-up",
+  );
+
+  const camera = new PerspectiveCamera();
+  camera.position.copy(startPosition);
+  const physics = {
+    position: startPosition.clone(),
+    verticalVelocity: 0,
+    horizontalVelocity: new Vector3(),
+    jumpQueued: false,
+    grounded: true,
+  };
+  const keys = new Set<string>(["forward"]);
+  let maxCameraRisePerFrame = 0;
+  for (let frame = 0; frame < 45; frame += 1) {
+    const previousCameraY = camera.position.y;
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.updateMovement(world, camera, keys, -Math.PI / 2, 1 / 60, physics);
+    maxCameraRisePerFrame = Math.max(maxCameraRisePerFrame, camera.position.y - previousCameraY);
+  }
+
+  assert(
+    physics.position.x > gridToWorldX(world, 4.25) && physics.position.y > 3.4,
+    `first-person/smooth-slope: expected grounded movement to climb a voxel slope, got ${physics.position.x.toFixed(
+      2,
+    )},${physics.position.y.toFixed(2)},${physics.position.z.toFixed(2)}`,
+  );
+  assert(
+    maxCameraRisePerFrame <= 0.12,
+    `first-person/smooth-slope: expected camera climb to be smoothed, max frame rise=${maxCameraRisePerFrame.toFixed(3)}`,
+  );
+}
+
+function assertFirstPersonJumpIntoVoxelWallDoesNotMantleImmediately(): void {
   const world = createEmptyWorld(8, 5, 8);
   for (let z = 0; z < world.depth; z += 1) {
     for (let x = 0; x < world.width; x += 1) {
@@ -883,29 +978,58 @@ function assertFirstPersonStepUpClearsVoxelLip(): void {
   }
   world.solid[index(world, 4, 1, 3)] = 1;
 
-  const startPosition = new Vector3(gridToWorldX(world, 3.3), 2.72, gridToWorldZ(world, 3.5));
-  assert(
-    FIRST_PERSON_MOVEMENT_TEST_HOOKS.canOccupy(startPosition, world),
-    "first-person/step-up: expected start position to be open",
-  );
+  const camera = new PerspectiveCamera();
+  camera.position.set(gridToWorldX(world, 3.3), 2.72, gridToWorldZ(world, 3.5));
+  const startPosition = camera.position.clone();
+  const physics = {
+    position: startPosition.clone(),
+    verticalVelocity: 0,
+    horizontalVelocity: new Vector3(),
+    jumpQueued: true,
+    grounded: true,
+  };
+  const keys = new Set<string>(["forward"]);
 
-  const blockedBody = { position: startPosition.clone() };
-  FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveHorizontally(world, blockedBody, 0.9, 0, false);
-  assert(
-    blockedBody.position.x < gridToWorldX(world, 3.8),
-    "first-person/step-up: expected one-voxel lip to prevent crossing without step-up",
-  );
+  for (let frame = 0; frame < 12; frame += 1) {
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.updateMovement(world, camera, keys, -Math.PI / 2, 1 / 60, physics);
+  }
 
-  const steppingBody = { position: startPosition.clone() };
+  const wallContactX = gridToWorldX(world, 4) - 0.3;
   assert(
-    FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveHorizontally(world, steppingBody, 0.9, 0, true),
-    "first-person/step-up: expected grounded movement to step over a one-voxel lip",
+    camera.position.x < wallContactX,
+    `first-person/no-jump-mantle: expected forward jump into a voxel wall to stay blocked early, got x=${camera.position.x.toFixed(
+      3,
+    )}`,
   );
+}
+
+function assertFirstPersonRisingJumpDoesNotSnapToVoxelTop(): void {
+  const world = createEmptyWorld(8, 5, 8);
+  for (let z = 0; z < world.depth; z += 1) {
+    for (let x = 0; x < world.width; x += 1) {
+      world.solid[index(world, x, 0, z)] = 1;
+    }
+  }
+  world.solid[index(world, 4, 1, 3)] = 1;
+
+  const camera = new PerspectiveCamera();
+  camera.position.set(gridToWorldX(world, 4.5), 3.72, gridToWorldZ(world, 3.5));
+  const startY = camera.position.y;
+  const physics = {
+    position: camera.position.clone(),
+    verticalVelocity: 3,
+    horizontalVelocity: new Vector3(),
+    jumpQueued: false,
+    grounded: false,
+  };
+
+  FIRST_PERSON_MOVEMENT_TEST_HOOKS.updateMovement(world, camera, new Set<string>(), 0, 1 / 60, physics);
+
   assert(
-    steppingBody.position.x > gridToWorldX(world, 3.8) && steppingBody.position.y > 3.4,
-    `first-person/step-up: expected player to move onto lip, got ${steppingBody.position.x.toFixed(
-      2,
-    )},${steppingBody.position.y.toFixed(2)},${steppingBody.position.z.toFixed(2)}`,
+    camera.position.y > startY && physics.verticalVelocity > 0,
+    `first-person/no-rise-snap: expected rising jump to keep moving upward near a voxel top, got y=${camera.position.y.toFixed(
+      3,
+    )}, vy=${physics.verticalVelocity.toFixed(3)}`,
   );
 }
 

@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "validate:build": "npm run build",
+    "validate:smoke": "npm run build && npm run test:sim:smoke && npm run screenshots:smoke",
+    "validate:standard": "npm run build && npm run test:sim:standard && npm run screenshots:smoke",
     "test:sim": "tsx src/sim/simulationHarness.ts --tier=standard",
     "test:sim:smoke": "tsx src/sim/simulationHarness.ts --tier=smoke",
     "test:sim:standard": "tsx src/sim/simulationHarness.ts --tier=standard",

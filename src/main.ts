@@ -87,6 +87,8 @@ const ACTIVE_STAGE_GUIDE_STYLE = {
   outlineScale: 1.08,
   outlineDepthTest: false,
 };
+type AimFeedbackState = "idle" | "dig" | "blocked" | "hazard";
+
 const initialUrlParams = new URLSearchParams(window.location.search);
 seedCaptureBestScores();
 
@@ -159,6 +161,8 @@ let lastGamePanelUpdateAt = Number.NEGATIVE_INFINITY;
 let lastGamePanelStatusKey = "";
 let lastDebugUiUpdateAt = Number.NEGATIVE_INFINITY;
 let debugUiVisible = getInitialDebugUiVisible();
+let aimFeedbackState: AimFeedbackState = "idle";
+let lastFpsControlHintKey = "";
 const initialWarmupStableTicks = runInitialSimulationWarmup();
 if (initialWarmupStableTicks > 0) {
   stableTicks = initialWarmupStableTicks;
@@ -178,6 +182,8 @@ if (firstPersonMode) {
   firstPersonController.reset(world, getFirstPersonSpawnPose());
 }
 sceneContext.controls.enabled = !firstPersonMode;
+const fpsControlHint = createFpsControlHint();
+syncBodyModeClasses();
 const digController = createDigController(
   sceneContext.renderer,
   sceneContext.camera,
@@ -1303,6 +1309,7 @@ function updateAimFeedback(): void {
   const hasBlockedTarget =
     firstPersonMode && previewState.targetCell !== null && (!previewState.digAllowed || previewState.cells.length === 0);
   const hasHazardTarget = hasDigTarget && previewState.cells.some((cellIndex) => isCellInVisibleHazard(cellIndex));
+  aimFeedbackState = hasHazardTarget ? "hazard" : hasDigTarget ? "dig" : hasBlockedTarget ? "blocked" : "idle";
 
   document.body.classList.toggle("is-dig-target", hasDigTarget);
   document.body.classList.toggle("is-blocked-dig-target", hasBlockedTarget);
@@ -1310,9 +1317,92 @@ function updateAimFeedback(): void {
 }
 
 function syncBodyModeClasses(): void {
+  const pointerLocked = firstPersonMode && firstPersonController.isPointerLocked();
+  const hasSceneAim = firstPersonMode && firstPersonController.hasSceneAim();
   document.body.classList.toggle("game-mode", gameModeEnabled);
   document.body.classList.toggle("debug-ui-visible", debugUiVisible);
   document.body.classList.toggle("debug-ui-hidden", !debugUiVisible);
+  document.body.classList.toggle("fps-mode-active", firstPersonMode);
+  document.body.classList.toggle("fps-pointer-locked", pointerLocked);
+  document.body.classList.toggle("fps-pointer-unlocked", firstPersonMode && !pointerLocked);
+  document.body.classList.toggle("fps-scene-aim", hasSceneAim);
+  updateFpsControlHint(pointerLocked, hasSceneAim);
+}
+
+function createFpsControlHint(): HTMLElement {
+  const hint = document.createElement("div");
+  hint.className = "fps-control-hint";
+  hint.hidden = true;
+  hint.innerHTML = `
+    <span class="fps-control-hint-status" data-fps-status>FPS active</span>
+    <span class="fps-control-hint-action" data-fps-action>Control pending</span>
+  `;
+  document.body.appendChild(hint);
+  return hint;
+}
+
+function updateFpsControlHint(pointerLocked: boolean, hasSceneAim: boolean): void {
+  const actionLabel = getFpsActionLabel(hasSceneAim);
+  const statusLabel = pointerLocked ? "FPS active" : "FPS ready";
+  const hintKey = [
+    firstPersonMode,
+    pointerLocked,
+    hasSceneAim,
+    aimFeedbackState,
+    actionLabel,
+    levelProgress?.complete ?? false,
+    levelProgress?.failed ?? false,
+  ].join(":");
+
+  if (hintKey === lastFpsControlHintKey) {
+    return;
+  }
+
+  lastFpsControlHintKey = hintKey;
+  fpsControlHint.hidden = !firstPersonMode;
+  if (!firstPersonMode) {
+    return;
+  }
+
+  fpsControlHint.dataset.lock = pointerLocked ? "locked" : hasSceneAim ? "free-aim" : "unlocked";
+  fpsControlHint.dataset.aim = aimFeedbackState;
+  setElementText(fpsControlHint, "[data-fps-status]", statusLabel);
+  setElementText(fpsControlHint, "[data-fps-action]", actionLabel);
+}
+
+function getFpsActionLabel(hasSceneAim: boolean): string {
+  if (!hasSceneAim) {
+    return "Control pending";
+  }
+
+  if (levelProgress?.complete) {
+    return "Route complete";
+  }
+
+  if (levelProgress?.failed) {
+    return "Route failed";
+  }
+
+  if (aimFeedbackState === "hazard") {
+    return "Spill risk target";
+  }
+
+  if (aimFeedbackState === "blocked") {
+    return "No carve target";
+  }
+
+  if (aimFeedbackState === "dig") {
+    return "Carve target";
+  }
+
+  return "Scanning rock";
+}
+
+function setElementText(root: ParentNode, selector: string, value: string): void {
+  const element = root.querySelector<HTMLElement>(selector);
+  if (element) {
+    element.textContent = value;
+  }
 }
 
 requestAnimationFrame(animate);

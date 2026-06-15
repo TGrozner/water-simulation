@@ -24,8 +24,20 @@ canvas {
   z-index: 14;
   width: 16px;
   height: 16px;
+  border: 1px solid rgba(234, 244, 255, 0.2);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(234, 244, 255, 0.05);
+  opacity: 0.8;
   pointer-events: none;
   transform: translate(-50%, -50%);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    opacity 120ms ease;
+}
+
+.fps-pointer-unlocked .fps-reticle {
+  opacity: 0.48;
 }
 
 .fps-reticle::before,
@@ -40,15 +52,33 @@ canvas {
   background: rgba(255, 194, 71, 0.95);
 }
 
+.is-dig-target .fps-reticle {
+  border-color: rgba(255, 194, 71, 0.46);
+  box-shadow: 0 0 0 4px rgba(255, 194, 71, 0.11);
+  opacity: 0.95;
+}
+
 .is-blocked-dig-target .fps-reticle::before,
 .is-blocked-dig-target .fps-reticle::after {
   background: rgba(143, 179, 222, 0.7);
+}
+
+.is-blocked-dig-target .fps-reticle {
+  border-color: rgba(143, 179, 222, 0.3);
+  box-shadow: 0 0 0 4px rgba(143, 179, 222, 0.08);
 }
 
 .is-hazard-target .fps-reticle::before,
 .is-hazard-target .fps-reticle::after {
   background: rgba(255, 74, 61, 0.98);
   box-shadow: 0 0 10px rgba(255, 74, 61, 0.72);
+}
+
+.is-hazard-target .fps-reticle {
+  border-color: rgba(255, 74, 61, 0.65);
+  box-shadow:
+    0 0 0 4px rgba(255, 74, 61, 0.14),
+    0 0 16px rgba(255, 74, 61, 0.42);
 }
 
 .fps-reticle::before {
@@ -63,6 +93,75 @@ canvas {
   left: 7px;
   width: 2px;
   height: 12px;
+}
+
+.fps-control-hint {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  max-width: min(360px, calc(100vw - 24px));
+  min-height: 32px;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(185, 215, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 13, 18, 0.76);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(8px);
+  color: #eaf4ff;
+  font-size: 12px;
+  line-height: 1.25;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+
+.fps-control-hint[hidden] {
+  display: none;
+}
+
+.fps-control-hint-status {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border: 1px solid rgba(255, 194, 71, 0.36);
+  border-radius: 999px;
+  color: #ffd27d;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.fps-control-hint-action {
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fps-control-hint[data-lock="locked"] .fps-control-hint-status {
+  border-color: rgba(157, 255, 181, 0.36);
+  color: #9dffb5;
+}
+
+.fps-control-hint[data-lock="unlocked"] .fps-control-hint-status,
+.fps-control-hint[data-lock="free-aim"] .fps-control-hint-status {
+  border-color: rgba(255, 194, 71, 0.42);
+  color: #ffd27d;
+}
+
+.fps-control-hint[data-aim="dig"] .fps-control-hint-action {
+  color: #ffd27d;
+}
+
+.fps-control-hint[data-aim="blocked"] .fps-control-hint-action {
+  color: #c9d7e8;
+}
+
+.fps-control-hint[data-aim="hazard"] .fps-control-hint-action {
+  color: #ffb0a8;
 }
 
 .debug-overlay {
