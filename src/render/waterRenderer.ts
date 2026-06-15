@@ -49,6 +49,8 @@ const SURFACE_SOLID_INSET = 0.18;
 const SURFACE_EDGE_JITTER = 0.045;
 const SURFACE_SHORE_DROP_DELTA = 0.2;
 const MIN_SURFACE_SPAN = 0.34;
+const POOL_SURFACE_MIN_COLUMN_DEPTH = 1.35;
+const SHALLOW_ROUTE_SURFACE_MIN_Y = 22;
 const CURTAIN_INSET = 0.1;
 const SIDE_CURTAIN_MIN_DROP = 0.45;
 const EDGE_SHEET_MIN_DROP = 0.42;
@@ -1243,6 +1245,10 @@ function shouldRenderWaterSurface(
     return false;
   }
 
+  if (gameplayMode && !debugMode && isShallowHighRouteSurface(world, x, y, z, amount)) {
+    return false;
+  }
+
   if (amount < FULL_WATER_RENDER_THRESHOLD) {
     return (
       !gameplayMode ||
@@ -1254,6 +1260,19 @@ function shouldRenderWaterSurface(
   }
 
   return true;
+}
+
+function isShallowHighRouteSurface(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
+  if (y < SHALLOW_ROUTE_SURFACE_MIN_Y || getWaterColumnDepth(world, x, y, z) >= POOL_SURFACE_MIN_COLUMN_DEPTH) {
+    return false;
+  }
+
+  const similarNeighbors = SIDE_DIRECTIONS.reduce((count, direction) => {
+    const neighborAmount = getWaterAmountAt(world, x + direction.dx, y, z + direction.dz);
+    return count + (neighborAmount >= Math.min(0.72, amount - EXPOSED_WATER_DELTA) ? 1 : 0);
+  }, 0);
+
+  return amount < FULL_WATER_RENDER_THRESHOLD || similarNeighbors < 3;
 }
 
 function shouldRenderWaterFoam(
