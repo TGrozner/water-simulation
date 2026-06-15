@@ -13,11 +13,12 @@
     "test:sim:smoke": "tsx src/sim/simulationHarness.ts --tier=smoke",
     "test:sim:standard": "tsx src/sim/simulationHarness.ts --tier=standard",
     "test:sim:full": "tsx src/sim/simulationHarness.ts --tier=full",
+    "test:sim:paranoid": "tsx src/sim/simulationHarness.ts --tier=full --paranoid",
     "screenshots": "tsx src/debug/captureScreenshots.ts",
-    "screenshots:smoke": "tsx src/debug/captureScreenshots.ts --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png",
+    "screenshots:smoke": "tsx src/debug/captureScreenshots.ts --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png,water-reservoir-drop.png,water-shoreline-basin.png,water-contact-tunnel.png,water-hazard-flow.png",
     "screenshots:full": "tsx src/debug/captureScreenshots.ts",
     "screenshots:update": "tsx src/debug/captureScreenshots.ts --update-baseline",
-    "screenshots:update:smoke": "tsx src/debug/captureScreenshots.ts --update-baseline --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png",
+    "screenshots:update:smoke": "tsx src/debug/captureScreenshots.ts --update-baseline --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png,water-reservoir-drop.png,water-shoreline-basin.png,water-contact-tunnel.png,water-hazard-flow.png",
     "preview": "vite preview"
   },
   "dependencies": {

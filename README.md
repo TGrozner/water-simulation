@@ -2,6 +2,11 @@
 
 Browser MVP for destructible voxel terrain and simple gameplay-oriented volumetric water flow.
 
+The water roadmap is intentionally ambitious: water should become a core
+simulation and rendering pillar, not a voxel effect hidden by polish. See
+`docs/water-next-gen.md` for the target architecture, visual direction, and
+validation standard.
+
 ## Run
 
 ```bash
@@ -202,9 +207,13 @@ storage.
 
 ## Known limitations
 
-- This is not a physically accurate fluid solver and intentionally avoids pressure, CFD, SPH, and particles.
-- Water does not push upward to equalize fully enclosed pressure systems.
-- The renderer is visual rather than physical: water surfaces, curtains, foam, and spray still derive from simple voxel water, not pressure or particles.
+- The main app uses the sparse hydraulic span graph by default; append
+  `?solver=legacy` to compare against the older sequential span solver.
+- Water is pressure/head based across open span portals, but it is still not a
+  dense CFD/FLIP/SPH solver and does not model sealed compressible pressure
+  systems.
+- The renderer is solver-aware but still not final: surfaces, curtains, foam,
+  and spray need to move further toward span-edge hydraulic events.
 - Terrain rendering is face-culled but not greedy-merged; individual voxel picking is preserved.
 - Orbit uses right mouse so left mouse can stay dedicated to digging.
 - The sonar is player/camera centered and top-down; it is a readability aid, not a full minimap.
@@ -218,6 +227,8 @@ storage.
 
 ## Recommended next steps
 
-- Add greedy meshing only if a separate voxel picking path is introduced.
+- Follow `docs/water-next-gen.md`: push renderer inputs toward span surfaces and
+  span-edge events, then profile generated-cavern carving bursts.
+- Add greedy terrain meshing only if a separate voxel picking path is introduced.
 - Add more shard-safe screenshot options if full visual validation becomes too slow for every local run.
 - Promote the seeded-cavern plan generator to more room variants only after the current seed has stronger playtest coverage.

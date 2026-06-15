@@ -1,4 +1,5 @@
 import type { InspectedCell } from "../input/cellInspector";
+import type { WaterStepDiagnostics } from "../sim/waterSimulation";
 
 export type DebugOverlayStats = {
   presetName: string;
@@ -22,6 +23,7 @@ export type DebugOverlayStats = {
   terrainUpdateMs: number;
   waterUpdateMs: number;
   simulationUpdateMs: number;
+  waterDiagnostics: WaterStepDiagnostics;
 };
 
 export function createDebugOverlay(): HTMLElement {
@@ -44,6 +46,9 @@ export function updateDebugOverlay(overlay: HTMLElement, stats: DebugOverlayStat
       <dt>Baseline</dt><dd>${stats.baselineWater.toFixed(2)}</dd>
       <dt>Water delta</dt><dd class="${stats.volumeWarning ? "warning" : ""}">${formatDelta(stats.volumeDelta)}</dd>
       <dt>Moved last frame</dt><dd>${stats.movedVolume.toFixed(3)}</dd>
+      <dt>Hydraulic graph</dt><dd>${stats.waterDiagnostics.activeSpanCount} spans / ${stats.waterDiagnostics.edgeCount} edges</dd>
+      <dt>Flux / head</dt><dd>${stats.waterDiagnostics.totalFluxMagnitude.toFixed(3)} / ${stats.waterDiagnostics.maxHeadDelta.toFixed(3)}</dd>
+      <dt>Volume correction</dt><dd>${stats.waterDiagnostics.conservationCorrection.toFixed(6)}</dd>
       <dt>Cell</dt><dd>${formatCell(stats.inspectedCell)}</dd>
       <dt>Ticks</dt><dd>${stats.tickCount}</dd>
       <dt>Status</dt><dd>${stats.stable ? `stable ${stats.stableTicks}` : "moving"}</dd>

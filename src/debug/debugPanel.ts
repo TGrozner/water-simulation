@@ -1,6 +1,6 @@
 import { SCENE_PRESET_DETAILS, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
 import { TUNING_PRESET_DETAILS, TUNING_PRESETS, type TuningPresetId } from "../sim/tuningPresets";
-import type { WaterSimulationConfig } from "../sim/waterSimulation";
+import type { WaterSimulationConfig, WaterStepDiagnostics } from "../sim/waterSimulation";
 
 export type DebugPanelSnapshot = {
   preset: ScenePresetId;
@@ -15,6 +15,7 @@ export type DebugPanelSnapshot = {
   maxVolumeDelta: number;
   stableTicks: number;
   lastMovedVolume: number;
+  waterDiagnostics: WaterStepDiagnostics;
   stable: boolean;
   nextOpeningLabel: string;
   openedStages: number;
@@ -129,6 +130,9 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
     <dl class="debug-panel-metrics">
       <dt>Ticks</dt><dd data-metric="ticks">0</dd>
       <dt>Last moved</dt><dd data-metric="lastMoved">0.000</dd>
+      <dt>Spans / edges</dt><dd data-metric="hydraulicGraph">0 / 0</dd>
+      <dt>Flux / head</dt><dd data-metric="hydraulicFlux">0.000 / 0.000</dd>
+      <dt>Correction</dt><dd data-metric="hydraulicCorrection">0.000000</dd>
       <dt>Sim update</dt><dd data-metric="simUpdate">0.0ms</dd>
       <dt>Max delta</dt><dd data-metric="maxDelta">0.000</dd>
       <dt>Idle ticks</dt><dd data-metric="idleTicks">0</dd>
@@ -170,6 +174,9 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
   const resetTuningButton = panel.elements.namedItem("resetTuning") as HTMLButtonElement;
   const ticksMetric = panel.querySelector<HTMLElement>('[data-metric="ticks"]');
   const lastMovedMetric = panel.querySelector<HTMLElement>('[data-metric="lastMoved"]');
+  const hydraulicGraphMetric = panel.querySelector<HTMLElement>('[data-metric="hydraulicGraph"]');
+  const hydraulicFluxMetric = panel.querySelector<HTMLElement>('[data-metric="hydraulicFlux"]');
+  const hydraulicCorrectionMetric = panel.querySelector<HTMLElement>('[data-metric="hydraulicCorrection"]');
   const simUpdateMetric = panel.querySelector<HTMLElement>('[data-metric="simUpdate"]');
   const maxDeltaMetric = panel.querySelector<HTMLElement>('[data-metric="maxDelta"]');
   const idleTicksMetric = panel.querySelector<HTMLElement>('[data-metric="idleTicks"]');
@@ -245,6 +252,12 @@ export function createDebugPanel(actions: DebugPanelActions): DebugPanel {
     updateStageList(stageList, snapshot.openingStageLabels, snapshot.openedStages);
     updateMetric(ticksMetric, String(snapshot.tickCount));
     updateMetric(lastMovedMetric, snapshot.lastMovedVolume.toFixed(3));
+    updateMetric(hydraulicGraphMetric, `${snapshot.waterDiagnostics.activeSpanCount} / ${snapshot.waterDiagnostics.edgeCount}`);
+    updateMetric(
+      hydraulicFluxMetric,
+      `${snapshot.waterDiagnostics.totalFluxMagnitude.toFixed(3)} / ${snapshot.waterDiagnostics.maxHeadDelta.toFixed(3)}`,
+    );
+    updateMetric(hydraulicCorrectionMetric, snapshot.waterDiagnostics.conservationCorrection.toFixed(6));
     updateMetric(simUpdateMetric, `${snapshot.lastSimulationMs.toFixed(1)}ms`);
     updateMetric(maxDeltaMetric, snapshot.maxVolumeDelta.toFixed(3));
     updateMetric(idleTicksMetric, String(snapshot.stableTicks));

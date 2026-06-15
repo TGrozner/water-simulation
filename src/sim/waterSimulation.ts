@@ -7,6 +7,7 @@ import {
   type CellCoords,
   type VoxelWorld,
 } from "../world/types";
+import { stepSparseHydraulicSpanGraph } from "./spanHydraulicGraph";
 import { recordSurfaceImpulse, stepWaterSurface } from "./waterSurface";
 
 const LATERAL_DIRECTIONS: CellCoords[] = [
@@ -57,6 +58,14 @@ type LateralTransferProposal = {
   transfer: LateralTransfer;
 };
 
+type MutableWaterStepDiagnostics = {
+  spanKeys: Set<string>;
+  edgeKeys: Set<string>;
+  totalFluxMagnitude: number;
+  maxHeadDelta: number;
+  conservationCorrection: number;
+};
+
 export type WaterSimulationConfig = {
   downFlowRate: number;
   sideFlowRate: number;
@@ -81,16 +90,36 @@ export type FlowEvent = {
   amount: number;
 };
 
+export type WaterSolverMode = "legacy-span" | "sparse-hydraulic-graph";
+
+export type WaterStepDiagnostics = {
+  activeSpanCount: number;
+  edgeCount: number;
+  totalFluxMagnitude: number;
+  maxHeadDelta: number;
+  conservationCorrection: number;
+};
+
+export const EMPTY_WATER_STEP_DIAGNOSTICS: WaterStepDiagnostics = {
+  activeSpanCount: 0,
+  edgeCount: 0,
+  totalFluxMagnitude: 0,
+  maxHeadDelta: 0,
+  conservationCorrection: 0,
+};
+
 export type WaterStepStats = {
   movedVolume: number;
   changedCells: number;
   flowChanged: boolean;
   surfaceChanged: boolean;
   flowEvents: FlowEvent[];
+  diagnostics: WaterStepDiagnostics;
 };
 
 export type WaterStepOptions = {
   collectFlowEvents?: boolean;
+  solver?: WaterSolverMode;
 };
 
 const EMPTY_FLOW_EVENTS: FlowEvent[] = [];
@@ -100,14 +129,39 @@ export function stepWaterSimulation(
   config: WaterSimulationConfig = DEFAULT_WATER_SIMULATION_CONFIG,
   options: WaterStepOptions = {},
 ): WaterStepStats {
+  const collectFlowEvents = options.collectFlowEvents ?? true;
+  if (options.solver === "sparse-hydraulic-graph") {
+    const stats = stepSparseHydraulicSpanGraph(world, config, { collectFlowEvents });
+    return {
+      movedVolume: stats.movedVolume,
+      changedCells: stats.changedCells,
+      flowChanged: stats.flowChanged,
+      surfaceChanged: stats.surfaceChanged,
+      flowEvents: stats.flowEvents,
+      diagnostics: {
+        activeSpanCount: stats.activeSpanCount,
+        edgeCount: stats.edgeCount,
+        totalFluxMagnitude: stats.totalFluxMagnitude,
+        maxHeadDelta: stats.maxHeadDelta,
+        conservationCorrection: stats.conservationCorrection,
+      },
+    };
+  }
+
   const currentCells = Array.from(world.activeCells).sort((a, b) => a - b);
   const nextActiveCells = new Set<number>();
   const activeSpans = new Map<string, ColumnSpan>();
   let movedVolume = 0;
   let changedCells = 0;
-  const collectFlowEvents = options.collectFlowEvents ?? true;
   const flowEvents: FlowEvent[] = collectFlowEvents ? [] : EMPTY_FLOW_EVENTS;
   const nextFlux = new Map<string, number>();
+  const diagnostics: MutableWaterStepDiagnostics = {
+    spanKeys: new Set(),
+    edgeKeys: new Set(),
+    totalFluxMagnitude: 0,
+    maxHeadDelta: 0,
+    conservationCorrection: 0,
+  };
 
   let flowChanged = decayWaterFlow(world);
   let surfaceChanged = false;
@@ -135,6 +189,7 @@ export function stepWaterSimulation(
     if (settled.changedCells > 0) {
       movedVolume += settled.movedVolume;
       changedCells += settled.changedCells;
+      diagnostics.conservationCorrection += settled.conservationCorrection;
       markSpanActive(world, span, settled.volume, nextActiveCells);
       if (collectFlowEvents && settled.movedVolume > EPSILON) {
         flowEvents.push({
@@ -151,12 +206,13 @@ export function stepWaterSimulation(
 
     if (settled.volume > EPSILON) {
       activeSpans.set(key, span);
+      diagnostics.spanKeys.add(key);
     }
   }
 
   const sortedSpans = Array.from(activeSpans.values()).sort((a, b) => getSpanSurfaceY(world, b) - getSpanSurfaceY(world, a));
   for (const span of sortedSpans) {
-    const result = flowSpanLaterally(world, span, config, flowEvents, collectFlowEvents, nextActiveCells, nextFlux);
+    const result = flowSpanLaterally(world, span, config, flowEvents, collectFlowEvents, nextActiveCells, nextFlux, diagnostics);
     movedVolume += result.movedVolume;
     changedCells += result.changedCells;
     flowChanged = result.flowChanged || flowChanged;
@@ -181,6 +237,13 @@ export function stepWaterSimulation(
     flowChanged,
     surfaceChanged,
     flowEvents,
+    diagnostics: {
+      activeSpanCount: diagnostics.spanKeys.size,
+      edgeCount: diagnostics.edgeKeys.size,
+      totalFluxMagnitude: diagnostics.totalFluxMagnitude,
+      maxHeadDelta: diagnostics.maxHeadDelta,
+      conservationCorrection: diagnostics.conservationCorrection,
+    },
   };
 }
 
@@ -188,7 +251,14 @@ function settleSpan(
   world: VoxelWorld,
   span: ColumnSpan,
   config: WaterSimulationConfig,
-): { volume: number; movedVolume: number; changedCells: number; flowChanged: boolean; surfaceChanged: boolean } {
+): {
+  volume: number;
+  movedVolume: number;
+  changedCells: number;
+  conservationCorrection: number;
+  flowChanged: boolean;
+  surfaceChanged: boolean;
+} {
   const volume = getSpanVolume(world, span);
   const fallRate = Math.max(0, config.downFlowRate);
   if (fallRate <= config.minFlow || volume <= EPSILON) {
@@ -196,6 +266,7 @@ function settleSpan(
       volume,
       movedVolume: 0,
       changedCells: 0,
+      conservationCorrection: 0,
       flowChanged: false,
       surfaceChanged: false,
     };
@@ -230,6 +301,7 @@ function settleSpan(
     volume,
     movedVolume,
     changedCells: result.changedCells,
+    conservationCorrection: result.conservationCorrection,
     flowChanged,
     surfaceChanged,
   };
@@ -243,6 +315,7 @@ function flowSpanLaterally(
   collectFlowEvents: boolean,
   nextActiveCells: Set<number>,
   nextFlux: Map<string, number>,
+  diagnostics: MutableWaterStepDiagnostics,
 ): { movedVolume: number; changedCells: number; flowChanged: boolean; surfaceChanged: boolean } {
   let movedVolume = 0;
   let changedCells = 0;
@@ -255,6 +328,11 @@ function flowSpanLaterally(
 
   const proposals: LateralTransferProposal[] = [];
   for (const candidate of getLateralCandidates(world, span)) {
+    const sourceSurfaceY = getSurfaceY(span, sourceVolume);
+    diagnostics.spanKeys.add(getSpanKey(span));
+    diagnostics.spanKeys.add(getSpanKey(candidate.span));
+    diagnostics.edgeKeys.add(getFluxEdge(span, candidate.span).key);
+    diagnostics.maxHeadDelta = Math.max(diagnostics.maxHeadDelta, Math.abs(sourceSurfaceY - candidate.targetHeadY));
     const targetVolume = getSpanVolume(world, candidate.span);
     const transfer = getLateralTransfer(world, span, sourceVolume, candidate, targetVolume, config);
     if (transfer.amount <= config.minFlow) {
@@ -295,6 +373,7 @@ function flowSpanLaterally(
 
   const sourceResult = setSpanVolume(world, span, sourceVolume - movedVolume);
   changedCells += sourceResult.changedCells;
+  diagnostics.conservationCorrection += sourceResult.conservationCorrection;
   markSpanActive(world, span, sourceVolume - movedVolume, nextActiveCells);
 
   for (const proposal of appliedTransfers) {
@@ -302,6 +381,8 @@ function flowSpanLaterally(
     const targetResult = setSpanVolume(world, candidate.span, targetVolume + transfer.amount);
     const targetSurfaceCellIndex = getSpanSurfaceCellIndex(world, candidate.span, targetVolume + transfer.amount);
     changedCells += targetResult.changedCells;
+    diagnostics.conservationCorrection += targetResult.conservationCorrection;
+    diagnostics.totalFluxMagnitude += transfer.amount;
 
     markSpanActive(world, candidate.span, targetVolume + transfer.amount, nextActiveCells);
     setSignedPipeFlux(nextFlux, span, candidate.span, transfer.flux, config.minFlow);
@@ -639,11 +720,12 @@ function setSpanVolume(
   world: VoxelWorld,
   span: ColumnSpan,
   volume: number,
-): { changedCells: number; redistributedVolume: number } {
+): { changedCells: number; redistributedVolume: number; conservationCorrection: number } {
   const clampedVolume = Math.min(getSpanCapacity(span), Math.max(0, volume));
   let remaining = clampedVolume;
   let changedCells = 0;
   let delta = 0;
+  let conservationCorrection = 0;
 
   for (let y = span.bottomY; y <= span.topY; y += 1) {
     const cellIndex = index(world, span.x, y, span.z);
@@ -662,6 +744,7 @@ function setSpanVolume(
     const corrected = applySpanVolumeCorrection(world, span, correction);
     if (corrected > 0) {
       delta += corrected;
+      conservationCorrection += corrected;
       changedCells += 1;
     }
   }
@@ -669,6 +752,7 @@ function setSpanVolume(
   return {
     changedCells,
     redistributedVolume: delta * 0.5,
+    conservationCorrection,
   };
 }
 
@@ -677,8 +761,9 @@ function writeSpanAmounts(
   span: ColumnSpan,
   amounts: number[],
   targetVolume: number,
-): { changedCells: number } {
+): { changedCells: number; conservationCorrection: number } {
   let changedCells = 0;
+  let conservationCorrection = 0;
 
   for (let y = span.bottomY; y <= span.topY; y += 1) {
     const cellIndex = index(world, span.x, y, span.z);
@@ -694,11 +779,12 @@ function writeSpanAmounts(
   if (Math.abs(correction) > VOLUME_CORRECTION_EPSILON) {
     const corrected = applySpanVolumeCorrection(world, span, correction);
     if (corrected > 0) {
+      conservationCorrection += corrected;
       changedCells += 1;
     }
   }
 
-  return { changedCells };
+  return { changedCells, conservationCorrection };
 }
 
 function applySpanVolumeCorrection(world: VoxelWorld, span: ColumnSpan, correction: number): number {

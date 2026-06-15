@@ -1,4 +1,5 @@
 import { stepWaterSimulation } from "./waterSimulation";
+import { buildSparseHydraulicSpanGraph, stepSparseHydraulicSpanGraph } from "./spanHydraulicGraph";
 import { getWaterMotionSample, getWaterParticleCue } from "./waterMotion";
 import { WATER_SURFACE_OFFSET_LIMIT, WATER_SURFACE_VELOCITY_LIMIT } from "./waterSurface";
 import {
@@ -44,7 +45,7 @@ type HarnessResult = {
 };
 
 type HarnessTier = "smoke" | "standard" | "full";
-type HarnessGroup = "edge" | "rules" | "contracts" | "game" | "progressive" | "routes" | "scenario";
+type HarnessGroup = "edge" | "solver" | "rules" | "contracts" | "game" | "progressive" | "routes" | "scenario";
 type HarnessOptions = {
   tier: HarnessTier;
   groups: readonly HarnessGroup[];
@@ -60,9 +61,9 @@ const STANDARD_WATER_SCAN_INTERVAL_TICKS = 25;
 const SMALL_WORLD_SCAN_CELL_LIMIT = 10_000;
 
 const HARNESS_GROUPS_BY_TIER: Record<HarnessTier, readonly HarnessGroup[]> = {
-  smoke: ["edge", "rules", "contracts"],
-  standard: ["edge", "rules", "contracts", "game", "progressive", "scenario"],
-  full: ["edge", "rules", "contracts", "game", "progressive", "routes", "scenario"],
+  smoke: ["edge", "solver", "rules", "contracts"],
+  standard: ["edge", "solver", "rules", "contracts", "game", "progressive", "scenario"],
+  full: ["edge", "solver", "rules", "contracts", "game", "progressive", "routes", "scenario"],
 };
 
 const ALL_HARNESS_GROUPS = Object.freeze(
@@ -78,6 +79,10 @@ function runHarness(): void {
 
   if (shouldRunGroup("edge")) {
     runEdgeCaseHarness();
+  }
+
+  if (shouldRunGroup("solver")) {
+    runSpanGraphPrototypeHarness();
   }
 
   if (shouldRunGroup("rules")) {
@@ -130,8 +135,7 @@ function runHarness(): void {
 function parseHarnessOptions(): HarnessOptions {
   const tier = parseHarnessTier(getArgValue("--tier") ?? "standard");
   const groups = parseHarnessGroups(getArgValue("--only")) ?? HARNESS_GROUPS_BY_TIER[tier];
-  const scanIntervalTicks =
-    tier === "full" || process.argv.includes("--paranoid") ? 1 : STANDARD_WATER_SCAN_INTERVAL_TICKS;
+  const scanIntervalTicks = process.argv.includes("--paranoid") ? 1 : STANDARD_WATER_SCAN_INTERVAL_TICKS;
 
   return {
     tier,
@@ -838,6 +842,264 @@ function runEdgeCaseHarness(): void {
   assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly();
   assertFirstPersonJumpIntoVoxelWallDoesNotMantleImmediately();
   assertFirstPersonRisingJumpDoesNotSnapToVoxelTop();
+}
+
+function runSpanGraphPrototypeHarness(): void {
+  assertSparseHydraulicGraphIncludesDryPortalTargets();
+  assertSparseHydraulicGraphSplitsOutflowSimultaneously();
+  assertSparseHydraulicGraphEqualizesRaisedPortal();
+  assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead();
+  assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft();
+  assertSparseHydraulicGraphDoesNotCrossNonOverlappingPortal();
+  assertSparseHydraulicGraphDoesNotLeakIntoDisconnectedOverhangPocket();
+  assertSparseHydraulicGraphEnumeratesStackedOverhangSpans();
+  assertSparseHydraulicGraphDiagnosticsAreFinite();
+  assertSparseHydraulicGraphConservesDuringGeneratedCavernWarmup();
+}
+
+function assertSparseHydraulicGraphIncludesDryPortalTargets(): void {
+  const world = createEmptyWorld(3, 1, 3);
+  setWater(world, 1, 0, 1, 0.6);
+  wakeCell(world, 1, 0, 1);
+
+  const graph = buildSparseHydraulicSpanGraph(world);
+
+  assert(graph.spans.length === 5, `solver/graph-build: expected source plus four dry neighbor spans, got ${graph.spans.length}`);
+  assert(graph.edges.length === 4, `solver/graph-build: expected four portal edges, got ${graph.edges.length}`);
+  assert(
+    graph.edges.every((edge) => Number.isFinite(edge.headDelta) && edge.aperture === 1),
+    "solver/graph-build: expected finite single-cell portal edges",
+  );
+}
+
+function assertSparseHydraulicGraphSplitsOutflowSimultaneously(): void {
+  const world = createEmptyWorld(3, 1, 3);
+  setWater(world, 1, 0, 1, 0.6);
+  wakeCell(world, 1, 0, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  const neighborWater = [
+    world.water[index(world, 0, 0, 1)],
+    world.water[index(world, 2, 0, 1)],
+    world.water[index(world, 1, 0, 0)],
+    world.water[index(world, 1, 0, 2)],
+  ];
+
+  assert(stats.activeSpanCount >= 5, `solver/split: expected source plus dry portal spans, got ${stats.activeSpanCount}`);
+  assert(stats.edgeCount >= 4, `solver/split: expected at least four graph edges, got ${stats.edgeCount}`);
+  assert(stats.movedVolume > 0.55, `solver/split: expected most source water to move, got ${stats.movedVolume.toFixed(4)}`);
+  assert(
+    Math.abs(stats.totalFluxMagnitude - stats.movedVolume) <= 0.0001,
+    `solver/split: flux ${stats.totalFluxMagnitude.toFixed(4)} did not match moved ${stats.movedVolume.toFixed(4)}`,
+  );
+  for (const amount of neighborWater) {
+    assert(amount > waterConfig.minFlow, `solver/split: expected every neighbor to receive water, got ${neighborWater.join(",")}`);
+    assert(
+      Math.abs(amount - neighborWater[0]) <= 0.0001,
+      `solver/split: expected symmetric split, got ${neighborWater.map((value) => value.toFixed(4)).join(",")}`,
+    );
+  }
+  assertSmallWorldConserved(world, baselineWater, "solver/split");
+}
+
+function assertSparseHydraulicGraphEqualizesRaisedPortal(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 2, 4);
+  for (let y = 0; y <= 2; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runSparseGraphUntilStable(world, waterConfig, baselineWater, 420, "solver/raised-portal");
+
+  const sourceWater = measureColumnWater(world, 1, 1, 0, 4);
+  const targetWater = measureColumnWater(world, 2, 1, 2, 4);
+  assert(
+    targetWater >= 0.45 && targetWater <= 0.55,
+    `solver/raised-portal: expected raised target span to hold about 0.5 water, got ${targetWater.toFixed(3)}`,
+  );
+  assert(
+    sourceWater >= 2.45 && sourceWater <= 2.55,
+    `solver/raised-portal: expected source span to hold about 2.5 water, got ${sourceWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "solver/raised-portal");
+}
+
+function assertSparseHydraulicGraphDiagnosticsAreFinite(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+
+  assert(stats.activeSpanCount >= 2, `solver/diagnostics: expected at least two spans, got ${stats.activeSpanCount}`);
+  assert(stats.edgeCount >= 1, `solver/diagnostics: expected at least one edge, got ${stats.edgeCount}`);
+  assert(stats.maxHeadDelta > 0, `solver/diagnostics: expected positive max head delta, got ${stats.maxHeadDelta}`);
+  for (const [name, value] of Object.entries(stats)) {
+    if (typeof value === "number") {
+      assert(Number.isFinite(value), `solver/diagnostics: expected finite ${name}, got ${value}`);
+      assert(value >= 0, `solver/diagnostics: expected non-negative ${name}, got ${value}`);
+    }
+  }
+  assertSmallWorldConserved(world, baselineWater, "solver/diagnostics");
+}
+
+function assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead(): void {
+  const world = createEmptyWorld(2, 1, 1);
+  setWater(world, 0, 0, 0, 1);
+  wakeCell(world, 0, 0, 0);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const initialStats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  assert(initialStats.movedVolume > 0, "solver/pipe-momentum: expected initial lateral flow");
+  assert(world.waterFlux.size === 1, `solver/pipe-momentum: expected one stored pipe flux, got ${world.waterFlux.size}`);
+
+  setWater(world, 0, 0, 0, 0.49);
+  setWater(world, 1, 0, 0, 0.51);
+  wakeCell(world, 0, 0, 0);
+  wakeCell(world, 1, 0, 0);
+  const rightBeforeMomentum = world.water[index(world, 1, 0, 0)];
+  const momentumStats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  const rightAfterMomentum = world.water[index(world, 1, 0, 0)];
+
+  assert(
+    momentumStats.movedVolume > waterConfig.minFlow,
+    `solver/pipe-momentum: expected stored flux to move water over a small adverse head, got ${momentumStats.movedVolume.toFixed(
+      6,
+    )}`,
+  );
+  assert(
+    rightAfterMomentum > rightBeforeMomentum,
+    `solver/pipe-momentum: expected right cell to receive inertial flow (${rightBeforeMomentum.toFixed(
+      4,
+    )} -> ${rightAfterMomentum.toFixed(4)})`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "solver/pipe-momentum");
+}
+
+function assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft(): void {
+  const world = createTwoColumnPortalWorld(2, 4, 0, 4);
+  for (let y = 2; y <= 4; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runSparseGraphUntilStable(world, waterConfig, baselineWater, 420, "solver/lower-adjacent-shaft");
+
+  const targetLowerWater = measureColumnWater(world, 2, 1, 0, 1);
+  const sourceWater = measureColumnWater(world, 1, 1, 2, 4);
+  assert(
+    targetLowerWater >= 1.95,
+    `solver/lower-adjacent-shaft: expected lower shaft to fill before equalizing, got ${targetLowerWater.toFixed(3)}`,
+  );
+  assert(
+    sourceWater >= 0.35 && sourceWater <= 0.65,
+    `solver/lower-adjacent-shaft: expected source head near target head, got ${sourceWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "solver/lower-adjacent-shaft");
+}
+
+function assertSparseHydraulicGraphDoesNotCrossNonOverlappingPortal(): void {
+  const world = createTwoColumnPortalWorld(3, 4, 0, 1);
+  setWater(world, 1, 3, 1, 1);
+  setWater(world, 1, 4, 1, 1);
+  wakeCell(world, 1, 3, 1);
+  wakeCell(world, 1, 4, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runSparseGraphUntilStable(world, waterConfig, baselineWater, 120, "solver/non-overlapping-portal");
+
+  const rightWater = measureColumnWater(world, 2, 1, 0, 1);
+  assert(
+    rightWater <= EPSILON,
+    `solver/non-overlapping-portal: expected disconnected neighbor span to stay dry, got ${rightWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "solver/non-overlapping-portal");
+}
+
+function assertSparseHydraulicGraphDoesNotLeakIntoDisconnectedOverhangPocket(): void {
+  const world = createSplitTargetPortalWorld(5);
+  setWater(world, 1, 0, 1, 1);
+  setWater(world, 1, 1, 1, 1);
+  setWater(world, 1, 2, 1, 0.4);
+  wakeCell(world, 1, 0, 1);
+  wakeCell(world, 1, 1, 1);
+  wakeCell(world, 1, 2, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runSparseGraphUntilStable(world, waterConfig, baselineWater, 860, "solver/disconnected-overhang-pocket");
+
+  const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
+  const upperTargetWater = measureColumnWater(world, 2, 1, 3, 4);
+  assert(
+    lowerTargetWater > 1,
+    `solver/disconnected-overhang-pocket: expected lower target span to receive water, got ${lowerTargetWater.toFixed(3)}`,
+  );
+  assert(
+    upperTargetWater <= EPSILON,
+    `solver/disconnected-overhang-pocket: expected upper target pocket to stay dry, got ${upperTargetWater.toFixed(3)}`,
+  );
+  assert(world.solid[index(world, 2, 2, 1)] === 1, "solver/disconnected-overhang-pocket: separator should stay solid");
+  assert(world.water[index(world, 2, 2, 1)] <= EPSILON, "solver/disconnected-overhang-pocket: separator should stay dry");
+  assertSmallWorldConserved(world, baselineWater, "solver/disconnected-overhang-pocket");
+}
+
+function assertSparseHydraulicGraphEnumeratesStackedOverhangSpans(): void {
+  const world = createSplitTargetPortalWorld(6);
+  for (let y = 0; y <= 4; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+  setWater(world, 1, 5, 1, 0.6);
+  wakeCell(world, 1, 5, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runSparseGraphUntilStable(world, waterConfig, baselineWater, 980, "solver/stacked-overhang-spans");
+
+  const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
+  const upperTargetWater = measureColumnWater(world, 2, 1, 3, 5);
+  assert(
+    lowerTargetWater >= 1.95,
+    `solver/stacked-overhang-spans: expected lower target span nearly full, got ${lowerTargetWater.toFixed(3)}`,
+  );
+  assert(
+    upperTargetWater >= 0.2 && upperTargetWater <= 0.45,
+    `solver/stacked-overhang-spans: expected upper target span to receive partial water, got ${upperTargetWater.toFixed(3)}`,
+  );
+  assert(world.solid[index(world, 2, 2, 1)] === 1, "solver/stacked-overhang-spans: separator should stay solid");
+  assert(world.water[index(world, 2, 2, 1)] <= EPSILON, "solver/stacked-overhang-spans: separator should stay dry");
+  assertSmallWorldConserved(world, baselineWater, "solver/stacked-overhang-spans");
+}
+
+function assertSparseHydraulicGraphConservesDuringGeneratedCavernWarmup(): void {
+  const world = createWorld("generated-cavern");
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
+  openSceneStage(world, "generated-cavern", 0);
+
+  for (let tick = 0; tick < 120; tick += 1) {
+    const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+    assert(stats.activeSpanCount >= 0, "solver/generated-cavern: expected non-negative active span count");
+    if (tick % 10 === 0) {
+      scanWorldWater(world, baselineWater, volumeTolerance, `solver/generated-cavern warmup ${tick}`);
+    }
+  }
+
+  scanWorldWater(world, baselineWater, volumeTolerance, "solver/generated-cavern");
 }
 
 function assertWaterFallsThroughOpenedShaft(): void {
@@ -1872,6 +2134,45 @@ function runUntilStable(
   }
 
   scanWorldWater(world, baselineWater, volumeTolerance, `${context}: final`, onVolumeDelta);
+  return movedVolume;
+}
+
+function runSparseGraphUntilStable(
+  world: VoxelWorld,
+  waterConfig: ReturnType<typeof cloneTuningPreset>["waterConfig"],
+  baselineWater: number,
+  maxTicks: number,
+  context: string,
+): number {
+  let movedVolume = 0;
+  let idleTicks = 0;
+  const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
+  const scanIntervalTicks = getWaterScanIntervalTicks(world);
+
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+    movedVolume += stats.movedVolume;
+    assert(Number.isFinite(stats.activeSpanCount), `${context}: tick ${tick}: invalid active span count`);
+    assert(Number.isFinite(stats.edgeCount), `${context}: tick ${tick}: invalid edge count`);
+    assert(Number.isFinite(stats.totalFluxMagnitude), `${context}: tick ${tick}: invalid total flux`);
+    assert(Number.isFinite(stats.maxHeadDelta), `${context}: tick ${tick}: invalid max head delta`);
+    assert(Number.isFinite(stats.conservationCorrection), `${context}: tick ${tick}: invalid conservation correction`);
+    if (shouldScanWaterTick(tick, scanIntervalTicks)) {
+      scanWorldWater(world, baselineWater, volumeTolerance, `${context}: tick ${tick}`);
+    }
+
+    if (world.activeCells.size === 0) {
+      idleTicks += 1;
+    } else {
+      idleTicks = 0;
+    }
+
+    if (idleTicks >= 4) {
+      break;
+    }
+  }
+
+  scanWorldWater(world, baselineWater, volumeTolerance, `${context}: final`);
   return movedVolume;
 }
 

@@ -22,6 +22,7 @@ const DEFAULT_CAPTURE_WAIT_MS = 5_000;
 const LARGE_SCENE_CAPTURE_WAIT_MS = 10_000;
 const BLANK_CAPTURE_RETRY_COUNT = 3;
 const CDP_CAPTURE_READY_TIMEOUT_MS = 25_000;
+const CDP_REQUEST_TIMEOUT_MS = 15_000;
 const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["generated-cavern"];
 type GameCapture = {
   url: string;
@@ -30,6 +31,26 @@ type GameCapture = {
 };
 
 const GAME_CAPTURES: GameCapture[] = [
+  {
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=1&warmupTicks=300&camera=fps&spawn=water-drop&debugUi=0&visualCapture=1`,
+    filename: "water-reservoir-drop.png",
+    timeoutMs: 1200,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins&debugUi=0&visualCapture=1`,
+    filename: "water-shoreline-basin.png",
+    timeoutMs: 5000,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
+    filename: "water-contact-tunnel.png",
+    timeoutMs: 5000,
+  },
+  {
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
+    filename: "water-hazard-flow.png",
+    timeoutMs: 5000,
+  },
   {
     url: `${BASE_URL}/?game=1&level=generated-cavern&camera=fps&spawn=overview`,
     filename: "game-generated-cavern-start.png",
@@ -40,12 +61,12 @@ const GAME_CAPTURES: GameCapture[] = [
     timeoutMs: 700,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=2800&warmupUntilStable=1&warmupMaxTicks=9000&camera=fps&spawn=basins`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins`,
     filename: "game-generated-cavern-complete.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&warmupUntilStable=1&warmupMaxTicks=9000&camera=fps&spawn=south-basin`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin`,
     filename: "game-generated-cavern-hazard.png",
     timeoutMs: 5000,
   },
@@ -68,12 +89,16 @@ async function run(): Promise<void> {
   await mkdir(ACTUAL_DIR, { recursive: true });
   await mkdir(DIFF_DIR, { recursive: true });
 
-  const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", HOST, "--port", String(PORT)], {
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const server = spawn(
+    process.execPath,
+    ["node_modules/vite/bin/vite.js", "--host", HOST, "--port", String(PORT), "--strictPort"],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
 
   try {
-    await waitForServer();
+    await waitForServer(server);
     const chrome = findChromeCommand();
 
     for (const preset of SCENE_PRESETS) {
@@ -309,16 +334,38 @@ function stopProcess(processToStop: ReturnType<typeof spawn>): Promise<void> {
   });
 }
 
-function waitForServer(): Promise<void> {
+function waitForServer(server: ReturnType<typeof spawn>): Promise<void> {
   const startedAt = Date.now();
+  let serverExit: { code: number | null; signal: NodeJS.Signals | null } | null = null;
 
   return new Promise((resolve, reject) => {
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      serverExit = { code, signal };
+    };
+    server.once("exit", onExit);
+
     const poll = () => {
+      if (serverExit) {
+        server.off("exit", onExit);
+        reject(new Error(`Vite server exited before capture startup at ${BASE_URL} code=${serverExit.code} signal=${serverExit.signal}`));
+        return;
+      }
+
       get(BASE_URL, (response) => {
         response.resume();
-        resolve();
+        setTimeout(() => {
+          if (serverExit) {
+            server.off("exit", onExit);
+            reject(new Error(`Vite server exited after port probe at ${BASE_URL} code=${serverExit.code} signal=${serverExit.signal}`));
+            return;
+          }
+
+          server.off("exit", onExit);
+          resolve();
+        }, 250);
       }).on("error", () => {
         if (Date.now() - startedAt > 10_000) {
+          server.off("exit", onExit);
           reject(new Error(`Vite server did not start at ${BASE_URL}`));
           return;
         }
@@ -394,6 +441,11 @@ async function captureWithCdp(chrome: string, url: string, outputPath: string, t
   ];
   const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"] });
   let stderr = "";
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    browser.kill("SIGKILL");
+  }, CAPTURE_TIMEOUT_MS);
   browser.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
   });
@@ -421,8 +473,12 @@ async function captureWithCdp(chrome: string, url: string, outputPath: string, t
     await cdp.send("Target.closeTarget", { targetId });
     cdp.close();
   } catch (error) {
+    if (timedOut) {
+      throw new Error(`CDP screenshot timed out after ${CAPTURE_TIMEOUT_MS}ms for ${url}\n${stderr}`);
+    }
     throw new Error(`CDP screenshot failed for ${url}: ${String(error)}\n${stderr}`);
   } finally {
+    clearTimeout(timeout);
     await stopProcess(browser);
   }
 }
@@ -452,6 +508,7 @@ type CdpMessage = {
 type PendingCdpRequest = {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
 };
 
 type CdpClient = ReturnType<typeof createCdpClient>;
@@ -470,6 +527,7 @@ function createCdpClient(ws: WebSocket) {
       }
 
       pending.delete(message.id);
+      clearTimeout(request.timeout);
       if (message.error) {
         request.reject(new Error(JSON.stringify(message.error)));
         return;
@@ -496,11 +554,20 @@ function createCdpClient(ws: WebSocket) {
   });
 
   ws.addEventListener("error", () => {
+    rejectPendingRequests("CDP websocket error");
+  });
+
+  ws.addEventListener("close", () => {
+    rejectPendingRequests("CDP websocket closed");
+  });
+
+  function rejectPendingRequests(message: string): void {
     for (const [id, request] of pending) {
       pending.delete(id);
-      request.reject(new Error("CDP websocket error"));
+      clearTimeout(request.timeout);
+      request.reject(new Error(message));
     }
-  });
+  }
 
   return {
     open: () =>
@@ -518,7 +585,11 @@ function createCdpClient(ws: WebSocket) {
 
       ws.send(JSON.stringify(payload));
       return new Promise<T>((resolve, reject) => {
-        pending.set(id, { resolve: resolve as (value: unknown) => void, reject });
+        const timeout = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`CDP request ${method} timed out after ${CDP_REQUEST_TIMEOUT_MS}ms`));
+        }, CDP_REQUEST_TIMEOUT_MS);
+        pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeout });
       });
     },
     throwIfRuntimeFailed: (url: string) => {
@@ -557,7 +628,7 @@ async function waitForRenderedPage(cdp: CdpClient, sessionId: string): Promise<v
       "Runtime.evaluate",
       {
         expression:
-          'document.readyState === "complete" && document.querySelectorAll("canvas").length > 0 && Boolean(document.body?.innerText?.trim())',
+          'document.readyState === "complete" && Array.from(document.querySelectorAll("canvas")).some((canvas) => canvas.clientWidth > 0 && canvas.clientHeight > 0)',
         returnByValue: true,
       },
       sessionId,
@@ -581,7 +652,8 @@ function getCdpSettleWaitMs(timeoutMs: number): number {
 }
 
 function shouldUseCdpFirst(outputPath: string, timeoutMs: number): boolean {
-  return timeoutMs >= LARGE_SCENE_CAPTURE_WAIT_MS || getCaptureFilename(outputPath).startsWith("game-");
+  const filename = getCaptureFilename(outputPath);
+  return timeoutMs >= LARGE_SCENE_CAPTURE_WAIT_MS || filename.startsWith("game-") || filename.startsWith("water-");
 }
 
 function getCaptureProfilePath(outputPath: string): string {

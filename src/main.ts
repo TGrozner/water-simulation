@@ -36,7 +36,14 @@ import {
   saveCustomTuning as saveStoredCustomTuning,
   type StoredCustomTuning,
 } from "./sim/customTuningStorage";
-import { stepWaterSimulation, type FlowEvent, type WaterSimulationConfig } from "./sim/waterSimulation";
+import {
+  EMPTY_WATER_STEP_DIAGNOSTICS,
+  stepWaterSimulation,
+  type FlowEvent,
+  type WaterSimulationConfig,
+  type WaterSolverMode,
+  type WaterStepDiagnostics,
+} from "./sim/waterSimulation";
 import {
   cloneTuningPreset,
   DEFAULT_DIG_RADIUS,
@@ -92,6 +99,7 @@ type AimFeedbackState = "idle" | "dig" | "blocked" | "hazard";
 
 const initialUrlParams = new URLSearchParams(window.location.search);
 const captureMode = initialUrlParams.get("capture") === "1";
+const visualCaptureMode = initialUrlParams.get("visualCapture") === "1";
 seedCaptureBestScores();
 
 let gameModeEnabled = getInitialGameModeEnabled();
@@ -125,6 +133,7 @@ const initialTuningPreset = getInitialTuningPreset();
 let currentTuningPreset: TuningPresetId | "custom" = initialTuningPreset;
 let activeTuning = cloneTuningPreset(initialTuningPreset);
 let waterConfig: WaterSimulationConfig = { ...activeTuning.waterConfig };
+let waterSolverMode: WaterSolverMode = getInitialWaterSolverMode();
 let simStepsPerFrame = activeTuning.simStepsPerFrame;
 let hasSavedCustomTuning = loadStoredCustomTuning() !== null;
 let bestScores: BestScoresByLevel = loadBestScores();
@@ -144,6 +153,7 @@ const inputState: InputState = {
 
 let queuedStep = false;
 let movedLastFrame = 0;
+let lastWaterDiagnostics: WaterStepDiagnostics = { ...EMPTY_WATER_STEP_DIAGNOSTICS };
 let lastSimulationMs = 0;
 let tickCount = 0;
 let scoreStartTick = 0;
@@ -221,6 +231,7 @@ const debugPanel = createDebugPanel({
     maxVolumeDelta,
     stableTicks,
     lastMovedVolume: movedLastFrame,
+    waterDiagnostics: lastWaterDiagnostics,
     stable: isStable(),
     nextOpeningLabel: getNextOpeningLabel(),
     openedStages: openedStageCount,
@@ -627,6 +638,7 @@ function resetWorld(): void {
   lastGamePanelStatusKey = "";
   maxVolumeDelta = 0;
   stableTicks = 0;
+  lastWaterDiagnostics = { ...EMPTY_WATER_STEP_DIAGNOSTICS };
   baselineWaterVolume = totalWater(world);
   levelProgress = evaluateCurrentLevelProgress(false, baselineWaterVolume);
   recentFlows = new Map<number, RecentFlow>();
@@ -817,6 +829,13 @@ function getFirstPersonSpawnPose(): SpawnPose | undefined {
     };
   }
 
+  if (spawn === "water-drop") {
+    return {
+      position: new Vector3(-15.5, 20.7, -5.5),
+      lookAt: new Vector3(-20, 18, -6),
+    };
+  }
+
   if (spawn === "south-basin") {
     return {
       position: new Vector3(22.5, 8.75, -11.5),
@@ -867,6 +886,15 @@ function getInitialTuningPreset(): TuningPresetId {
   return DEFAULT_TUNING_PRESET_ID;
 }
 
+function getInitialWaterSolverMode(): WaterSolverMode {
+  const requestedSolver = initialUrlParams.get("solver");
+  if (requestedSolver === "legacy" || requestedSolver === "legacy-span") {
+    return "legacy-span";
+  }
+
+  return "sparse-hydraulic-graph";
+}
+
 function getInitialSliceZ(): number {
   const requestedSlice = Number.parseInt(initialUrlParams.get("sliceZ") ?? "31", 10);
   return Number.isFinite(requestedSlice) ? requestedSlice : 31;
@@ -891,7 +919,8 @@ function runInitialSimulationWarmup(): number {
   let idleTicks = 0;
 
   for (let i = 0; i < maxWarmupTicks; i += 1) {
-    stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+    const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false, solver: waterSolverMode });
+    lastWaterDiagnostics = stats.diagnostics;
     tickCount += 1;
     if (world.activeCells.size === 0) {
       idleTicks += 1;
@@ -1164,8 +1193,9 @@ function animate(now: number): void {
     const collectFlowEvents = inputState.debugWater && inputState.showFlowDebug;
     let waterChanged = false;
     for (let i = 0; i < stepCount; i += 1) {
-      const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents });
+      const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents, solver: waterSolverMode });
       movedLastFrame += stats.movedVolume;
+      lastWaterDiagnostics = stats.diagnostics;
       recordFlowEvents(stats.flowEvents);
       if (
         stats.movedVolume > 0 ||
@@ -1220,6 +1250,7 @@ function animate(now: number): void {
       volumeWarning,
       fps,
       movedVolume: movedLastFrame,
+      waterDiagnostics: lastWaterDiagnostics,
       inspectedCell: cellInspector.getCell(),
       tickCount,
       stableTicks,
@@ -1350,6 +1381,7 @@ function syncBodyModeClasses(): void {
   const pointerLocked = firstPersonMode && firstPersonController.isPointerLocked();
   const hasSceneAim = firstPersonMode && firstPersonController.hasSceneAim();
   document.body.classList.toggle("game-mode", gameModeEnabled);
+  document.body.classList.toggle("visual-capture-mode", visualCaptureMode);
   document.body.classList.toggle("debug-ui-visible", debugUiVisible);
   document.body.classList.toggle("debug-ui-hidden", !debugUiVisible);
   document.body.classList.toggle("fps-mode-active", firstPersonMode);

@@ -222,6 +222,13 @@ canvas {
   display: none;
 }
 
+.visual-capture-mode .fps-control-hint,
+.visual-capture-mode .fps-reticle,
+.visual-capture-mode .game-panel,
+.visual-capture-mode .sonar-panel {
+  display: none;
+}
+
 .debug-ui-visible .sonar-panel {
   left: 12px;
   bottom: 12px;
