@@ -13,7 +13,7 @@ import {
   RepeatWrapping,
   Scene,
 } from "three";
-import { getWaterMotionSample, getWaterParticleCue, type WaterParticleCue } from "../sim/waterMotion";
+import { getWaterMotionSample } from "../sim/waterMotion";
 import { getWaterSurfaceOffsetAt } from "../sim/waterSurface";
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
@@ -41,13 +41,12 @@ type SurfaceFootprint = { minX: number; maxX: number; minZ: number; maxZ: number
 
 const bodyDummy = new Object3D();
 const foamDummy = new Object3D();
-const sprayDummy = new Object3D();
 const FULL_WATER_RENDER_THRESHOLD = 0.96;
 const EXPOSED_WATER_DELTA = 0.05;
 const SURFACE_LIFT = 0.024;
-const SURFACE_WAVE_AMPLITUDE = 0.032;
-const SURFACE_MOTION_SCALE = 0.86;
-const SURFACE_FLOW_TILT_SCALE = 0.036;
+const SURFACE_WAVE_AMPLITUDE = 0.014;
+const SURFACE_MOTION_SCALE = 0.22;
+const SURFACE_FLOW_TILT_SCALE = 0.012;
 const SURFACE_MOTION_HEADROOM = 0.14;
 const SURFACE_SHORE_INSET = 0.085;
 const SURFACE_SOLID_INSET = 0.18;
@@ -61,7 +60,6 @@ const EDGE_SHEET_MIN_AMOUNT = 0.48;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
-const FLOW_FOAM_THRESHOLD = 0.16;
 const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
@@ -74,7 +72,7 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
   const geometry = new BoxGeometry(0.96, 1, 0.96);
   const foamGeometry = new CircleGeometry(0.5, 18);
   const sprayGeometry = new CircleGeometry(0.5, 10);
-  const surfaceRippleTexture = createWaterRippleTexture(0x91f7ff, 0x11677f);
+  const surfaceRippleTexture = createWaterRippleTexture(0xf6ffff, 0xb6dce4);
   const material = new MeshPhongMaterial({
     color: 0x32d5eb,
     emissive: 0x073d4d,
@@ -93,7 +91,7 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     shininess: 210,
     transparent: true,
     opacity: 0.58,
-    depthWrite: false,
+    depthWrite: true,
     side: DoubleSide,
     vertexColors: true,
     map: surfaceRippleTexture,
@@ -228,12 +226,12 @@ function updateWaterMesh(
   material.emissive.set(debugMode ? 0x126c7c : 0x073d4d);
   material.opacity = debugMode ? 0.45 : 0;
   material.colorWrite = debugMode;
-  surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x0b485a : 0x125d68);
-  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.58 : 0.72;
+  surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x062d38 : 0x125d68);
+  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.44 : 0.72;
   curtainMaterial.emissive.set(debugMode ? 0x125c78 : gameplayMode ? 0x062637 : 0x0b4057);
-  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.36 : 0.42;
-  foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.46 : 0.3;
-  sprayMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.56 : 0.3;
+  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.28 : 0.42;
+  foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.28 : 0.24;
+  sprayMaterial.opacity = 0;
   const layerSize = world.width * world.depth;
   renderer.bodyBatch.begin();
   renderer.foamBatch.begin();
@@ -271,25 +269,23 @@ function updateWaterMesh(
       }
     }
 
-    const fallingRibbon = shouldStartFallingRibbon(world, x, y, z, waterHeight);
-    const particleCue = gameplayMode && !debugMode ? getWaterParticleCue(world, x, y, z, amount) : null;
-    curtainFaceCount += appendWaterCurtains(
-      curtainPositions,
-      curtainColors,
-      world,
-      x,
-      y,
-      z,
-      waterHeight,
-      debugMode,
-      gameplayMode,
-    );
-    if (fallingRibbon && particleCue && particleCue.kind !== "none") {
-      sprayCount = appendWaterMist(renderer, world, x, y, z, waterHeight, particleCue, sprayCount);
+    if (debugMode || !gameplayMode) {
+      curtainFaceCount += appendWaterCurtains(
+        curtainPositions,
+        curtainColors,
+        world,
+        x,
+        y,
+        z,
+        waterHeight,
+        debugMode,
+        gameplayMode,
+      );
+    } else {
+      curtainFaceCount += appendGameplayWaterDrops(curtainPositions, curtainColors, world, x, y, z, waterHeight);
     }
 
     if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
-      const dropScore = getWaterDropScore(world, x, y, z, amount);
       const foamScale = getWaterFoamScale(world, x, y, z, amount);
       const foamStretch = 0.72 + getCellVariation(x, y + 17, z) * 0.34;
       foamDummy.position.set(center.x, y + waterHeight + 0.05, center.z);
@@ -298,12 +294,6 @@ function updateWaterMesh(
       foamDummy.updateMatrix();
       renderer.foamBatch.pushMatrix(foamDummy.matrix);
       foamCount += 1;
-
-      if (particleCue && particleCue.kind !== "none" && (dropScore >= 2 || particleCue.kind !== "jet")) {
-        sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount, particleCue);
-      }
-    } else if (particleCue && particleCue.kind === "jet") {
-      sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount, particleCue);
     }
   }
 
@@ -371,6 +361,49 @@ function appendWaterCurtains(
       appendFallingRibbon(positions, colors, world, x, z, topY, bottomY, "x", waterHeight);
       appendFallingRibbon(positions, colors, world, x, z, topY - 0.03, bottomY + 0.02, "z", waterHeight);
       faceCount += 2;
+    }
+  }
+
+  return faceCount;
+}
+
+function appendGameplayWaterDrops(
+  positions: number[],
+  colors: number[],
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  waterHeight: number,
+): number {
+  let faceCount = 0;
+  const topY = y + waterHeight + 0.01;
+  const activeDrop = hasStrongVerticalWaterDrop(world, x, y, z, waterHeight) && hasDownwardWaterMotion(world, x, y, z);
+
+  if (activeDrop && shouldStartFallingRibbon(world, x, y, z, waterHeight)) {
+    const bottomY = findFallingRibbonBottomY(world, x, y, z);
+    if (topY - bottomY >= 0.18) {
+      appendFallingRibbon(positions, colors, world, x, z, topY, bottomY, "x", waterHeight);
+      appendFallingRibbon(positions, colors, world, x, z, topY - 0.03, bottomY + 0.02, "z", waterHeight);
+      faceCount += 2;
+    }
+  }
+
+  if (!hasActiveWaterMotion(world, x, y, z) || waterHeight < EDGE_SHEET_MIN_AMOUNT) {
+    return faceCount;
+  }
+
+  for (const direction of SIDE_DIRECTIONS) {
+    const neighborX = x + direction.dx;
+    const neighborZ = z + direction.dz;
+    if (isSolidWaterNeighbor(world, neighborX, y, neighborZ)) {
+      continue;
+    }
+
+    const neighborAmount = getWaterAmountAt(world, neighborX, y, neighborZ);
+    if (neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP) {
+      appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight);
+      faceCount += 1;
     }
   }
 
@@ -534,80 +567,6 @@ function appendFallingRibbon(
   );
 }
 
-function appendWaterSpray(
-  renderer: WaterRenderer,
-  centerX: number,
-  topY: number,
-  centerZ: number,
-  x: number,
-  y: number,
-  z: number,
-  sprayCount: number,
-  amount: number,
-  cue: WaterParticleCue,
-): number {
-  const particleCount = Math.max(1, Math.min(7, Math.round(2 + cue.intensity * (cue.kind === "splash" ? 5 : 3))));
-  const spread = 0.24 + cue.intensity * 0.46;
-  const horizontalAngle = Math.atan2(cue.direction.z, cue.direction.x);
-  const sideX = -cue.direction.z;
-  const sideZ = cue.direction.x;
-
-  for (let i = 0; i < particleCount; i += 1) {
-    const variation = getCellVariation(x + i * 11, y + 19, z);
-    const sideOffset = (variation - 0.5) * spread;
-    const travel = (i / particleCount) * spread;
-    sprayDummy.position.set(
-      centerX + cue.direction.x * travel + sideX * sideOffset,
-      topY + cue.direction.y * (0.12 + travel) - i * 0.035,
-      centerZ + cue.direction.z * travel + sideZ * sideOffset,
-    );
-    sprayDummy.rotation.set(0.35 + variation * 0.7, horizontalAngle, 0.2 + cue.direction.y * 0.4);
-    const baseScale = 0.12 + amount * 0.18 + cue.intensity * 0.24 + variation * 0.08;
-    const stretch = cue.kind === "jet" ? 1.8 : cue.kind === "splash" ? 1.35 : 1.15;
-    sprayDummy.scale.set(baseScale * stretch, baseScale * (0.7 + cue.surfaceEnergy * 0.35), 1);
-    sprayDummy.updateMatrix();
-    renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
-    sprayCount += 1;
-  }
-  return sprayCount;
-}
-
-function appendWaterMist(
-  renderer: WaterRenderer,
-  world: VoxelWorld,
-  x: number,
-  y: number,
-  z: number,
-  amount: number,
-  cue: WaterParticleCue,
-  sprayCount: number,
-): number {
-  const bottomY = findFallingRibbonBottomY(world, x, y, z);
-  const centerX = x - world.width / 2 + 0.5;
-  const centerZ = z - world.depth / 2 + 0.5;
-  const particleCount = 3 + Math.floor(cue.intensity * 6) + Math.floor(getCellVariation(x, y + 137, z) * 3);
-  const driftX = cue.direction.x * (0.12 + cue.intensity * 0.3);
-  const driftZ = cue.direction.z * (0.12 + cue.intensity * 0.3);
-
-  for (let i = 0; i < particleCount; i += 1) {
-    const angle = getCellVariation(x + i * 17, y + 149, z) * Math.PI * 2;
-    const radius = 0.16 + getCellVariation(z, y + i * 19, x) * (0.42 + cue.intensity * 0.38);
-    sprayDummy.position.set(
-      centerX + Math.cos(angle) * radius + driftX * (i / particleCount),
-      bottomY + 0.08 + i * 0.035,
-      centerZ + Math.sin(angle) * radius + driftZ * (i / particleCount),
-    );
-    sprayDummy.rotation.set(Math.PI / 2, 0, angle);
-    const scale = 0.22 + amount * 0.24 + cue.intensity * 0.24 + getCellVariation(i, x, z) * 0.16;
-    sprayDummy.scale.set(scale * 1.4, scale * 0.72, 1);
-    sprayDummy.updateMatrix();
-    renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
-    sprayCount += 1;
-  }
-
-  return sprayCount;
-}
-
 function appendShoreFoam(
   renderer: WaterRenderer,
   world: VoxelWorld,
@@ -625,7 +584,7 @@ function appendShoreFoam(
     }
 
     const variation = getCellVariation(x + direction.dx * 23, y + 109, z + direction.dz * 29);
-    if (variation < 0.58) {
+    if (variation < 0.74) {
       continue;
     }
 
@@ -934,35 +893,30 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
 
   const light = `#${lightColor.toString(16).padStart(6, "0")}`;
   const dark = `#${darkColor.toString(16).padStart(6, "0")}`;
-  const gradient = context.createLinearGradient(0, 0, size, size);
-  gradient.addColorStop(0, dark);
-  gradient.addColorStop(0.32, light);
-  gradient.addColorStop(0.7, "#54d9ff");
-  gradient.addColorStop(1, dark);
-  context.fillStyle = gradient;
+  context.fillStyle = dark;
   context.fillRect(0, 0, size, size);
-  context.globalAlpha = 0.24;
+  context.globalAlpha = 0.06;
   context.strokeStyle = "#e8ffff";
-  context.lineWidth = 2;
-  for (let i = -size; i < size * 2; i += 18) {
+  context.lineWidth = 1.1;
+  for (let i = -size; i < size * 2; i += 14) {
     context.beginPath();
-    context.moveTo(i, size);
-    context.bezierCurveTo(i + 28, 88, i + 16, 42, i + 62, 0);
+    context.moveTo(i, size * 0.75);
+    context.bezierCurveTo(i + 18, 82, i + 26, 38, i + 64, 12);
     context.stroke();
   }
-  context.globalAlpha = 0.16;
+  context.globalAlpha = 0.05;
   context.strokeStyle = "#07384b";
-  context.lineWidth = 3;
-  for (let i = -size; i < size * 2; i += 27) {
+  context.lineWidth = 1.4;
+  for (let i = -size; i < size * 2; i += 22) {
     context.beginPath();
     context.moveTo(i, 0);
-    context.bezierCurveTo(i - 16, 30, i + 36, 78, i + 8, size);
+    context.bezierCurveTo(i - 10, 28, i + 28, 74, i + 10, size);
     context.stroke();
   }
-  context.globalAlpha = 0.18;
-  context.strokeStyle = "#ffffff";
+  context.globalAlpha = 0.08;
+  context.strokeStyle = light;
   context.lineWidth = 1.2;
-  for (let radius = 10; radius < 82; radius += 18) {
+  for (let radius = 12; radius < 72; radius += 20) {
     context.beginPath();
     context.ellipse(35, 42, radius * 1.25, radius * 0.55, 0.5, 0, Math.PI * 2);
     context.stroke();
@@ -972,7 +926,7 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.center.set(0.5, 0.5);
-  texture.repeat.set(0.85, 0.85);
+  texture.repeat.set(2.2, 2.2);
   return texture;
 }
 
@@ -1046,7 +1000,7 @@ function getSurfaceCornerY(
 
   const average = count > 0 ? total / count : y + waterHeight;
   const motion = getWaterMotionSample(world, x, y, z);
-  const wave = getSurfaceWave(x, y, z, cornerX, cornerZ) * SURFACE_WAVE_AMPLITUDE * (0.35 + motion.strength * 0.65);
+  const wave = getSurfaceWave(x, y, z, cornerX, cornerZ) * SURFACE_WAVE_AMPLITUDE * (0.25 + motion.strength * 0.35);
   const surfaceOffset = getSurfaceCornerMotionOffset(world, x, y, z, cornerX, cornerZ) * SURFACE_MOTION_SCALE;
   const flowTilt = getSurfaceFlowTilt(motion.x, motion.z, cornerX, cornerZ);
   const reliefSag = getSurfaceCornerReliefSag(world, x, y, z, waterHeight, cornerX, cornerZ);
@@ -1091,7 +1045,7 @@ function getSurfaceFlowTilt(flowX: number, flowZ: number, cornerX: 0 | 1, corner
   const localX = cornerX === 0 ? -0.5 : 0.5;
   const localZ = cornerZ === 0 ? -0.5 : 0.5;
   const downstream = (flowX * localX + flowZ * localZ) / horizontal;
-  return downstream * Math.min(SURFACE_FLOW_TILT_SCALE, horizontal * 0.018);
+  return downstream * Math.min(SURFACE_FLOW_TILT_SCALE, horizontal * 0.006);
 }
 
 function getSurfaceWave(x: number, y: number, z: number, cornerX: number, cornerZ: number): number {
@@ -1104,12 +1058,11 @@ function getSurfaceColor(world: VoxelWorld, x: number, y: number, z: number, amo
   const depth = Math.min(1, getWaterColumnDepth(world, x, y, z) / 4.5);
   const motion = getWaterMotionSample(world, x, y, z);
   const flow = motion.strength;
-  const surfaceEnergy = Math.min(1, (Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity)) / 0.14);
-  const variation = getCellVariation(x, y + 7, z) * 0.08;
+  const variation = getCellVariation(x, y + 7, z) * 0.035;
   return {
-    r: 0.08 + amount * 0.05 - depth * 0.04 + variation + flow * 0.02 + surfaceEnergy * 0.02,
-    g: 0.5 + amount * 0.14 - depth * 0.05 + variation * 0.45 + flow * 0.08 + surfaceEnergy * 0.05,
-    b: 0.76 + amount * 0.1 + flow * 0.1 + surfaceEnergy * 0.08,
+    r: 0.07 + amount * 0.035 - depth * 0.035 + variation + flow * 0.01,
+    g: 0.42 + amount * 0.1 - depth * 0.045 + variation * 0.35 + flow * 0.035,
+    b: 0.64 + amount * 0.085 + flow * 0.05,
   };
 }
 
@@ -1355,11 +1308,11 @@ function shouldRenderWaterFoam(
   const motion = getWaterMotionSample(world, x, y, z);
   const flow = motion.strength;
   if (verticalDrop && amount > 0.28) {
-    return motion.kind !== "settled" && getCellVariation(x, y + 41, z) > 0.34 - flow * 0.16;
+    return motion.kind !== "settled" && getCellVariation(x, y + 41, z) > 0.62 - flow * 0.08;
   }
 
-  if (flow >= FLOW_FOAM_THRESHOLD && amount > 0.22 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
-    return getCellVariation(x, y + 41, z) > 0.82 - flow * 0.38;
+  if (flow >= 0.42 && amount > 0.3 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
+    return getCellVariation(x, y + 41, z) > 0.93 - flow * 0.12;
   }
 
   return (
@@ -1372,10 +1325,9 @@ function shouldRenderWaterFoam(
 
 function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
   const motion = getWaterMotionSample(world, x, y, z);
-  const surfaceEnergy = Math.min(1, (Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity)) / 0.14);
   return Math.min(
-    1.36,
-    0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16 + motion.strength * 0.2 + surfaceEnergy * 0.1,
+    0.96,
+    0.28 + getWaterDropScore(world, x, y, z, amount) * 0.1 + amount * 0.12 + motion.strength * 0.12,
   );
 }
 

@@ -79,14 +79,14 @@ const DEBUG_UI_UPDATE_INTERVAL_MS = 250;
 const ACTIVE_STAGE_GUIDE_STYLE = {
   fill: false,
   opacity: 0.08,
-  scale: 1.035,
+  scale: 1.025,
   wireframe: false,
   depthTest: true,
   outline: true,
   cornerOnly: true,
-  outlineOpacity: 0.95,
-  outlineScale: 1.08,
-  outlineDepthTest: false,
+  outlineOpacity: 0.42,
+  outlineScale: 1.035,
+  outlineDepthTest: true,
 };
 type AimFeedbackState = "idle" | "dig" | "blocked" | "hazard";
 
@@ -114,8 +114,8 @@ let brushPreviewRenderer: BrushPreviewRenderer = createBrushPreviewRenderer(scen
 let stageGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, ACTIVE_STAGE_GUIDE_STYLE);
 let hazardGuideRenderer: StageGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
   color: 0xff4a3d,
-  opacity: 0.22,
-  scale: 1.06,
+  opacity: 0.14,
+  scale: 1.035,
   wireframe: false,
 });
 const sonarRenderer = createSonarRenderer(document.body, world);
@@ -639,8 +639,8 @@ function resetWorld(): void {
   stageGuideRenderer = createStageGuideRenderer(sceneContext.scene, ACTIVE_STAGE_GUIDE_STYLE);
   hazardGuideRenderer = createStageGuideRenderer(sceneContext.scene, {
     color: 0xff4a3d,
-    opacity: 0.22,
-    scale: 1.06,
+    opacity: 0.14,
+    scale: 1.035,
     wireframe: false,
   });
   terrainRenderer.update(world, getRenderOptions());

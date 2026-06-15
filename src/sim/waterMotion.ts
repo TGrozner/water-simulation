@@ -31,7 +31,7 @@ export type WaterParticleCue = {
 };
 
 export const WATER_FLOW_VISUAL_SCALE = 0.75;
-const LATERAL_MOTION_THRESHOLD = 0.08;
+const LATERAL_MOTION_THRESHOLD = 0.14;
 const FALLING_MOTION_THRESHOLD = 0.11;
 const TURBULENT_SURFACE_THRESHOLD = 0.035;
 const PARTICLE_SURFACE_ENERGY_SCALE = 0.14;
@@ -176,7 +176,7 @@ function getOpenDropVector(
 
 function isLowerOpenWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
   if (!inBounds(world, x, y, z)) {
-    return true;
+    return false;
   }
 
   const cellIndex = index(world, x, y, z);
