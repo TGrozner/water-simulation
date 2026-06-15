@@ -5,8 +5,10 @@ import {
   type TuningPresetId,
   cloneTuningPreset,
 } from "./tuningPresets";
+import { Vector3 } from "three";
 import { coords, createEmptyWorld, index, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
 import { createWorld, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
+import { FIRST_PERSON_MOVEMENT_TEST_HOOKS } from "../input/firstPersonController";
 import {
   countStageSolidCells,
   getSceneOpeningStages,
@@ -810,6 +812,7 @@ function assertUnfinishedManualRouteDoesNotFail(
 function runEdgeCaseHarness(): void {
   assertWaterFallsThroughOpenedShaft();
   assertWaterLeaksThroughOpenedSideWall();
+  assertFirstPersonStepUpClearsVoxelLip();
 }
 
 function assertWaterFallsThroughOpenedShaft(): void {
@@ -869,6 +872,49 @@ function assertWaterLeaksThroughOpenedSideWall(): void {
     }
   }
   assert(leakedWater > 0.1, "edge/opened-side-wall: expected water to leak through opened wall");
+}
+
+function assertFirstPersonStepUpClearsVoxelLip(): void {
+  const world = createEmptyWorld(8, 5, 8);
+  for (let z = 0; z < world.depth; z += 1) {
+    for (let x = 0; x < world.width; x += 1) {
+      world.solid[index(world, x, 0, z)] = 1;
+    }
+  }
+  world.solid[index(world, 4, 1, 3)] = 1;
+
+  const startPosition = new Vector3(gridToWorldX(world, 3.3), 2.72, gridToWorldZ(world, 3.5));
+  assert(
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.canOccupy(startPosition, world),
+    "first-person/step-up: expected start position to be open",
+  );
+
+  const blockedBody = { position: startPosition.clone() };
+  FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveHorizontally(world, blockedBody, 0.9, 0, false);
+  assert(
+    blockedBody.position.x < gridToWorldX(world, 3.8),
+    "first-person/step-up: expected one-voxel lip to prevent crossing without step-up",
+  );
+
+  const steppingBody = { position: startPosition.clone() };
+  assert(
+    FIRST_PERSON_MOVEMENT_TEST_HOOKS.moveHorizontally(world, steppingBody, 0.9, 0, true),
+    "first-person/step-up: expected grounded movement to step over a one-voxel lip",
+  );
+  assert(
+    steppingBody.position.x > gridToWorldX(world, 3.8) && steppingBody.position.y > 3.4,
+    `first-person/step-up: expected player to move onto lip, got ${steppingBody.position.x.toFixed(
+      2,
+    )},${steppingBody.position.y.toFixed(2)},${steppingBody.position.z.toFixed(2)}`,
+  );
+}
+
+function gridToWorldX(world: VoxelWorld, x: number): number {
+  return x - world.width / 2;
+}
+
+function gridToWorldZ(world: VoxelWorld, z: number): number {
+  return z - world.depth / 2;
 }
 
 function assertAuthoredStagesRemoveTerrain(preset: ScenePresetId): void {

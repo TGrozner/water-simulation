@@ -21,19 +21,30 @@ export type FirstPersonController = {
 const WALK_SPEED = 7.2;
 const SPRINT_SPEED = 11.5;
 const LOOK_SENSITIVITY = 0.0022;
-const PLAYER_RADIUS = 0.36;
+const PLAYER_RADIUS = 0.3;
 const PLAYER_HEIGHT = 1.75;
 const GRAVITY = 18;
 const JUMP_SPEED = 7.4;
 const MAX_DELTA_SECONDS = 0.05;
 const MAX_PITCH = Math.PI / 2 - 0.05;
 const GROUND_CHECK_DISTANCE = 0.08;
+const COLLISION_EPSILON = 0.001;
+const HORIZONTAL_MOVE_SUBSTEP_DISTANCE = 0.14;
+const STEP_UP_HEIGHT = 1.05;
+const STEP_UP_INCREMENT = 0.12;
+const STEP_DOWN_DISTANCE = 1.15;
+const STEP_DOWN_INCREMENT = 0.08;
 
 const movement = new Vector3();
 const forward = new Vector3();
 const right = new Vector3();
 const nextPosition = new Vector3();
+const stepCandidatePosition = new Vector3();
 const groundProbePosition = new Vector3();
+
+type MovableBody = {
+  position: Vector3;
+};
 
 type MovementPhysics = {
   verticalVelocity: number;
@@ -367,7 +378,8 @@ function updateMovement(
   }
 
   physics.grounded = isGrounded(world, camera.position);
-  if (physics.jumpQueued && physics.grounded) {
+  const jumpedThisFrame = physics.jumpQueued && physics.grounded;
+  if (jumpedThisFrame) {
     physics.verticalVelocity = JUMP_SPEED;
     physics.grounded = false;
   }
@@ -377,8 +389,12 @@ function updateMovement(
     movement
       .normalize()
       .multiplyScalar((keys.has("sprint") ? SPRINT_SPEED : WALK_SPEED) * deltaSeconds);
-    moveAxis(world, camera, movement.x, 0, 0);
-    moveAxis(world, camera, 0, 0, movement.z);
+    moveHorizontally(world, camera, movement.x, movement.z, physics.grounded && !jumpedThisFrame);
+  }
+
+  if (physics.grounded && !jumpedThisFrame && snapDownToGround(world, camera, STEP_DOWN_DISTANCE)) {
+    physics.verticalVelocity = 0;
+    return;
   }
 
   physics.verticalVelocity -= GRAVITY * deltaSeconds;
@@ -391,10 +407,83 @@ function updateMovement(
   }
 }
 
-function moveAxis(world: VoxelWorld, camera: PerspectiveCamera, dx: number, dy: number, dz: number): boolean {
-  nextPosition.set(camera.position.x + dx, camera.position.y + dy, camera.position.z + dz);
+function moveHorizontally(world: VoxelWorld, body: MovableBody, dx: number, dz: number, allowStep: boolean): boolean {
+  const distance = Math.hypot(dx, dz);
+  if (distance <= 0) {
+    return false;
+  }
+
+  const steps = Math.max(1, Math.ceil(distance / HORIZONTAL_MOVE_SUBSTEP_DISTANCE));
+  const stepX = dx / steps;
+  const stepZ = dz / steps;
+  let moved = false;
+
+  for (let step = 0; step < steps; step += 1) {
+    moved = moveHorizontalStep(world, body, stepX, stepZ, allowStep) || moved;
+  }
+
+  return moved;
+}
+
+function moveHorizontalStep(world: VoxelWorld, body: MovableBody, dx: number, dz: number, allowStep: boolean): boolean {
+  if (tryMoveHorizontal(world, body, dx, dz, allowStep)) {
+    return true;
+  }
+
+  const firstDx = Math.abs(dx) >= Math.abs(dz);
+  if (firstDx) {
+    return tryMoveHorizontal(world, body, dx, 0, allowStep) || tryMoveHorizontal(world, body, 0, dz, allowStep);
+  }
+
+  return tryMoveHorizontal(world, body, 0, dz, allowStep) || tryMoveHorizontal(world, body, dx, 0, allowStep);
+}
+
+function tryMoveHorizontal(world: VoxelWorld, body: MovableBody, dx: number, dz: number, allowStep: boolean): boolean {
+  if (dx === 0 && dz === 0) {
+    return false;
+  }
+
+  nextPosition.set(body.position.x + dx, body.position.y, body.position.z + dz);
   if (canOccupy(nextPosition, world)) {
-    camera.position.copy(nextPosition);
+    body.position.copy(nextPosition);
+    return true;
+  }
+
+  if (!allowStep) {
+    return false;
+  }
+
+  return tryStepUp(world, body, dx, dz);
+}
+
+function tryStepUp(world: VoxelWorld, body: MovableBody, dx: number, dz: number): boolean {
+  const startX = body.position.x;
+  const startY = body.position.y;
+  const startZ = body.position.z;
+
+  for (let stepHeight = STEP_UP_INCREMENT; stepHeight <= STEP_UP_HEIGHT + COLLISION_EPSILON; stepHeight += STEP_UP_INCREMENT) {
+    stepCandidatePosition.set(startX, startY + stepHeight, startZ);
+    if (!canOccupy(stepCandidatePosition, world)) {
+      continue;
+    }
+
+    nextPosition.set(startX + dx, startY + stepHeight, startZ + dz);
+    if (!canOccupy(nextPosition, world)) {
+      continue;
+    }
+
+    body.position.copy(nextPosition);
+    snapDownToGround(world, body, stepHeight + STEP_DOWN_DISTANCE);
+    return true;
+  }
+
+  return false;
+}
+
+function moveAxis(world: VoxelWorld, body: MovableBody, dx: number, dy: number, dz: number): boolean {
+  nextPosition.set(body.position.x + dx, body.position.y + dy, body.position.z + dz);
+  if (canOccupy(nextPosition, world)) {
+    body.position.copy(nextPosition);
     return true;
   }
 
@@ -402,12 +491,12 @@ function moveAxis(world: VoxelWorld, camera: PerspectiveCamera, dx: number, dy: 
 }
 
 function canOccupy(position: Vector3, world: VoxelWorld): boolean {
-  const minX = Math.floor(position.x + world.width / 2 - PLAYER_RADIUS);
-  const maxX = Math.floor(position.x + world.width / 2 + PLAYER_RADIUS);
-  const minY = Math.floor(position.y - PLAYER_HEIGHT + 0.08);
-  const maxY = Math.floor(position.y - 0.12);
-  const minZ = Math.floor(position.z + world.depth / 2 - PLAYER_RADIUS);
-  const maxZ = Math.floor(position.z + world.depth / 2 + PLAYER_RADIUS);
+  const minX = Math.floor(position.x + world.width / 2 - PLAYER_RADIUS + COLLISION_EPSILON);
+  const maxX = Math.floor(position.x + world.width / 2 + PLAYER_RADIUS - COLLISION_EPSILON);
+  const minY = Math.floor(position.y - PLAYER_HEIGHT + 0.08 + COLLISION_EPSILON);
+  const maxY = Math.floor(position.y - 0.12 - COLLISION_EPSILON);
+  const minZ = Math.floor(position.z + world.depth / 2 - PLAYER_RADIUS + COLLISION_EPSILON);
+  const maxZ = Math.floor(position.z + world.depth / 2 + PLAYER_RADIUS - COLLISION_EPSILON);
 
   for (let y = minY; y <= maxY; y += 1) {
     for (let z = minZ; z <= maxZ; z += 1) {
@@ -426,6 +515,38 @@ function isGrounded(world: VoxelWorld, position: Vector3): boolean {
   groundProbePosition.set(position.x, position.y - GROUND_CHECK_DISTANCE, position.z);
   return !canOccupy(groundProbePosition, world);
 }
+
+function snapDownToGround(world: VoxelWorld, body: MovableBody, maxDistance: number): boolean {
+  if (isGrounded(world, body.position)) {
+    return true;
+  }
+
+  const originalY = body.position.y;
+  let lastValidY = originalY;
+
+  for (let drop = STEP_DOWN_INCREMENT; drop <= maxDistance + COLLISION_EPSILON; drop += STEP_DOWN_INCREMENT) {
+    nextPosition.set(body.position.x, originalY - drop, body.position.z);
+    if (canOccupy(nextPosition, world)) {
+      lastValidY = nextPosition.y;
+      continue;
+    }
+
+    if (lastValidY !== originalY) {
+      body.position.y = lastValidY;
+      return true;
+    }
+
+    return false;
+  }
+
+  return false;
+}
+
+export const FIRST_PERSON_MOVEMENT_TEST_HOOKS = {
+  canOccupy,
+  moveHorizontally,
+  snapDownToGround,
+};
 
 function getMovementKey(event: KeyboardEvent): string | null {
   const key = event.key.toLowerCase();
