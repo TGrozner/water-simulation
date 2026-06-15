@@ -1,6 +1,8 @@
 import {
   BoxGeometry,
+  BufferGeometry,
   EdgesGeometry,
+  Float32BufferAttribute,
   Group,
   LineBasicMaterial,
   LineSegments,
@@ -20,11 +22,13 @@ export type StageGuideRenderer = {
 
 type StageGuideStyle = {
   color?: number;
+  fill?: boolean;
   opacity?: number;
   scale?: number;
   wireframe?: boolean;
   depthTest?: boolean;
   outline?: boolean;
+  cornerOnly?: boolean;
   outlineColor?: number;
   outlineOpacity?: number;
   outlineScale?: number;
@@ -33,32 +37,37 @@ type StageGuideStyle = {
 
 export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = {}): StageGuideRenderer {
   const color = style.color ?? 0xffc247;
+  const fill = style.fill ?? true;
   const opacity = style.opacity ?? 0.32;
   const scale = style.scale ?? 1;
   const wireframe = style.wireframe ?? true;
   const depthTest = style.depthTest ?? true;
   const outline = style.outline ?? false;
+  const cornerOnly = style.cornerOnly ?? false;
   const outlineColor = style.outlineColor ?? color;
   const outlineOpacity = style.outlineOpacity ?? 0.88;
   const outlineScale = style.outlineScale ?? scale * 1.02;
   const outlineDepthTest = style.outlineDepthTest ?? depthTest;
   const group = new Group();
   const fillMeshes: Mesh<BoxGeometry, MeshBasicMaterial>[] = [];
-  const outlineMeshes: LineSegments<EdgesGeometry, LineBasicMaterial>[] = [];
+  const outlineMeshes: LineSegments<BufferGeometry, LineBasicMaterial>[] = [];
   scene.add(group);
 
   return {
     update: (world, stage, options) => {
       const boxes = stage ? getStageDigBoxes(stage) : [];
-      ensureMeshCount(group, fillMeshes, boxes.length, color, opacity, wireframe, depthTest);
-      ensureOutlineCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity, outlineDepthTest);
+      ensureMeshCount(group, fillMeshes, fill ? boxes.length : 0, color, opacity, wireframe, depthTest);
+      ensureOutlineCount(group, outlineMeshes, outline ? boxes.length : 0, outlineColor, outlineOpacity, outlineDepthTest, cornerOnly);
 
-      for (let i = 0; i < fillMeshes.length; i += 1) {
+      const meshCount = Math.max(fillMeshes.length, outlineMeshes.length);
+      for (let i = 0; i < meshCount; i += 1) {
         const mesh = fillMeshes[i];
         const outlineMesh = outlineMeshes[i];
         const box = boxes[i];
         const visible = Boolean(box) && (!options.slice.enabled || boxContainsSlice(box, options.slice.z));
-        mesh.visible = visible;
+        if (mesh) {
+          mesh.visible = visible;
+        }
         if (outlineMesh) {
           outlineMesh.visible = visible;
         }
@@ -66,7 +75,9 @@ export function createStageGuideRenderer(scene: Scene, style: StageGuideStyle = 
           continue;
         }
 
-        positionGuideMesh(mesh, world, box, scale);
+        if (mesh) {
+          positionGuideMesh(mesh, world, box, scale);
+        }
         if (outlineMesh) {
           positionGuideMesh(outlineMesh, world, box, outlineScale);
         }
@@ -117,15 +128,16 @@ function ensureMeshCount(
 
 function ensureOutlineCount(
   group: Group,
-  meshes: LineSegments<EdgesGeometry, LineBasicMaterial>[],
+  meshes: LineSegments<BufferGeometry, LineBasicMaterial>[],
   count: number,
   color: number,
   opacity: number,
   depthTest: boolean,
+  cornerOnly: boolean,
 ): void {
   while (meshes.length < count) {
     const mesh = new LineSegments(
-      new EdgesGeometry(new BoxGeometry(1, 1, 1)),
+      cornerOnly ? createCornerOutlineGeometry() : new EdgesGeometry(new BoxGeometry(1, 1, 1)),
       new LineBasicMaterial({
         color,
         transparent: true,
@@ -142,6 +154,29 @@ function ensureOutlineCount(
   for (let i = count; i < meshes.length; i += 1) {
     meshes[i].visible = false;
   }
+}
+
+function createCornerOutlineGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const length = 0.24;
+  const signs = [-1, 1] as const;
+
+  for (const sx of signs) {
+    for (const sy of signs) {
+      for (const sz of signs) {
+        const x = sx * 0.5;
+        const y = sy * 0.5;
+        const z = sz * 0.5;
+        positions.push(x, y, z, sx * (0.5 - length), y, z);
+        positions.push(x, y, z, x, sy * (0.5 - length), z);
+        positions.push(x, y, z, x, y, sz * (0.5 - length));
+      }
+    }
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  return geometry;
 }
 
 function boxContainsSlice(box: ClearBox, sliceZ: number): boolean {

@@ -42,11 +42,11 @@ const sprayDummy = new Object3D();
 const FULL_WATER_RENDER_THRESHOLD = 0.96;
 const EXPOSED_WATER_DELTA = 0.05;
 const SURFACE_LIFT = 0.024;
-const SURFACE_WAVE_AMPLITUDE = 0.045;
-const CURTAIN_INSET = 0.065;
+const SURFACE_WAVE_AMPLITUDE = 0.072;
+const CURTAIN_INSET = 0.035;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
-const FALLING_RIBBON_MAX_DROP = 8;
+const FALLING_RIBBON_MAX_DROP = 12;
 const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
@@ -77,8 +77,8 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     specular: 0xffffff,
     shininess: 210,
     transparent: true,
-    opacity: 0.86,
-    depthWrite: true,
+    opacity: 0.78,
+    depthWrite: false,
     side: DoubleSide,
     vertexColors: true,
     map: surfaceRippleTexture,
@@ -89,7 +89,7 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     specular: 0xdffbff,
     shininess: 145,
     transparent: true,
-    opacity: 0.46,
+    opacity: 0.56,
     depthWrite: false,
     side: DoubleSide,
     vertexColors: true,
@@ -97,14 +97,14 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
   const foamMaterial = new MeshBasicMaterial({
     color: 0xdffcff,
     transparent: true,
-    opacity: 0.32,
+    opacity: 0.42,
     depthWrite: false,
     side: DoubleSide,
   });
   const sprayMaterial = new MeshBasicMaterial({
     color: 0xecffff,
     transparent: true,
-    opacity: 0.36,
+    opacity: 0.48,
     depthWrite: false,
     side: DoubleSide,
   });
@@ -214,11 +214,11 @@ function updateWaterMesh(
   material.opacity = debugMode ? 0.45 : 0;
   material.colorWrite = debugMode;
   surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x0f5e70 : 0x125d68);
-  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.88 : 0.78;
+  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.78 : 0.72;
   curtainMaterial.emissive.set(debugMode ? 0x125c78 : gameplayMode ? 0x08384d : 0x0b4057);
-  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.48 : 0.42;
-  foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.36 : 0.3;
-  sprayMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.42 : 0.3;
+  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.58 : 0.42;
+  foamMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.48 : 0.3;
+  sprayMaterial.opacity = debugMode ? 0.34 : gameplayMode ? 0.56 : 0.3;
   const layerSize = world.width * world.depth;
   renderer.bodyBatch.begin();
   renderer.foamBatch.begin();
@@ -330,6 +330,10 @@ function appendWaterCurtains(
 
       appendSideCurtain(positions, colors, world, x, z, direction, topY, bottomY, waterHeight);
       faceCount += 1;
+      if (gameplayMode && !debugMode && waterHeight > 0.2 && neighborAmount < waterHeight - 0.18) {
+        appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight);
+        faceCount += 1;
+      }
     }
   }
 
@@ -358,7 +362,7 @@ function appendSideCurtain(
 ): void {
   const topColor = getCurtainTopColor(x, z, amount);
   const bottomColor = getCurtainBottomColor(x, z, amount);
-  const ribbonCount = 2 + Math.floor(getCellVariation(x + 7, 43, z + 3) * 2);
+  const ribbonCount = 3 + Math.floor(getCellVariation(x + 7, 43, z + 3) * 3);
 
   if (direction.axis === "x") {
     const faceX = x + (direction.side > 0 ? 1 : 0) - world.width / 2;
@@ -367,7 +371,7 @@ function appendSideCurtain(
       const slotStart = CURTAIN_INSET + (usable / ribbonCount) * i;
       const slotEnd = CURTAIN_INSET + (usable / ribbonCount) * (i + 1);
       const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(x, i + 61, z) - 0.5) * 0.06;
-      const halfWidth = ((slotEnd - slotStart) * (0.26 + getCellVariation(z, i + 71, x) * 0.22)) / 2;
+      const halfWidth = ((slotEnd - slotStart) * (0.34 + getCellVariation(z, i + 71, x) * 0.32)) / 2;
       const minZ = z - world.depth / 2 + center - halfWidth;
       const maxZ = z - world.depth / 2 + center + halfWidth;
       appendCurtainQuad(
@@ -390,7 +394,7 @@ function appendSideCurtain(
     const slotStart = CURTAIN_INSET + (usable / ribbonCount) * i;
     const slotEnd = CURTAIN_INSET + (usable / ribbonCount) * (i + 1);
     const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(z, i + 83, x) - 0.5) * 0.06;
-    const halfWidth = ((slotEnd - slotStart) * (0.26 + getCellVariation(x, i + 97, z) * 0.22)) / 2;
+    const halfWidth = ((slotEnd - slotStart) * (0.34 + getCellVariation(x, i + 97, z) * 0.32)) / 2;
     const minX = x - world.width / 2 + center - halfWidth;
     const maxX = x - world.width / 2 + center + halfWidth;
     appendCurtainQuad(
@@ -406,6 +410,57 @@ function appendSideCurtain(
   }
 }
 
+function appendEdgeSheet(
+  positions: number[],
+  colors: number[],
+  world: VoxelWorld,
+  x: number,
+  z: number,
+  direction: SideDirection,
+  topY: number,
+  amount: number,
+): void {
+  const color = getFoamColor(amount);
+  const edgeY = topY + 0.018;
+  const innerY = topY - 0.012;
+  const inset = 0.16;
+  const min = 0.08;
+  const max = 0.92;
+
+  if (direction.axis === "x") {
+    const edgeX = x + (direction.side > 0 ? 1 : 0) - world.width / 2;
+    const innerX = edgeX - direction.side * inset;
+    const minZ = z - world.depth / 2 + min;
+    const maxZ = z - world.depth / 2 + max;
+    appendCurtainQuad(
+      positions,
+      colors,
+      [innerX, innerY, minZ],
+      [innerX, innerY, maxZ],
+      [edgeX, edgeY, maxZ],
+      [edgeX, edgeY, minZ],
+      color,
+      color,
+    );
+    return;
+  }
+
+  const edgeZ = z + (direction.side > 0 ? 1 : 0) - world.depth / 2;
+  const innerZ = edgeZ - direction.side * inset;
+  const minX = x - world.width / 2 + min;
+  const maxX = x - world.width / 2 + max;
+  appendCurtainQuad(
+    positions,
+    colors,
+    [minX, innerY, innerZ],
+    [maxX, innerY, innerZ],
+    [maxX, edgeY, edgeZ],
+    [minX, edgeY, edgeZ],
+    color,
+    color,
+  );
+}
+
 function appendFallingRibbon(
   positions: number[],
   colors: number[],
@@ -419,9 +474,9 @@ function appendFallingRibbon(
 ): void {
   const centerX = x - world.width / 2 + 0.5;
   const centerZ = z - world.depth / 2 + 0.5;
-  const width = 0.24 + amount * 0.28;
-  const swayX = (getCellVariation(x + 101, 19, z) - 0.5) * 0.26;
-  const swayZ = (getCellVariation(x, 23, z + 107) - 0.5) * 0.26;
+  const width = 0.34 + amount * 0.46;
+  const swayX = (getCellVariation(x + 101, 19, z) - 0.5) * 0.42;
+  const swayZ = (getCellVariation(x, 23, z + 107) - 0.5) * 0.42;
   const topColor = getCurtainTopColor(x + 5, z, amount);
   const bottomColor = getMistColor(amount);
 
@@ -462,15 +517,15 @@ function appendWaterSpray(
   sprayCount: number,
   amount: number,
 ): number {
-  for (let i = 0; i < 2; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     const variation = getCellVariation(x + i * 11, y + 19, z);
     sprayDummy.position.set(
-      centerX + (variation - 0.5) * 0.48,
-      topY - 0.22 - i * 0.2,
-      centerZ + (getCellVariation(z, y + i * 13, x) - 0.5) * 0.48,
+      centerX + (variation - 0.5) * 0.72,
+      topY - 0.18 - i * 0.16,
+      centerZ + (getCellVariation(z, y + i * 13, x) - 0.5) * 0.72,
     );
     sprayDummy.rotation.set(0.35 + variation * 0.7, variation * Math.PI * 2, 0.2);
-    sprayDummy.scale.setScalar(0.16 + amount * 0.22 + variation * 0.08);
+    sprayDummy.scale.setScalar(0.18 + amount * 0.28 + variation * 0.1);
     sprayDummy.updateMatrix();
     renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
     sprayCount += 1;
@@ -490,18 +545,18 @@ function appendWaterMist(
   const bottomY = findFallingRibbonBottomY(world, x, y, z);
   const centerX = x - world.width / 2 + 0.5;
   const centerZ = z - world.depth / 2 + 0.5;
-  const particleCount = 3 + Math.floor(getCellVariation(x, y + 137, z) * 3);
+  const particleCount = 6 + Math.floor(getCellVariation(x, y + 137, z) * 5);
 
   for (let i = 0; i < particleCount; i += 1) {
     const angle = getCellVariation(x + i * 17, y + 149, z) * Math.PI * 2;
-    const radius = 0.18 + getCellVariation(z, y + i * 19, x) * 0.46;
+    const radius = 0.2 + getCellVariation(z, y + i * 19, x) * 0.72;
     sprayDummy.position.set(
       centerX + Math.cos(angle) * radius,
       bottomY + 0.08 + i * 0.035,
       centerZ + Math.sin(angle) * radius,
     );
     sprayDummy.rotation.set(Math.PI / 2, 0, angle);
-    const scale = 0.32 + amount * 0.26 + getCellVariation(i, x, z) * 0.18;
+    const scale = 0.34 + amount * 0.32 + getCellVariation(i, x, z) * 0.22;
     sprayDummy.scale.set(scale * 1.4, scale * 0.72, 1);
     sprayDummy.updateMatrix();
     renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
@@ -554,6 +609,7 @@ function replacePoolSurfaceGeometry(mesh: Mesh<BufferGeometry, MeshPhongMaterial
   nextGeometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   nextGeometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  nextGeometry.computeVertexNormals();
   nextGeometry.computeBoundingSphere();
   mesh.geometry.dispose();
   mesh.geometry = nextGeometry;
@@ -573,11 +629,12 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
   const dark = `#${darkColor.toString(16).padStart(6, "0")}`;
   const gradient = context.createLinearGradient(0, 0, size, size);
   gradient.addColorStop(0, dark);
-  gradient.addColorStop(0.45, light);
+  gradient.addColorStop(0.32, light);
+  gradient.addColorStop(0.7, "#54d9ff");
   gradient.addColorStop(1, dark);
   context.fillStyle = gradient;
   context.fillRect(0, 0, size, size);
-  context.globalAlpha = 0.28;
+  context.globalAlpha = 0.24;
   context.strokeStyle = "#e8ffff";
   context.lineWidth = 2;
   for (let i = -size; i < size * 2; i += 18) {
@@ -595,12 +652,20 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
     context.bezierCurveTo(i - 16, 30, i + 36, 78, i + 8, size);
     context.stroke();
   }
+  context.globalAlpha = 0.18;
+  context.strokeStyle = "#ffffff";
+  context.lineWidth = 1.2;
+  for (let radius = 10; radius < 82; radius += 18) {
+    context.beginPath();
+    context.ellipse(35, 42, radius * 1.25, radius * 0.55, 0.5, 0, Math.PI * 2);
+    context.stroke();
+  }
 
   const texture = new CanvasTexture(canvas);
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.center.set(0.5, 0.5);
-  texture.repeat.set(1.2, 1.2);
+  texture.repeat.set(0.85, 0.85);
   return texture;
 }
 
@@ -687,17 +752,17 @@ function getSurfaceColor(world: VoxelWorld, x: number, y: number, z: number, amo
   const depth = Math.min(1, getWaterColumnDepth(world, x, y, z) / 4.5);
   const variation = getCellVariation(x, y + 7, z) * 0.08;
   return {
-    r: 0.2 + amount * 0.08 - depth * 0.08 + variation,
-    g: 0.74 + amount * 0.15 - depth * 0.07 + variation * 0.4,
-    b: 0.92 + amount * 0.08,
+    r: 0.12 + amount * 0.06 - depth * 0.05 + variation,
+    g: 0.62 + amount * 0.17 - depth * 0.04 + variation * 0.5,
+    b: 0.88 + amount * 0.12,
   };
 }
 
 function getCurtainTopColor(x: number, z: number, amount: number): Rgb {
   const variation = getCellVariation(x, 13, z) * 0.08;
   return {
-    r: 0.25 + amount * 0.08 + variation,
-    g: 0.78 + amount * 0.1 + variation * 0.3,
+    r: 0.16 + amount * 0.08 + variation,
+    g: 0.72 + amount * 0.14 + variation * 0.3,
     b: 1,
   };
 }
@@ -705,9 +770,17 @@ function getCurtainTopColor(x: number, z: number, amount: number): Rgb {
 function getCurtainBottomColor(x: number, z: number, amount: number): Rgb {
   const variation = getCellVariation(x, 23, z) * 0.05;
   return {
-    r: 0.08 + amount * 0.08 + variation,
-    g: 0.38 + amount * 0.18 + variation,
-    b: 0.72 + amount * 0.18,
+    r: 0.05 + amount * 0.06 + variation,
+    g: 0.34 + amount * 0.2 + variation,
+    b: 0.68 + amount * 0.24,
+  };
+}
+
+function getFoamColor(amount: number): Rgb {
+  return {
+    r: 0.7 + amount * 0.16,
+    g: 0.96,
+    b: 1,
   };
 }
 
@@ -915,19 +988,19 @@ function shouldRenderWaterFoam(
   const dropScore = getWaterDropScore(world, x, y, z, amount);
   const verticalDrop = isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount);
   if (verticalDrop && amount > 0.28) {
-    return getCellVariation(x, y + 41, z) > 0.62;
+    return getCellVariation(x, y + 41, z) > 0.34;
   }
 
   return (
     dropScore >= 1 &&
-    amount > 0.78 &&
-    getCellVariation(x, y + 41, z) > 0.96 &&
+    amount > 0.35 &&
+    getCellVariation(x, y + 41, z) > 0.76 &&
     shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)
   );
 }
 
 function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
-  return Math.min(0.9, 0.34 + getWaterDropScore(world, x, y, z, amount) * 0.09 + amount * 0.1);
+  return Math.min(1.22, 0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16);
 }
 
 function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {

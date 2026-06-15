@@ -243,16 +243,16 @@ function carveGeneratedCavernBaseScene(world: VoxelWorld): void {
   addSolidEllipsoid(world, 47, 34, 18, 2.5, 5, 2.5);
   addGeneratedCavernStrata(world);
 
-  addSolidBox(world, 19, 33, 24, 23, 43, 31);
-  addSolidBox(world, 28, 22, 28, 36, 31, 36);
-  addSolidBox(world, 44, 4, 21, 56, 11, 31);
-  addSolidBox(world, 44, 4, 47, 56, 11, 57);
-  addSolidBox(world, 61, 3, 32, 68, 10, 43);
-  addSolidBox(world, 30, 0, 32, 43, 3, 43);
-  addSolidBox(world, 10, 19, 42, 18, 22, 51);
-  addSolidBox(world, 49, 21, 18, 59, 24, 25);
-  addSolidBox(world, 13, 30, 20, 21, 32, 27);
-  addSolidBox(world, 52, 29, 47, 61, 31, 56);
+  addRaggedSolidBox(world, 19, 33, 24, 23, 43, 31, 11);
+  addRaggedSolidBox(world, 28, 22, 28, 36, 31, 36, 23);
+  addRaggedSolidBox(world, 44, 4, 21, 56, 11, 31, 37);
+  addRaggedSolidBox(world, 44, 4, 47, 56, 11, 57, 41);
+  addRaggedSolidBox(world, 61, 3, 32, 68, 10, 43, 53);
+  addRaggedSolidBox(world, 30, 0, 32, 43, 3, 43, 59);
+  addRaggedSolidBox(world, 10, 19, 42, 18, 22, 51, 67);
+  addRaggedSolidBox(world, 49, 21, 18, 59, 24, 25, 71);
+  addRaggedSolidBox(world, 13, 30, 20, 21, 32, 27, 79);
+  addRaggedSolidBox(world, 52, 29, 47, 61, 31, 56, 83);
 
   addReservoirTank(world, 7, 22, 32, 44, 18, 33);
   fillWaterBox(world, 8, 21, 33, 44, 19, 32);
@@ -477,10 +477,10 @@ function carveGeneratedCavernGalleries(world: VoxelWorld): void {
 }
 
 function addGeneratedCavernStrata(world: VoxelWorld): void {
-  addSolidBox(world, 24, 14, 38, 32, 29, 42);
-  addSolidBox(world, 43, 14, 30, 50, 27, 35);
-  addSolidBox(world, 24, 4, 35, 31, 13, 43);
-  addSolidBox(world, 10, 4, 47, 13, 9, 54);
+  addRaggedSolidBox(world, 24, 14, 38, 32, 29, 42, 101);
+  addRaggedSolidBox(world, 43, 14, 30, 50, 27, 35, 107);
+  addRaggedSolidBox(world, 24, 4, 35, 31, 13, 43, 109);
+  addRaggedSolidBox(world, 10, 4, 47, 13, 9, 54, 113);
 }
 
 function fillWaterBox(
@@ -546,6 +546,42 @@ function addSolidBox(
       for (let x = minX; x <= maxX; x += 1) {
         world.solid[index(world, x, y, z)] = 1;
         setCellWater(world, index(world, x, y, z), 0);
+      }
+    }
+  }
+}
+
+function addRaggedSolidBox(
+  world: VoxelWorld,
+  minX: number,
+  minY: number,
+  minZ: number,
+  maxX: number,
+  maxY: number,
+  maxZ: number,
+  seed: number,
+): void {
+  addSolidBox(world, minX, minY, minZ, maxX, maxY, maxZ);
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let z = minZ; z <= maxZ; z += 1) {
+      for (let x = minX; x <= maxX; x += 1) {
+        const boundaryDistance = Math.min(x - minX, maxX - x, y - minY, maxY - y, z - minZ, maxZ - z);
+        if (boundaryDistance > 0) {
+          continue;
+        }
+
+        const cornerPressure =
+          Number(x === minX || x === maxX) + Number(y === minY || y === maxY) + Number(z === minZ || z === maxZ);
+        const strata = positiveModulo(y + Math.floor(x * 0.3) + Math.floor(z * 0.2) + seed, 5) === 0 ? 0.18 : 0;
+        const threshold = 0.22 + cornerPressure * 0.06 + strata;
+        if (getCavernShapeNoise(x + seed, y - seed, z + seed * 2) > threshold) {
+          continue;
+        }
+
+        const cellIndex = index(world, x, y, z);
+        world.solid[cellIndex] = 0;
+        setCellWater(world, cellIndex, 0);
       }
     }
   }
@@ -652,4 +688,16 @@ function carveTunnel(world: VoxelWorld, points: CavePoint[], radiusY: number, ra
       carveEllipsoid(world, from.x + dx * t, from.y + dy * t, from.z + dz * t, 3.6, radiusY, radiusZ);
     }
   }
+}
+
+function positiveModulo(value: number, divisor: number): number {
+  return ((value % divisor) + divisor) % divisor;
+}
+
+function getCavernShapeNoise(x: number, y: number, z: number): number {
+  let hash = Math.imul(x, 374761393) ^ Math.imul(y, 668265263) ^ Math.imul(z, -2048144789);
+  hash ^= hash >>> 13;
+  hash = Math.imul(hash, 1274126177);
+  hash ^= hash >>> 16;
+  return (hash >>> 0) / 4294967295;
 }

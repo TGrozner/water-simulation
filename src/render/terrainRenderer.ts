@@ -4,6 +4,7 @@ import {
   Float32BufferAttribute,
   Group,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   Raycaster,
   Scene,
@@ -29,7 +30,7 @@ export type TerrainRenderer = {
 };
 
 type TerrainChunk = {
-  mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
+  mesh: Mesh<BufferGeometry, MeshBasicMaterial>;
   faceSpans: FaceSpan[];
   minX: number;
   maxX: number;
@@ -70,6 +71,11 @@ type FaceColor = {
 const TERRAIN_CHUNK_SIZE = 12;
 const GENERATED_CAVERN_VERTEX_JITTER = 0;
 const DEFAULT_VERTEX_JITTER = 0;
+const GENERATED_CAVERN_NORMAL_ROUGHNESS = 0.36;
+const DEFAULT_NORMAL_ROUGHNESS = 0.16;
+const GENERATED_CAVERN_FACE_TILE_SIZE = 1;
+const GENERATED_CAVERN_FACE_RELIEF = 0.28;
+const ORGANIC_TERRAIN_ISO_LEVEL = 0.5;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
   { nx: 1, ny: 0, nz: 0, vertices: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1]] },
@@ -82,25 +88,37 @@ const FACE_DIRECTIONS: FaceDirection[] = [
 
 export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainRenderer {
   const root = new Group();
-  const material = new MeshStandardMaterial({
+  const visualMaterial = new MeshStandardMaterial({
     color: 0xffffff,
     side: DoubleSide,
     vertexColors: true,
-    roughness: 0.96,
-    metalness: 0.03,
-    flatShading: true,
+    roughness: 0.91,
+    metalness: 0.01,
+    flatShading: false,
   });
+  const pickMaterial = new MeshBasicMaterial({
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: false,
+  });
+  pickMaterial.colorWrite = false;
+  const organicMesh = new Mesh(new BufferGeometry(), visualMaterial);
+  organicMesh.castShadow = true;
+  organicMesh.receiveShadow = true;
+  organicMesh.frustumCulled = false;
   const stats = createRendererStats(world.solid.length * 6);
   const chunkXCount = Math.ceil(world.width / TERRAIN_CHUNK_SIZE);
   const chunkYCount = Math.ceil(world.height / TERRAIN_CHUNK_SIZE);
   const chunkZCount = Math.ceil(world.depth / TERRAIN_CHUNK_SIZE);
-  const chunks = createTerrainChunks(root, material, world, chunkXCount, chunkYCount, chunkZCount);
-  const visibleChunkMeshes: Mesh<BufferGeometry, MeshStandardMaterial>[] = [];
+  const chunks = createTerrainChunks(root, pickMaterial, world, chunkXCount, chunkYCount, chunkZCount);
+  const visibleChunkMeshes: Mesh<BufferGeometry, MeshBasicMaterial>[] = [];
   const dirtyChunks = new Set<number>();
   let allDirty = true;
   let lastOptionsKey = "";
 
   root.frustumCulled = false;
+  root.add(organicMesh);
   scene.add(root);
 
   const terrainRenderer: TerrainRenderer = {
@@ -122,7 +140,9 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
       for (const chunk of chunks) {
         chunk.mesh.geometry.dispose();
       }
-      material.dispose();
+      organicMesh.geometry.dispose();
+      visualMaterial.dispose();
+      pickMaterial.dispose();
     },
   };
 
@@ -140,9 +160,10 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
       rebuildTerrainChunk(chunks[chunkIndex], nextWorld, options);
     }
 
+    const organicFaceCount = rebuildOrganicTerrainMesh(organicMesh, nextWorld, options);
     refreshVisibleChunks();
     renderer.stats.updateMs = performance.now() - startedAt;
-    renderer.stats.instances = chunks.reduce((total, chunk) => total + chunk.faceCount, 0);
+    renderer.stats.instances = organicFaceCount;
     dirtyChunks.clear();
     allDirty = false;
     lastOptionsKey = optionsKey;
@@ -206,7 +227,7 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
 
 function createTerrainChunks(
   root: Group,
-  material: MeshStandardMaterial,
+  material: MeshBasicMaterial,
   world: VoxelWorld,
   chunkXCount: number,
   chunkYCount: number,
@@ -219,8 +240,8 @@ function createTerrainChunks(
       for (let chunkX = 0; chunkX < chunkXCount; chunkX += 1) {
         const mesh = new Mesh(new BufferGeometry(), material);
         const chunkIndex = chunks.length;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
+        mesh.castShadow = false;
+        mesh.receiveShadow = false;
         mesh.frustumCulled = false;
         mesh.userData.terrainChunkIndex = chunkIndex;
         root.add(mesh);
@@ -264,6 +285,287 @@ function rebuildTerrainChunk(chunk: TerrainChunk, world: VoxelWorld, options: Re
   chunk.mesh.geometry = nextGeometry;
   chunk.faceSpans = faceSpans;
   chunk.faceCount = faceCount;
+}
+
+function rebuildOrganicTerrainMesh(mesh: Mesh<BufferGeometry, MeshStandardMaterial>, world: VoxelWorld, options: RenderOptions): number {
+  const nodeWidth = world.width + 1;
+  const nodeHeight = world.height + 1;
+  const nodeDepth = world.depth + 1;
+  const nodeDensities = new Float32Array(nodeWidth * nodeHeight * nodeDepth);
+  const cellVertices = new Int32Array(world.width * world.height * world.depth);
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const indices: number[] = [];
+
+  cellVertices.fill(-1);
+
+  for (let y = 0; y < nodeHeight; y += 1) {
+    for (let z = 0; z < nodeDepth; z += 1) {
+      for (let x = 0; x < nodeWidth; x += 1) {
+        nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)] = getTerrainNodeDensity(world, options, x, y, z);
+      }
+    }
+  }
+
+  for (let y = 0; y < world.height; y += 1) {
+    for (let z = 0; z < world.depth; z += 1) {
+      for (let x = 0; x < world.width; x += 1) {
+        const cornerDensities = getSurfaceCellCornerDensities(nodeDensities, nodeWidth, nodeDepth, x, y, z);
+        const solidCornerCount = cornerDensities.reduce(
+          (total, density) => total + Number(density >= ORGANIC_TERRAIN_ISO_LEVEL),
+          0,
+        );
+        if (solidCornerCount === 0 || solidCornerCount === 8) {
+          continue;
+        }
+
+        const vertex = getSurfaceNetVertex(x, y, z, cornerDensities);
+        const color = getOrganicTerrainColor(world, vertex.x, vertex.y, vertex.z);
+        const vertexIndex = positions.length / 3;
+        positions.push(vertex.x - world.width / 2, vertex.y, vertex.z - world.depth / 2);
+        colors.push(color.r, color.g, color.b);
+        cellVertices[getSurfaceCellIndex(world, x, y, z)] = vertexIndex;
+      }
+    }
+  }
+
+  appendSurfaceNetXQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
+  appendSurfaceNetYQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
+  appendSurfaceNetZQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
+
+  const nextGeometry = new BufferGeometry();
+  nextGeometry.setIndex(indices);
+  nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  nextGeometry.computeVertexNormals();
+  nextGeometry.computeBoundingSphere();
+  mesh.geometry.dispose();
+  mesh.geometry = nextGeometry;
+  mesh.visible = indices.length > 0;
+  return indices.length / 3;
+}
+
+const SURFACE_NET_CORNERS = [
+  [0, 0, 0],
+  [1, 0, 0],
+  [1, 1, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+  [1, 0, 1],
+  [1, 1, 1],
+  [0, 1, 1],
+] as const;
+
+const SURFACE_NET_EDGES = [
+  [0, 1],
+  [1, 2],
+  [2, 3],
+  [3, 0],
+  [4, 5],
+  [5, 6],
+  [6, 7],
+  [7, 4],
+  [0, 4],
+  [1, 5],
+  [2, 6],
+  [3, 7],
+] as const;
+
+function getTerrainNodeDensity(world: VoxelWorld, options: RenderOptions, nodeX: number, nodeY: number, nodeZ: number): number {
+  let total = 0;
+  let count = 0;
+
+  for (let y = nodeY - 1; y <= nodeY; y += 1) {
+    for (let z = nodeZ - 1; z <= nodeZ; z += 1) {
+      for (let x = nodeX - 1; x <= nodeX; x += 1) {
+        count += 1;
+        if (!inBounds(world, x, y, z)) {
+          total += 1;
+          continue;
+        }
+        if (shouldRenderCell(world, z, options) && world.solid[getSurfaceCellIndex(world, x, y, z)] === 1) {
+          total += 1;
+        }
+      }
+    }
+  }
+
+  return total / count;
+}
+
+function getSurfaceCellCornerDensities(
+  nodeDensities: Float32Array,
+  nodeWidth: number,
+  nodeDepth: number,
+  x: number,
+  y: number,
+  z: number,
+): number[] {
+  return SURFACE_NET_CORNERS.map(([offsetX, offsetY, offsetZ]) =>
+    nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x + offsetX, y + offsetY, z + offsetZ)]
+  );
+}
+
+function getSurfaceNetVertex(
+  x: number,
+  y: number,
+  z: number,
+  cornerDensities: number[],
+): { x: number; y: number; z: number } {
+  let totalX = 0;
+  let totalY = 0;
+  let totalZ = 0;
+  let intersectionCount = 0;
+
+  for (const [cornerA, cornerB] of SURFACE_NET_EDGES) {
+    const densityA = cornerDensities[cornerA];
+    const densityB = cornerDensities[cornerB];
+    const solidA = densityA >= ORGANIC_TERRAIN_ISO_LEVEL;
+    const solidB = densityB >= ORGANIC_TERRAIN_ISO_LEVEL;
+    if (solidA === solidB) {
+      continue;
+    }
+
+    const [ax, ay, az] = SURFACE_NET_CORNERS[cornerA];
+    const [bx, by, bz] = SURFACE_NET_CORNERS[cornerB];
+    const t = clamp01((ORGANIC_TERRAIN_ISO_LEVEL - densityA) / (densityB - densityA));
+    totalX += x + ax + (bx - ax) * t;
+    totalY += y + ay + (by - ay) * t;
+    totalZ += z + az + (bz - az) * t;
+    intersectionCount += 1;
+  }
+
+  const vertexX = intersectionCount > 0 ? totalX / intersectionCount : x + 0.5;
+  const vertexY = intersectionCount > 0 ? totalY / intersectionCount : y + 0.5;
+  const vertexZ = intersectionCount > 0 ? totalZ / intersectionCount : z + 0.5;
+  const drift = getCellVariation(Math.floor(vertexX * 2), Math.floor(vertexY * 2), Math.floor(vertexZ * 2)) - 0.5;
+
+  return {
+    x: vertexX + drift * 0.05,
+    y: vertexY + (getCellVariation(Math.floor(vertexZ), Math.floor(vertexY * 2), Math.floor(vertexX)) - 0.5) * 0.08,
+    z: vertexZ + drift * 0.05,
+  };
+}
+
+function appendSurfaceNetXQuads(
+  indices: number[],
+  cellVertices: Int32Array,
+  nodeDensities: Float32Array,
+  nodeWidth: number,
+  nodeDepth: number,
+  world: VoxelWorld,
+): void {
+  for (let y = 1; y < world.height; y += 1) {
+    for (let z = 1; z < world.depth; z += 1) {
+      for (let x = 0; x < world.width; x += 1) {
+        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
+        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x + 1, y, z)];
+        if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
+          continue;
+        }
+
+        const a = getSurfaceCellVertex(cellVertices, world, x, y - 1, z - 1);
+        const b = getSurfaceCellVertex(cellVertices, world, x, y, z - 1);
+        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, x, y - 1, z);
+        appendSurfaceQuad(indices, a, b, c, d, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
+      }
+    }
+  }
+}
+
+function appendSurfaceNetYQuads(
+  indices: number[],
+  cellVertices: Int32Array,
+  nodeDensities: Float32Array,
+  nodeWidth: number,
+  nodeDepth: number,
+  world: VoxelWorld,
+): void {
+  for (let y = 0; y < world.height; y += 1) {
+    for (let z = 1; z < world.depth; z += 1) {
+      for (let x = 1; x < world.width; x += 1) {
+        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
+        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y + 1, z)];
+        if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
+          continue;
+        }
+
+        const a = getSurfaceCellVertex(cellVertices, world, x - 1, y, z - 1);
+        const b = getSurfaceCellVertex(cellVertices, world, x, y, z - 1);
+        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, x - 1, y, z);
+        appendSurfaceQuad(indices, a, d, c, b, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
+      }
+    }
+  }
+}
+
+function appendSurfaceNetZQuads(
+  indices: number[],
+  cellVertices: Int32Array,
+  nodeDensities: Float32Array,
+  nodeWidth: number,
+  nodeDepth: number,
+  world: VoxelWorld,
+): void {
+  for (let y = 1; y < world.height; y += 1) {
+    for (let z = 0; z < world.depth; z += 1) {
+      for (let x = 1; x < world.width; x += 1) {
+        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
+        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z + 1)];
+        if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
+          continue;
+        }
+
+        const a = getSurfaceCellVertex(cellVertices, world, x - 1, y - 1, z);
+        const b = getSurfaceCellVertex(cellVertices, world, x, y - 1, z);
+        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, x - 1, y, z);
+        appendSurfaceQuad(indices, a, b, c, d, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
+      }
+    }
+  }
+}
+
+function appendSurfaceQuad(indices: number[], a: number, b: number, c: number, d: number, forward: boolean): void {
+  if (a < 0 || b < 0 || c < 0 || d < 0) {
+    return;
+  }
+
+  if (forward) {
+    indices.push(a, b, c, a, c, d);
+    return;
+  }
+
+  indices.push(a, d, c, a, c, b);
+}
+
+function getOrganicTerrainColor(world: VoxelWorld, x: number, y: number, z: number): FaceColor {
+  const sampleX = clampInt(Math.floor(x), 0, world.width - 1);
+  const sampleY = clampInt(Math.floor(y), 0, world.height - 1);
+  const sampleZ = clampInt(Math.floor(z), 0, world.depth - 1);
+  const baseColor = getBaseTerrainColor(world, sampleX, sampleY, sampleZ);
+  const heightFactor = world.height <= 1 ? 0 : y / world.height;
+  const largeVariation = getCellVariation(Math.floor(x / 5), Math.floor(y / 3), Math.floor(z / 5));
+  const strata = 0.5 + Math.sin(y * 1.15 + x * 0.12 + z * 0.08) * 0.5;
+  return scaleHexColor(baseColor, 0.6 + heightFactor * 0.24 + largeVariation * 0.13 + strata * 0.08);
+}
+
+function getSurfaceNodeIndex(width: number, depth: number, x: number, y: number, z: number): number {
+  return x + width * (z + depth * y);
+}
+
+function getSurfaceCellIndex(world: VoxelWorld, x: number, y: number, z: number): number {
+  return x + world.width * (z + world.depth * y);
+}
+
+function getSurfaceCellVertex(cellVertices: Int32Array, world: VoxelWorld, x: number, y: number, z: number): number {
+  if (!inBounds(world, x, y, z)) {
+    return -1;
+  }
+
+  return cellVertices[getSurfaceCellIndex(world, x, y, z)];
 }
 
 function appendGreedyFacesForDirection(
@@ -438,6 +740,10 @@ type MergedFace = {
   vAxis: FaceAxis;
   width: number;
   height: number;
+  reliefOriginU?: number;
+  reliefOriginV?: number;
+  reliefWidth?: number;
+  reliefHeight?: number;
 };
 
 function fillFaceMask(
@@ -555,8 +861,60 @@ function appendMergedFace(
   world: VoxelWorld,
   face: MergedFace,
 ): void {
+  if (shouldTessellateFace(world, face)) {
+    for (let v = 0; v < face.height; v += GENERATED_CAVERN_FACE_TILE_SIZE) {
+      for (let u = 0; u < face.width; u += GENERATED_CAVERN_FACE_TILE_SIZE) {
+        const subFace = createSubFace(face, u, v, Math.min(GENERATED_CAVERN_FACE_TILE_SIZE, face.width - u), Math.min(GENERATED_CAVERN_FACE_TILE_SIZE, face.height - v));
+        appendFaceVertices(positions, normals, colors, uvs, faceSpans, world, subFace, getFaceSpan(subFace));
+      }
+    }
+    return;
+  }
+
+  appendFaceVertices(positions, normals, colors, uvs, faceSpans, world, face, getFaceSpan(face));
+}
+
+function appendFaceVertices(
+  positions: number[],
+  normals: number[],
+  colors: number[],
+  uvs: number[],
+  faceSpans: FaceSpan[],
+  world: VoxelWorld,
+  face: MergedFace,
+  span: FaceSpan,
+): void {
   const vertices = getMergedFaceVertices(face);
-  const span = {
+  for (const vertex of vertices) {
+    appendMergedVertex(positions, normals, colors, uvs, world, face, vertex);
+  }
+  faceSpans.push(span, span);
+}
+
+function shouldTessellateFace(world: VoxelWorld, face: MergedFace): boolean {
+  return isGeneratedCavernWorld(world) && (face.width > GENERATED_CAVERN_FACE_TILE_SIZE || face.height > GENERATED_CAVERN_FACE_TILE_SIZE);
+}
+
+function createSubFace(face: MergedFace, u: number, v: number, width: number, height: number): MergedFace {
+  const subFace: MergedFace = {
+    ...face,
+    originX: face.originX + getAxisOffset(face.uAxis, u) + getAxisOffset(face.vAxis, v),
+    originY: face.originY + getAxisOffsetY(face.uAxis, u) + getAxisOffsetY(face.vAxis, v),
+    originZ: face.originZ + getAxisOffsetZ(face.uAxis, u) + getAxisOffsetZ(face.vAxis, v),
+    width,
+    height,
+    reliefOriginU: (face.reliefOriginU ?? 0) + u,
+    reliefOriginV: (face.reliefOriginV ?? 0) + v,
+    reliefWidth: face.reliefWidth ?? face.width,
+    reliefHeight: face.reliefHeight ?? face.height,
+  };
+  setFaceAxisRange(subFace, face.uAxis, getFaceAxisOrigin(face, face.uAxis) + u, width);
+  setFaceAxisRange(subFace, face.vAxis, getFaceAxisOrigin(face, face.vAxis) + v, height);
+  return subFace;
+}
+
+function getFaceSpan(face: MergedFace): FaceSpan {
+  return {
     originX: face.originX,
     originY: face.originY,
     originZ: face.originZ,
@@ -565,11 +923,29 @@ function appendMergedFace(
     width: face.width,
     height: face.height,
   };
+}
 
-  for (const vertex of vertices) {
-    appendMergedVertex(positions, normals, colors, uvs, world, face, vertex);
+function getFaceAxisOrigin(face: MergedFace, axis: FaceAxis): number {
+  if (axis === "x") {
+    return face.originX;
   }
-  faceSpans.push(span, span);
+  if (axis === "y") {
+    return face.originY;
+  }
+  return face.originZ;
+}
+
+function setFaceAxisRange(face: MergedFace, axis: FaceAxis, start: number, size: number): void {
+  if (axis === "x") {
+    face.minX = start;
+    face.maxX = start + size;
+  } else if (axis === "y") {
+    face.minY = start;
+    face.maxY = start + size;
+  } else {
+    face.minZ = start;
+    face.maxZ = start + size;
+  }
 }
 
 function getMergedFaceVertices(face: MergedFace): readonly { x: number; y: number; z: number; u: number; v: number }[] {
@@ -654,11 +1030,40 @@ function appendMergedVertex(
   const sampleY = clampInt(gridY, face.minY, face.maxY - 1);
   const sampleZ = clampInt(gridZ, face.minZ, face.maxZ - 1);
   const jitter = getTerrainVertexJitter(world, gridX, gridY, gridZ);
+  const normal = getTerrainVertexNormal(world, face.direction, gridX, gridY, gridZ);
   const color = getTerrainVertexColor(world, sampleX, sampleY, sampleZ, face.direction, gridX, gridY, gridZ);
-  positions.push(gridX - world.width / 2 + jitter.x, gridY + jitter.y, gridZ - world.depth / 2 + jitter.z);
-  normals.push(face.direction.nx, face.direction.ny, face.direction.nz);
+  const relief = getTerrainFaceRelief(world, face, vertex.u, vertex.v);
+  positions.push(
+    gridX - world.width / 2 + jitter.x + face.direction.nx * relief,
+    gridY + jitter.y + face.direction.ny * relief,
+    gridZ - world.depth / 2 + jitter.z + face.direction.nz * relief,
+  );
+  normals.push(normal.x, normal.y, normal.z);
   colors.push(color.r, color.g, color.b);
   uvs.push(vertex.u, vertex.v);
+}
+
+function getTerrainFaceRelief(world: VoxelWorld, face: MergedFace, u: number, v: number): number {
+  const sourceWidth = face.reliefWidth ?? face.width;
+  const sourceHeight = face.reliefHeight ?? face.height;
+  if (!isGeneratedCavernWorld(world) || sourceWidth < 3 || sourceHeight < 3) {
+    return 0;
+  }
+
+  const sourceU = (face.reliefOriginU ?? 0) + u;
+  const sourceV = (face.reliefOriginV ?? 0) + v;
+  const edgeDistance = Math.min(sourceU, sourceV, sourceWidth - sourceU, sourceHeight - sourceV);
+  if (edgeDistance <= 0) {
+    return 0;
+  }
+
+  const edgeFade = Math.min(1, edgeDistance / 1.5);
+  const worldU = face.originX + getAxisOffset(face.uAxis, u) + getAxisOffset(face.vAxis, v);
+  const worldY = face.originY + getAxisOffsetY(face.uAxis, u) + getAxisOffsetY(face.vAxis, v);
+  const worldZ = face.originZ + getAxisOffsetZ(face.uAxis, u) + getAxisOffsetZ(face.vAxis, v);
+  const strata = Math.sin(worldY * 1.6 + worldU * 0.35 + worldZ * 0.2) * 0.35;
+  const noise = getCellVariation(Math.floor(worldU), Math.floor(worldY), Math.floor(worldZ)) - 0.5;
+  return (noise + strata) * GENERATED_CAVERN_FACE_RELIEF * edgeFade;
 }
 
 function shouldRenderFace(
@@ -702,15 +1107,18 @@ function getTerrainVertexColor(
   const adjacentWater = getAdjacentWaterAmount(world, x, y, z, direction);
   if (adjacentWater > EPSILON) {
     const wetColor = isGeneratedCavernWorld(world) ? 0x1f6472 : 0x2f7a86;
-    baseColor = mixHexColors(baseColor, wetColor, Math.min(0.72, 0.28 + adjacentWater * 0.34));
+    baseColor = mixHexColors(baseColor, wetColor, Math.min(0.52, 0.22 + adjacentWater * 0.24));
   }
 
   const heightFactor = world.height <= 1 ? 0 : gridY / world.height;
-  const variation = getCellVariation(gridX, gridY, gridZ);
-  const largeVariation = getCellVariation(Math.floor(gridX / 3), Math.floor(gridY / 2), Math.floor(gridZ / 3));
+  const isGenerated = isGeneratedCavernWorld(world);
+  const variation = isGenerated
+    ? getCellVariation(Math.floor(gridX / 4), Math.floor(gridY / 3), Math.floor(gridZ / 4))
+    : getCellVariation(gridX, gridY, gridZ);
+  const largeVariation = getCellVariation(Math.floor(gridX / 6), Math.floor(gridY / 3), Math.floor(gridZ / 6));
   const strata = 0.5 + Math.sin(gridY * 1.9 + gridX * 0.28 + gridZ * 0.17) * 0.5;
-  const light = 0.68 + heightFactor * 0.34 + variation * 0.12 + largeVariation * 0.06 + strata * 0.08;
-  const faceLight = direction.ny === 1 ? 1.18 : direction.ny === -1 ? 0.58 : 0.86 + Math.abs(direction.nx) * 0.04;
+  const light = 0.62 + heightFactor * 0.28 + variation * 0.06 + largeVariation * 0.14 + strata * 0.08;
+  const faceLight = direction.ny === 1 ? 1.08 : direction.ny === -1 ? 0.7 : 0.9 + Math.abs(direction.nx) * 0.03;
   return scaleHexColor(baseColor, light * faceLight);
 }
 
@@ -735,66 +1143,48 @@ function isGeneratedCavernWorld(world: VoxelWorld): boolean {
 }
 
 function getGeneratedCavernColor(x: number, y: number, z: number): number {
-  let color = y <= 7 ? 0x51635e : y >= 34 ? 0x596171 : y >= 24 ? 0x8b7658 : 0x84603e;
+  let color = y <= 7 ? 0x31484c : y >= 34 ? 0x3f4949 : y >= 24 ? 0x52604f : 0x454f43;
 
-  const band = positiveModulo(y + Math.floor(x * 0.21) + Math.floor(z * 0.13), 7);
-  if (band <= 1) {
-    color = mixHexColors(color, y >= 28 ? 0xb28b57 : 0x4c4438, 0.26);
-  }
+  const sediment = Math.sin(y * 0.9 + x * 0.12 + z * 0.08) * 0.5 + Math.sin(y * 0.37 - z * 0.18) * 0.5;
+  color = mixHexColors(color, y >= 28 ? 0x6a7159 : 0x28312f, Math.max(0, sediment) * 0.18);
 
   if (y <= 6 && ((x >= 48 && z <= 32) || (x >= 46 && z >= 47))) {
-    color = mixHexColors(color, 0x25788b, 0.58);
+    color = mixHexColors(color, 0x1f7383, 0.42);
   }
 
   if (x >= 50 && z <= 32 && y <= 17) {
-    color = mixHexColors(color, 0x2f7683, 0.5);
+    color = mixHexColors(color, 0x2a7580, 0.34);
   }
 
   if (x >= 48 && z >= 47 && y <= 17) {
-    color = mixHexColors(color, 0x5b4e86, 0.48);
+    color = mixHexColors(color, 0x514a79, 0.3);
   }
 
   if (x <= 24 && z >= 42 && y <= 16) {
-    color = mixHexColors(color, 0x347f74, 0.5);
+    color = mixHexColors(color, 0x2f7a68, 0.32);
   }
 
   if (x >= 26 && x <= 44 && z >= 30 && z <= 44 && y <= 16) {
-    color = mixHexColors(color, 0xc77a42, 0.55);
+    color = mixHexColors(color, 0x9c6542, 0.26);
   }
 
   if (x >= 7 && x <= 23 && z >= 18 && z <= 34 && y >= 29) {
-    color = mixHexColors(color, 0xd0a14e, 0.48);
+    color = mixHexColors(color, 0xaa8649, 0.24);
   }
 
-  if (isAzureVein(x, y, z)) {
-    color = mixHexColors(color, 0x67f1ff, 0.62);
-  }
-
-  if (isAmberVein(x, y, z)) {
-    color = mixHexColors(color, 0xffb95f, 0.56);
-  }
-
-  if (isVioletPocket(x, y, z)) {
-    color = mixHexColors(color, 0x8d6dce, 0.52);
-  }
+  color = mixHexColors(color, 0x67f1ff, getGeneratedCavernVeinStrength(x, y, z, 0.41, 0.18) * 0.24);
+  color = mixHexColors(color, 0xffb95f, getGeneratedCavernVeinStrength(x, y, z, 0.29, 1.7) * 0.18);
+  color = mixHexColors(color, 0x8d6dce, getGeneratedCavernVeinStrength(x, y, z, 0.34, 3.1) * 0.16);
 
   return color;
 }
 
-function isAzureVein(x: number, y: number, z: number): boolean {
-  const inBasin = (x >= 50 && x <= 66 && z >= 13 && z <= 28 && y <= 18) || (x >= 51 && x <= 68 && z >= 48 && y <= 17);
-  const inGallery = x >= 52 && x <= 60 && z >= 13 && z <= 24 && y >= 18 && y <= 28;
-  return (inBasin || inGallery) && positiveModulo(x * 5 + y * 7 + z * 3, 11) <= 2;
-}
-
-function isAmberVein(x: number, y: number, z: number): boolean {
-  const inThroat = x >= 27 && x <= 45 && z >= 28 && z <= 45 && y >= 9 && y <= 28;
-  const inReservoir = x >= 8 && x <= 24 && z >= 18 && z <= 34 && y >= 28;
-  return (inThroat || inReservoir) && positiveModulo(x * 3 + y * 11 + z * 5, 13) <= 2;
-}
-
-function isVioletPocket(x: number, y: number, z: number): boolean {
-  return x >= 15 && x <= 27 && z >= 43 && z <= 58 && y >= 9 && y <= 28 && positiveModulo(x * 7 + y * 2 + z * 9, 17) <= 3;
+function getGeneratedCavernVeinStrength(x: number, y: number, z: number, scale: number, phase: number): number {
+  const wave =
+    Math.sin(x * scale + y * 0.37 + phase) +
+    Math.sin(z * scale * 1.4 - y * 0.23 + phase * 0.7) +
+    Math.sin((x + z) * scale * 0.45 + y * 0.11);
+  return clamp01((wave - 1.15) / 1.45);
 }
 
 function getAdjacentWaterAmount(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): number {
@@ -809,13 +1199,17 @@ function getAdjacentWaterAmount(world: VoxelWorld, x: number, y: number, z: numb
 }
 
 function getTerrainMergeKey(world: VoxelWorld, x: number, y: number, z: number, direction: FaceDirection): number {
-  const baseColor = getBaseTerrainColor(world, x, y, z);
+  const baseColor = getTerrainMergeBand(world, x, y, z);
+  if (isGeneratedCavernWorld(world)) {
+    return baseColor;
+  }
+
   const isWet = getAdjacentWaterAmount(world, x, y, z, direction) > EPSILON ? 1 : 0;
   return baseColor * 2 + isWet;
 }
 
 function getGreedyFaceSpanLimit(world: VoxelWorld): number {
-  return isGeneratedCavernWorld(world) ? 4 : 8;
+  return isGeneratedCavernWorld(world) ? 9 : 8;
 }
 
 function getTerrainVertexJitter(world: VoxelWorld, gridX: number, gridY: number, gridZ: number): { x: number; y: number; z: number } {
@@ -825,6 +1219,52 @@ function getTerrainVertexJitter(world: VoxelWorld, gridX: number, gridY: number,
     y: (getCellVariation(gridX + 17, gridY - 11, gridZ + 5) - 0.5) * amount * 0.7,
     z: (getCellVariation(gridX - 23, gridY + 3, gridZ + 29) - 0.5) * amount,
   };
+}
+
+function getTerrainVertexNormal(
+  world: VoxelWorld,
+  direction: FaceDirection,
+  gridX: number,
+  gridY: number,
+  gridZ: number,
+): { x: number; y: number; z: number } {
+  const roughness = isGeneratedCavernWorld(world) ? GENERATED_CAVERN_NORMAL_ROUGHNESS : DEFAULT_NORMAL_ROUGHNESS;
+  const noiseA = getCellVariation(gridX + 31, gridY - 17, gridZ + 11) - 0.5;
+  const noiseB = getCellVariation(gridX - 13, gridY + 37, gridZ - 29) - 0.5;
+  const noiseC = getCellVariation(Math.floor(gridX / 2), Math.floor(gridY / 2), Math.floor(gridZ / 2)) - 0.5;
+  let x = direction.nx;
+  let y = direction.ny;
+  let z = direction.nz;
+
+  if (Math.abs(direction.nx) > 0) {
+    y += (noiseA + noiseC * 0.45) * roughness;
+    z += noiseB * roughness;
+  } else if (Math.abs(direction.ny) > 0) {
+    x += noiseA * roughness;
+    z += (noiseB + noiseC * 0.45) * roughness;
+  } else {
+    x += (noiseA + noiseC * 0.45) * roughness;
+    y += noiseB * roughness;
+  }
+
+  const length = Math.hypot(x, y, z) || 1;
+  return { x: x / length, y: y / length, z: z / length };
+}
+
+function getTerrainMergeBand(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (!isGeneratedCavernWorld(world)) {
+    return Math.floor(y / 4);
+  }
+
+  let band = Math.floor(y / 6);
+  if (x >= 48 && y <= 18 && (z <= 32 || z >= 47)) {
+    band += 12;
+  } else if (x <= 26 && z >= 42 && y <= 24) {
+    band += 20;
+  } else if (x >= 26 && x <= 44 && z >= 30 && z <= 44 && y <= 18) {
+    band += 28;
+  }
+  return band;
 }
 
 function mixHexColors(a: number, b: number, amount: number): number {
@@ -861,10 +1301,6 @@ function getAxisOffsetY(axis: FaceAxis, amount: number): number {
 
 function getAxisOffsetZ(axis: FaceAxis, amount: number): number {
   return axis === "z" ? amount : 0;
-}
-
-function positiveModulo(value: number, divisor: number): number {
-  return ((value % divisor) + divisor) % divisor;
 }
 
 function getCellVariation(x: number, y: number, z: number): number {

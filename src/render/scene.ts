@@ -32,8 +32,8 @@ export type SceneContext = {
 
 export async function createSceneContext(container: HTMLElement): Promise<SceneContext> {
   const scene = new Scene();
-  scene.background = new Color(0x081017);
-  scene.fog = new FogExp2(0x081017, 0.012);
+  scene.background = new Color(0x050b0d);
+  scene.fog = new FogExp2(0x050b0d, 0.016);
 
   const camera = new PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 500);
   camera.position.set(38, 26, 48);
@@ -51,24 +51,25 @@ export async function createSceneContext(container: HTMLElement): Promise<SceneC
   controls.maxDistance = 110;
   controls.minDistance = 18;
 
-  const ambient = new AmbientLight(0xaec9db, 0.34);
+  const ambient = new AmbientLight(0x8fb3bd, 0.28);
   scene.add(ambient);
 
-  const skyFill = new HemisphereLight(0x76d5e8, 0x251910, 0.54);
+  const skyFill = new HemisphereLight(0x69d8e5, 0x151b13, 0.48);
   scene.add(skyFill);
 
-  const sun = new DirectionalLight(0xffd39a, 2.05);
+  const sun = new DirectionalLight(0xc9f0dc, 1.65);
   sun.position.set(14, 36, 24);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   scene.add(sun);
 
-  const rim = new PointLight(0x37d7ff, 1.35, 72, 1.7);
+  const rim = new PointLight(0x37d7ff, 1.65, 78, 1.7);
   rim.position.set(-24, 18, -18);
   scene.add(rim);
 
   const grid = new GridHelper(56, 28, 0x253746, 0x111d27);
   grid.position.y = -0.02;
+  grid.visible = false;
   scene.add(grid);
 
   const resize = () => {

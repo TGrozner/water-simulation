@@ -76,13 +76,15 @@ const SONAR_RENDER_INTERVAL_MS = 66;
 const GAME_PANEL_UPDATE_INTERVAL_MS = 100;
 const DEBUG_UI_UPDATE_INTERVAL_MS = 250;
 const ACTIVE_STAGE_GUIDE_STYLE = {
-  opacity: 0.18,
+  fill: false,
+  opacity: 0.08,
   scale: 1.035,
   wireframe: false,
-  depthTest: false,
+  depthTest: true,
   outline: true,
-  outlineOpacity: 0.84,
-  outlineScale: 1.085,
+  cornerOnly: true,
+  outlineOpacity: 0.95,
+  outlineScale: 1.08,
   outlineDepthTest: false,
 };
 const initialUrlParams = new URLSearchParams(window.location.search);
