@@ -15,6 +15,12 @@ const LATERAL_DIRECTIONS: CellCoords[] = [
   { x: 0, y: 0, z: -1 },
 ];
 const VOLUME_CORRECTION_EPSILON = 0.000_000_1;
+const PIPE_FLUX_INERTIA = 0.52;
+const PIPE_REVERSE_FLUX_INERTIA = 0.14;
+const PIPE_FLUX_RATE_MULTIPLIER = 1.75;
+const FLOW_VECTOR_DECAY = 0.68;
+const FLOW_VECTOR_CLEAR_EPSILON = 0.000_1;
+const FLOW_VECTOR_LIMIT = 2.5;
 
 type ColumnSpan = {
   x: number;
@@ -29,6 +35,16 @@ type LateralCandidate = {
   portalBottomY: number;
   portalTopY: number;
   targetHeadY: number;
+};
+
+type FluxEdge = {
+  key: string;
+  sign: 1 | -1;
+};
+
+type LateralTransfer = {
+  amount: number;
+  flux: number;
 };
 
 export type WaterSimulationConfig = {
@@ -58,6 +74,7 @@ export type FlowEvent = {
 export type WaterStepStats = {
   movedVolume: number;
   changedCells: number;
+  flowChanged: boolean;
   flowEvents: FlowEvent[];
 };
 
@@ -79,7 +96,9 @@ export function stepWaterSimulation(
   let changedCells = 0;
   const collectFlowEvents = options.collectFlowEvents ?? true;
   const flowEvents: FlowEvent[] = collectFlowEvents ? [] : EMPTY_FLOW_EVENTS;
+  const nextFlux = new Map<string, number>();
 
+  let flowChanged = decayWaterFlow(world);
   world.activeCells.clear();
 
   for (const cellIndex of currentCells) {
@@ -99,6 +118,7 @@ export function stepWaterSimulation(
     }
 
     const settled = settleSpan(world, span, config);
+    flowChanged = settled.flowChanged || flowChanged;
     if (settled.changedCells > 0) {
       movedVolume += settled.movedVolume;
       changedCells += settled.changedCells;
@@ -123,9 +143,10 @@ export function stepWaterSimulation(
 
   const sortedSpans = Array.from(activeSpans.values()).sort((a, b) => getSpanSurfaceY(world, b) - getSpanSurfaceY(world, a));
   for (const span of sortedSpans) {
-    const result = flowSpanLaterally(world, span, config, flowEvents, collectFlowEvents, nextActiveCells);
+    const result = flowSpanLaterally(world, span, config, flowEvents, collectFlowEvents, nextActiveCells, nextFlux);
     movedVolume += result.movedVolume;
     changedCells += result.changedCells;
+    flowChanged = result.flowChanged || flowChanged;
   }
 
   for (const span of sortedSpans) {
@@ -136,10 +157,12 @@ export function stepWaterSimulation(
   }
 
   world.activeCells = nextActiveCells;
+  world.waterFlux = nextFlux;
 
   return {
     movedVolume,
     changedCells,
+    flowChanged,
     flowEvents,
   };
 }
@@ -148,7 +171,7 @@ function settleSpan(
   world: VoxelWorld,
   span: ColumnSpan,
   config: WaterSimulationConfig,
-): { volume: number; movedVolume: number; changedCells: number } {
+): { volume: number; movedVolume: number; changedCells: number; flowChanged: boolean } {
   const volume = getSpanVolume(world, span);
   const fallRate = Math.max(0, config.downFlowRate);
   if (fallRate <= config.minFlow || volume <= EPSILON) {
@@ -156,11 +179,13 @@ function settleSpan(
       volume,
       movedVolume: 0,
       changedCells: 0,
+      flowChanged: false,
     };
   }
 
   const amounts = getSpanAmounts(world, span);
   let movedVolume = 0;
+  let flowChanged = false;
 
   for (let offset = 0; offset < amounts.length - 1; offset += 1) {
     const lowerAmount = amounts[offset];
@@ -173,6 +198,10 @@ function settleSpan(
     amounts[offset] += transfer;
     amounts[offset + 1] -= transfer;
     movedVolume += transfer;
+    flowChanged = recordWaterFlow(world, index(world, span.x, span.bottomY + offset, span.z), 0, -1, 0, transfer) || flowChanged;
+    flowChanged =
+      recordWaterFlow(world, index(world, span.x, span.bottomY + offset + 1, span.z), 0, -1, 0, transfer) ||
+      flowChanged;
   }
 
   const result = writeSpanAmounts(world, span, amounts, volume);
@@ -180,6 +209,7 @@ function settleSpan(
     volume,
     movedVolume,
     changedCells: result.changedCells,
+    flowChanged,
   };
 }
 
@@ -190,9 +220,11 @@ function flowSpanLaterally(
   flowEvents: FlowEvent[],
   collectFlowEvents: boolean,
   nextActiveCells: Set<number>,
-): { movedVolume: number; changedCells: number } {
+  nextFlux: Map<string, number>,
+): { movedVolume: number; changedCells: number; flowChanged: boolean } {
   let movedVolume = 0;
   let changedCells = 0;
+  let flowChanged = false;
 
   for (const candidate of getLateralCandidates(world, span)) {
     const sourceVolume = getSpanVolume(world, span);
@@ -201,33 +233,48 @@ function flowSpanLaterally(
     }
 
     const targetVolume = getSpanVolume(world, candidate.span);
-    const transfer = getLateralTransferAmount(span, sourceVolume, candidate, targetVolume, config);
-    if (transfer <= config.minFlow) {
+    const transfer = getLateralTransfer(world, span, sourceVolume, candidate, targetVolume, config);
+    if (transfer.amount <= config.minFlow) {
       continue;
     }
 
-    const sourceResult = setSpanVolume(world, span, sourceVolume - transfer);
-    const targetResult = setSpanVolume(world, candidate.span, targetVolume + transfer);
-    movedVolume += transfer;
+    const sourceResult = setSpanVolume(world, span, sourceVolume - transfer.amount);
+    const targetResult = setSpanVolume(world, candidate.span, targetVolume + transfer.amount);
+    movedVolume += transfer.amount;
     changedCells += sourceResult.changedCells + targetResult.changedCells;
 
-    markSpanActive(world, span, sourceVolume - transfer, nextActiveCells);
-    markSpanActive(world, candidate.span, targetVolume + transfer, nextActiveCells);
+    markSpanActive(world, span, sourceVolume - transfer.amount, nextActiveCells);
+    markSpanActive(world, candidate.span, targetVolume + transfer.amount, nextActiveCells);
+    setSignedPipeFlux(nextFlux, span, candidate.span, transfer.flux, config.minFlow);
+
+    const targetCellIndex = index(world, candidate.span.x, candidate.portalBottomY, candidate.span.z);
+    flowChanged =
+      recordWaterFlow(
+        world,
+        getSpanSurfaceCellIndex(world, span, sourceVolume),
+        candidate.direction.x,
+        0,
+        candidate.direction.z,
+        transfer.amount,
+      ) || flowChanged;
+    flowChanged =
+      recordWaterFlow(world, targetCellIndex, candidate.direction.x, 0, candidate.direction.z, transfer.amount) ||
+      flowChanged;
 
     if (collectFlowEvents) {
       flowEvents.push({
         fromCellIndex: getSpanSurfaceCellIndex(world, span, sourceVolume),
-        cellIndex: index(world, candidate.span.x, candidate.portalBottomY, candidate.span.z),
+        cellIndex: targetCellIndex,
         direction: "side",
         dx: candidate.direction.x,
         dy: 0,
         dz: candidate.direction.z,
-        amount: transfer,
+        amount: transfer.amount,
       });
     }
   }
 
-  return { movedVolume, changedCells };
+  return { movedVolume, changedCells, flowChanged };
 }
 
 function getLateralCandidates(world: VoxelWorld, source: ColumnSpan): LateralCandidate[] {
@@ -275,29 +322,84 @@ function getLateralCandidates(world: VoxelWorld, source: ColumnSpan): LateralCan
   });
 }
 
-function getLateralTransferAmount(
+function getLateralTransfer(
+  world: VoxelWorld,
   source: ColumnSpan,
   sourceVolume: number,
   candidate: LateralCandidate,
   targetVolume: number,
   config: WaterSimulationConfig,
-): number {
+): LateralTransfer {
   const sourceSurfaceY = getSurfaceY(source, sourceVolume);
   const targetSurfaceY = getSurfaceY(candidate.span, targetVolume);
   const targetHeadY = Math.max(targetSurfaceY, candidate.portalBottomY);
   const headDelta = sourceSurfaceY - targetHeadY;
-  if (headDelta <= config.minFlow) {
-    return 0;
+  const signedPreviousFlux = getSignedPipeFlux(world, source, candidate.span);
+  if (headDelta <= config.minFlow && signedPreviousFlux <= config.minFlow) {
+    return { amount: 0, flux: 0 };
   }
 
   const maxTargetSurfaceY = Math.min(candidate.span.topY + 1, sourceSurfaceY);
   const targetCapacityBelowSource = Math.max(0, maxTargetSurfaceY - targetSurfaceY);
   if (targetCapacityBelowSource <= EPSILON) {
-    return 0;
+    return { amount: 0, flux: 0 };
   }
 
   const portalHeight = candidate.portalTopY - candidate.portalBottomY + 1;
   const apertureRate = config.sideFlowRate * Math.min(2.4, 0.65 + portalHeight * 0.22);
+  const pressureTransfer = getPressureLateralTransferAmount(
+    source,
+    sourceVolume,
+    candidate,
+    targetVolume,
+    config,
+    sourceSurfaceY,
+    targetSurfaceY,
+    headDelta,
+    targetCapacityBelowSource,
+    apertureRate,
+  );
+  const inertialTransfer = Math.max(
+    0,
+    pressureTransfer + signedPreviousFlux * (signedPreviousFlux > 0 ? PIPE_FLUX_INERTIA : PIPE_REVERSE_FLUX_INERTIA),
+  );
+  const transfer = Math.min(
+    inertialTransfer,
+    apertureRate * PIPE_FLUX_RATE_MULTIPLIER,
+    sourceVolume,
+    targetCapacityBelowSource,
+  );
+  if (transfer <= config.minFlow) {
+    return { amount: 0, flux: 0 };
+  }
+
+  if (sourceVolume - transfer <= EPSILON) {
+    return { amount: sourceVolume, flux: sourceVolume };
+  }
+
+  if (targetCapacityBelowSource - transfer <= EPSILON) {
+    return { amount: targetCapacityBelowSource, flux: targetCapacityBelowSource };
+  }
+
+  return { amount: transfer, flux: transfer };
+}
+
+function getPressureLateralTransferAmount(
+  source: ColumnSpan,
+  sourceVolume: number,
+  candidate: LateralCandidate,
+  targetVolume: number,
+  config: WaterSimulationConfig,
+  sourceSurfaceY = getSurfaceY(source, sourceVolume),
+  targetSurfaceY = getSurfaceY(candidate.span, targetVolume),
+  headDelta = sourceSurfaceY - Math.max(targetSurfaceY, candidate.portalBottomY),
+  targetCapacityBelowSource = Math.max(0, Math.min(candidate.span.topY + 1, sourceSurfaceY) - targetSurfaceY),
+  apertureRate = config.sideFlowRate * Math.min(2.4, 0.65 + (candidate.portalTopY - candidate.portalBottomY + 1) * 0.22),
+): number {
+  if (headDelta <= config.minFlow || targetCapacityBelowSource <= EPSILON) {
+    return 0;
+  }
+
   const transfer = Math.min(headDelta * 0.45, apertureRate, sourceVolume, targetCapacityBelowSource);
   if (transfer <= config.minFlow) {
     return 0;
@@ -322,7 +424,7 @@ function canSpanStillFlow(
 ): boolean {
   return getLateralCandidates(world, span).some((candidate) => {
     const targetVolume = getSpanVolume(world, candidate.span);
-    return getLateralTransferAmount(span, volume, candidate, targetVolume, config) > config.minFlow;
+    return getPressureLateralTransferAmount(span, volume, candidate, targetVolume, config) > config.minFlow;
   });
 }
 
@@ -377,6 +479,32 @@ function findOpenSpan(world: VoxelWorld, x: number, y: number, z: number): Colum
 
 function getSpanKey(span: ColumnSpan): string {
   return `${span.x}:${span.z}:${span.bottomY}:${span.topY}`;
+}
+
+function getFluxEdge(a: ColumnSpan, b: ColumnSpan): FluxEdge {
+  const aKey = getSpanKey(a);
+  const bKey = getSpanKey(b);
+  return aKey <= bKey ? { key: `${aKey}|${bKey}`, sign: 1 } : { key: `${bKey}|${aKey}`, sign: -1 };
+}
+
+function getSignedPipeFlux(world: VoxelWorld, source: ColumnSpan, target: ColumnSpan): number {
+  const edge = getFluxEdge(source, target);
+  return (world.waterFlux.get(edge.key) ?? 0) * edge.sign;
+}
+
+function setSignedPipeFlux(
+  target: Map<string, number>,
+  source: ColumnSpan,
+  destination: ColumnSpan,
+  sourceToDestinationFlux: number,
+  minFlow: number,
+): void {
+  if (sourceToDestinationFlux <= minFlow) {
+    return;
+  }
+
+  const edge = getFluxEdge(source, destination);
+  target.set(edge.key, sourceToDestinationFlux * edge.sign);
 }
 
 function getSpanCapacity(span: ColumnSpan): number {
@@ -510,6 +638,41 @@ function applySpanVolumeCorrection(world: VoxelWorld, span: ColumnSpan, correcti
 function writeCellWater(world: VoxelWorld, cellIndex: number, amount: number): void {
   world.water[cellIndex] = world.solid[cellIndex] === 1 ? 0 : Math.min(1, Math.max(0, amount));
   refreshWetCell(world, cellIndex);
+}
+
+function decayWaterFlow(world: VoxelWorld): boolean {
+  let changed = false;
+  for (let i = 0; i < world.waterFlow.length; i += 1) {
+    const previousFlow = world.waterFlow[i];
+    const nextFlow = world.waterFlow[i] * FLOW_VECTOR_DECAY;
+    const settledFlow = Math.abs(nextFlow) <= FLOW_VECTOR_CLEAR_EPSILON ? 0 : nextFlow;
+    if (previousFlow !== settledFlow) {
+      changed = true;
+      world.waterFlow[i] = settledFlow;
+    }
+  }
+  return changed;
+}
+
+function recordWaterFlow(world: VoxelWorld, cellIndex: number, dx: number, dy: number, dz: number, amount: number): boolean {
+  if (amount <= EPSILON || world.solid[cellIndex] === 1) {
+    return false;
+  }
+
+  const offset = cellIndex * 3;
+  const nextX = clampFlowVector(world.waterFlow[offset] + dx * amount);
+  const nextY = clampFlowVector(world.waterFlow[offset + 1] + dy * amount);
+  const nextZ = clampFlowVector(world.waterFlow[offset + 2] + dz * amount);
+  const changed =
+    world.waterFlow[offset] !== nextX || world.waterFlow[offset + 1] !== nextY || world.waterFlow[offset + 2] !== nextZ;
+  world.waterFlow[offset] = nextX;
+  world.waterFlow[offset + 1] = nextY;
+  world.waterFlow[offset + 2] = nextZ;
+  return changed;
+}
+
+function clampFlowVector(value: number): number {
+  return Math.min(FLOW_VECTOR_LIMIT, Math.max(-FLOW_VECTOR_LIMIT, value));
 }
 
 function markSpanActive(world: VoxelWorld, span: ColumnSpan, volume: number, target: Set<number>): void {

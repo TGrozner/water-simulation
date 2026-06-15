@@ -1,4 +1,4 @@
-import { index, inBounds, wakeNeighbors } from "./grid";
+import { clearWaterMotion, index, inBounds, wakeNeighbors } from "./grid";
 import type { ScenePresetId } from "./createWorld";
 import type { VoxelWorld } from "./types";
 
@@ -156,6 +156,10 @@ function clearBox(world: VoxelWorld, clearRegion: ClearBox): number {
         wakeNeighbors(world, x, y, z);
       }
     }
+  }
+
+  if (removed > 0) {
+    clearWaterMotion(world);
   }
 
   return removed;

@@ -818,6 +818,9 @@ function runEdgeCaseHarness(): void {
   assertWaterDoesNotMergeDisconnectedVerticalSpans();
   assertWaterTransfersThroughRaisedPortal();
   assertWaterTransfersThroughOverlappingPortal();
+  assertWaterFluxMetadataTracksLateralTransfer();
+  assertFlowEventCollectionDoesNotChangeWaterState();
+  assertTopologyChangesClearWaterMotion();
   assertWaterSpillsIntoLowerAdjacentShaft();
   assertWaterDoesNotCrossNonOverlappingPortal();
   assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang();
@@ -981,7 +984,7 @@ function assertWaterTransfersThroughRaisedPortal(): void {
 
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
-  runUntilStable(world, waterConfig, baselineWater, 180, "edge/raised-portal");
+  runUntilStable(world, waterConfig, baselineWater, 360, "edge/raised-portal");
 
   const sourceWater = measureColumnWater(world, 1, 1, 0, 4);
   const targetWater = measureColumnWater(world, 2, 1, 2, 4);
@@ -1006,7 +1009,7 @@ function assertWaterTransfersThroughOverlappingPortal(): void {
 
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
-  runUntilStable(world, waterConfig, baselineWater, 160, "edge/overlapping-portal");
+  runUntilStable(world, waterConfig, baselineWater, 320, "edge/overlapping-portal");
 
   const leftWater = measureColumnWater(world, 1, 1, 0, 4);
   const rightWater = measureColumnWater(world, 2, 1, 0, 4);
@@ -1022,6 +1025,76 @@ function assertWaterTransfersThroughOverlappingPortal(): void {
   assertQuiescentAfterRewake(world, waterConfig, "edge/overlapping-portal");
 }
 
+function assertWaterFluxMetadataTracksLateralTransfer(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+
+  assert(stats.movedVolume > 0, "edge/flux-metadata: expected first tick to move water");
+  assert(stats.flowChanged, "edge/flux-metadata: expected water flow metadata to change");
+  assert(world.waterFlux.size > 0, "edge/flux-metadata: expected persistent portal flux");
+  assert(
+    getCellFlowX(world, 2, 0, 1) > 0,
+    `edge/flux-metadata: expected target column to record eastward flow, got ${getCellFlowX(world, 2, 0, 1).toFixed(4)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/flux-metadata: first tick");
+
+  runUntilStable(world, waterConfig, baselineWater, 320, "edge/flux-metadata");
+  assert(world.waterFlux.size === 0, `edge/flux-metadata: expected pipe flux to clear at rest, got ${world.waterFlux.size}`);
+  assertSmallWorldConserved(world, baselineWater, "edge/flux-metadata");
+}
+
+function assertFlowEventCollectionDoesNotChangeWaterState(): void {
+  const withoutEvents = createTwoColumnPortalWorld(0, 4, 0, 4);
+  const withEvents = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(withoutEvents, 1, y, 1, 1);
+    setWater(withEvents, 1, y, 1, 1);
+    wakeCell(withoutEvents, 1, y, 1);
+    wakeCell(withEvents, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const statsWithoutEvents = stepWaterSimulation(withoutEvents, waterConfig, { collectFlowEvents: false });
+  const statsWithEvents = stepWaterSimulation(withEvents, waterConfig, { collectFlowEvents: true });
+
+  assert(statsWithEvents.flowEvents.length > 0, "edge/flow-events-contract: expected collected flow events");
+  assert(
+    Math.abs(statsWithoutEvents.movedVolume - statsWithEvents.movedVolume) <= 0.0001,
+    "edge/flow-events-contract: event collection changed moved volume",
+  );
+  assert(
+    statsWithoutEvents.changedCells === statsWithEvents.changedCells,
+    "edge/flow-events-contract: event collection changed changed cell count",
+  );
+  assertWaterArraysEqual(withoutEvents, withEvents, "edge/flow-events-contract");
+  assertWaterFlowArraysEqual(withoutEvents, withEvents, "edge/flow-events-contract");
+}
+
+function assertTopologyChangesClearWaterMotion(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+  assert(world.waterFlux.size > 0, "edge/topology-clears-flow: expected flux before terrain change");
+  assert(totalWaterFlowMagnitude(world) > EPSILON, "edge/topology-clears-flow: expected flow vector before terrain change");
+
+  const removed = openClearBox(world, { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 });
+  assert(removed === 1, `edge/topology-clears-flow: expected one solid cell removed, got ${removed}`);
+  assert(world.waterFlux.size === 0, "edge/topology-clears-flow: terrain change should clear pipe flux");
+  assert(totalWaterFlowMagnitude(world) <= EPSILON, "edge/topology-clears-flow: terrain change should clear flow vectors");
+}
+
 function assertWaterSpillsIntoLowerAdjacentShaft(): void {
   const world = createTwoColumnPortalWorld(2, 4, 0, 4);
   for (let y = 2; y <= 4; y += 1) {
@@ -1031,7 +1104,7 @@ function assertWaterSpillsIntoLowerAdjacentShaft(): void {
 
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
-  runUntilStable(world, waterConfig, baselineWater, 220, "edge/lower-adjacent-shaft");
+  runUntilStable(world, waterConfig, baselineWater, 360, "edge/lower-adjacent-shaft");
 
   const targetLowerWater = measureColumnWater(world, 2, 1, 0, 1);
   const sourceWater = measureColumnWater(world, 1, 1, 2, 4);
@@ -1078,7 +1151,7 @@ function assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang(): void {
 
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
-  runUntilStable(world, waterConfig, baselineWater, 180, "edge/disconnected-overhang-pocket");
+  runUntilStable(world, waterConfig, baselineWater, 800, "edge/disconnected-overhang-pocket");
 
   const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
   const upperTargetWater = measureColumnWater(world, 2, 1, 3, 4);
@@ -1107,7 +1180,7 @@ function assertStackedOverhangSpansAreEnumeratedSeparately(): void {
 
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
-  runUntilStable(world, waterConfig, baselineWater, 240, "edge/stacked-overhang-spans");
+  runUntilStable(world, waterConfig, baselineWater, 900, "edge/stacked-overhang-spans");
 
   const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
   const upperTargetWater = measureColumnWater(world, 2, 1, 3, 5);
@@ -1168,6 +1241,38 @@ function measureColumnWater(world: VoxelWorld, x: number, z: number, minY: numbe
     water += world.water[index(world, x, y, z)];
   }
   return water;
+}
+
+function getCellFlowX(world: VoxelWorld, x: number, y: number, z: number): number {
+  return world.waterFlow[index(world, x, y, z) * 3];
+}
+
+function totalWaterFlowMagnitude(world: VoxelWorld): number {
+  let total = 0;
+  for (let offset = 0; offset < world.waterFlow.length; offset += 3) {
+    total += Math.hypot(world.waterFlow[offset], world.waterFlow[offset + 1], world.waterFlow[offset + 2]);
+  }
+  return total;
+}
+
+function assertWaterArraysEqual(a: VoxelWorld, b: VoxelWorld, context: string): void {
+  assert(a.water.length === b.water.length, `${context}: water array length mismatch`);
+  for (let cellIndex = 0; cellIndex < a.water.length; cellIndex += 1) {
+    assert(
+      Math.abs(a.water[cellIndex] - b.water[cellIndex]) <= 0.0001,
+      `${context}: water mismatch at ${formatCell(a, cellIndex)} (${a.water[cellIndex].toFixed(6)} vs ${b.water[cellIndex].toFixed(6)})`,
+    );
+  }
+}
+
+function assertWaterFlowArraysEqual(a: VoxelWorld, b: VoxelWorld, context: string): void {
+  assert(a.waterFlow.length === b.waterFlow.length, `${context}: water flow array length mismatch`);
+  for (let offset = 0; offset < a.waterFlow.length; offset += 1) {
+    assert(
+      Math.abs(a.waterFlow[offset] - b.waterFlow[offset]) <= 0.0001,
+      `${context}: water flow mismatch at offset ${offset} (${a.waterFlow[offset].toFixed(6)} vs ${b.waterFlow[offset].toFixed(6)})`,
+    );
+  }
 }
 
 function assertSmallWorldConserved(world: VoxelWorld, baselineWater: number, context: string): void {
@@ -1519,6 +1624,11 @@ function scanWorldWater(
 }
 
 function assertNoInvalidWater(world: VoxelWorld, context: string): void {
+  assert(
+    world.waterFlow.length === world.water.length * 3,
+    `${context}: water flow buffer length ${world.waterFlow.length} does not match water cells ${world.water.length}`,
+  );
+
   for (let cellIndex = 0; cellIndex < world.water.length; cellIndex += 1) {
     const water = world.water[cellIndex];
     assert(Number.isFinite(water), `${context}: non-finite water at ${formatCell(world, cellIndex)}`);
@@ -1527,6 +1637,17 @@ function assertNoInvalidWater(world: VoxelWorld, context: string): void {
       !(world.solid[cellIndex] === 1 && water > EPSILON),
       `${context}: water inside solid at ${formatCell(world, cellIndex)}`,
     );
+  }
+
+  for (let offset = 0; offset < world.waterFlow.length; offset += 1) {
+    const flow = world.waterFlow[offset];
+    assert(Number.isFinite(flow), `${context}: non-finite water flow at offset ${offset}`);
+    assert(Math.abs(flow) <= 2.5001, `${context}: water flow out of range at offset ${offset}: ${flow.toFixed(6)}`);
+  }
+
+  for (const [key, flux] of world.waterFlux) {
+    assert(Number.isFinite(flux), `${context}: non-finite pipe flux at ${key}`);
+    assert(Math.abs(flux) <= 2.5001, `${context}: pipe flux out of range at ${key}: ${flux.toFixed(6)}`);
   }
 }
 

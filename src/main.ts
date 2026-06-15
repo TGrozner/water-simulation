@@ -361,6 +361,7 @@ function canDigCell(_cellIndex: number): boolean {
 
 function handleDig(result: DigResult): void {
   terrainRenderer.markCellsDirty(result.changedCells);
+  clearFlowDebugState();
   advanceClearedGameStages();
   openClearedHazards();
 }
@@ -408,6 +409,7 @@ function advanceClearedGameStages(): void {
     openedStageChoices[openedStageCount] = clearedChoiceIndex;
     if (stageAutoOpen) {
       openSceneStage(world, currentPreset, openedStageCount, clearedChoiceIndex);
+      clearFlowDebugState();
     }
     openedStageCount += 1;
     markRenderOptionsChanged();
@@ -451,6 +453,7 @@ function openClearedHazards(): void {
     for (const clearRegion of hazard.boxes) {
       openClearBox(world, clearRegion);
     }
+    clearFlowDebugState();
     openedHazards.add(hazardIndex);
     markRenderOptionsChanged();
   }
@@ -469,6 +472,7 @@ function openCurrentScene(): void {
     openedStageCount += 1;
   }
   if (removed > 0) {
+    clearFlowDebugState();
     markRenderOptionsChanged();
   }
 }
@@ -490,6 +494,7 @@ function openAllSceneStages(): void {
   }
 
   if (removed > 0) {
+    clearFlowDebugState();
     markRenderOptionsChanged();
   }
 }
@@ -1162,7 +1167,7 @@ function animate(now: number): void {
       const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents });
       movedLastFrame += stats.movedVolume;
       recordFlowEvents(stats.flowEvents);
-      if (stats.movedVolume > 0 || stats.changedCells > 0 || stats.flowEvents.length > 0) {
+      if (stats.movedVolume > 0 || stats.changedCells > 0 || stats.flowChanged || stats.flowEvents.length > 0) {
         waterChanged = true;
       }
       tickCount += 1;
@@ -1437,6 +1442,15 @@ function recordFlowEvents(events: FlowEvent[]): void {
       ttl: FLOW_DEBUG_TTL,
     });
   }
+}
+
+function clearFlowDebugState(): void {
+  if (recentFlows.size === 0) {
+    return;
+  }
+
+  recentFlows.clear();
+  inputState.forceWaterUpdate = true;
 }
 
 function decayFlowEvents(): void {

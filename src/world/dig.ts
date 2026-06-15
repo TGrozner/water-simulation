@@ -1,4 +1,4 @@
-import { coords, index, inBounds, wakeNeighbors } from "./grid";
+import { clearWaterMotion, coords, index, inBounds, wakeNeighbors } from "./grid";
 import type { VoxelWorld } from "./types";
 
 export type DigResult = {
@@ -24,6 +24,10 @@ export function digSphere(
     world.solid[cellIndex] = 0;
     changedCells.push(cellIndex);
     wakeNeighbors(world, cell.x, cell.y, cell.z);
+  }
+
+  if (changedCells.length > 0) {
+    clearWaterMotion(world);
   }
 
   return {

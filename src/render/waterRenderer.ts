@@ -56,6 +56,8 @@ const EDGE_SHEET_MIN_AMOUNT = 0.48;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
+const FLOW_FOAM_THRESHOLD = 0.16;
+const FLOW_VISUAL_SCALE = 0.75;
 const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
@@ -1034,11 +1036,12 @@ function getSurfaceWave(x: number, y: number, z: number, cornerX: number, corner
 
 function getSurfaceColor(world: VoxelWorld, x: number, y: number, z: number, amount: number): Rgb {
   const depth = Math.min(1, getWaterColumnDepth(world, x, y, z) / 4.5);
+  const flow = getWaterFlowStrength(world, x, y, z);
   const variation = getCellVariation(x, y + 7, z) * 0.08;
   return {
-    r: 0.08 + amount * 0.05 - depth * 0.04 + variation,
-    g: 0.5 + amount * 0.14 - depth * 0.05 + variation * 0.45,
-    b: 0.76 + amount * 0.1,
+    r: 0.08 + amount * 0.05 - depth * 0.04 + variation + flow * 0.02,
+    g: 0.5 + amount * 0.14 - depth * 0.05 + variation * 0.45 + flow * 0.08,
+    b: 0.76 + amount * 0.1 + flow * 0.1,
   };
 }
 
@@ -1099,6 +1102,17 @@ function getWaterAmountAt(world: VoxelWorld, x: number, y: number, z: number): n
 
   const cellIndex = x + world.width * (z + world.depth * y);
   return world.solid[cellIndex] === 1 ? 0 : world.water[cellIndex];
+}
+
+function getWaterFlowStrength(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
+    return 0;
+  }
+
+  const cellIndex = x + world.width * (z + world.depth * y);
+  const offset = cellIndex * 3;
+  const magnitude = Math.hypot(world.waterFlow[offset], world.waterFlow[offset + 1], world.waterFlow[offset + 2]);
+  return Math.min(1, magnitude / FLOW_VISUAL_SCALE);
 }
 
 function isSolidWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number): boolean {
@@ -1271,8 +1285,13 @@ function shouldRenderWaterFoam(
 
   const dropScore = getWaterDropScore(world, x, y, z, amount);
   const verticalDrop = isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount);
+  const flow = getWaterFlowStrength(world, x, y, z);
   if (verticalDrop && amount > 0.28) {
-    return getCellVariation(x, y + 41, z) > 0.34;
+    return getCellVariation(x, y + 41, z) > 0.34 - flow * 0.16;
+  }
+
+  if (flow >= FLOW_FOAM_THRESHOLD && amount > 0.22 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
+    return getCellVariation(x, y + 41, z) > 0.82 - flow * 0.38;
   }
 
   return (
@@ -1284,7 +1303,7 @@ function shouldRenderWaterFoam(
 }
 
 function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
-  return Math.min(1.22, 0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16);
+  return Math.min(1.36, 0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16 + getWaterFlowStrength(world, x, y, z) * 0.22);
 }
 
 function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
