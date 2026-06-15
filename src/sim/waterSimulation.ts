@@ -7,6 +7,7 @@ import {
   type CellCoords,
   type VoxelWorld,
 } from "../world/types";
+import { recordSurfaceImpulse, stepWaterSurface } from "./waterSurface";
 
 const LATERAL_DIRECTIONS: CellCoords[] = [
   { x: 1, y: 0, z: 0 },
@@ -75,6 +76,7 @@ export type WaterStepStats = {
   movedVolume: number;
   changedCells: number;
   flowChanged: boolean;
+  surfaceChanged: boolean;
   flowEvents: FlowEvent[];
 };
 
@@ -99,6 +101,7 @@ export function stepWaterSimulation(
   const nextFlux = new Map<string, number>();
 
   let flowChanged = decayWaterFlow(world);
+  let surfaceChanged = false;
   world.activeCells.clear();
 
   for (const cellIndex of currentCells) {
@@ -119,6 +122,7 @@ export function stepWaterSimulation(
 
     const settled = settleSpan(world, span, config);
     flowChanged = settled.flowChanged || flowChanged;
+    surfaceChanged = settled.surfaceChanged || surfaceChanged;
     if (settled.changedCells > 0) {
       movedVolume += settled.movedVolume;
       changedCells += settled.changedCells;
@@ -147,6 +151,7 @@ export function stepWaterSimulation(
     movedVolume += result.movedVolume;
     changedCells += result.changedCells;
     flowChanged = result.flowChanged || flowChanged;
+    surfaceChanged = result.surfaceChanged || surfaceChanged;
   }
 
   for (const span of sortedSpans) {
@@ -158,11 +163,14 @@ export function stepWaterSimulation(
 
   world.activeCells = nextActiveCells;
   world.waterFlux = nextFlux;
+  const surfaceStep = stepWaterSurface(world);
+  surfaceChanged = surfaceStep.changed || surfaceChanged;
 
   return {
     movedVolume,
     changedCells,
     flowChanged,
+    surfaceChanged,
     flowEvents,
   };
 }
@@ -171,7 +179,7 @@ function settleSpan(
   world: VoxelWorld,
   span: ColumnSpan,
   config: WaterSimulationConfig,
-): { volume: number; movedVolume: number; changedCells: number; flowChanged: boolean } {
+): { volume: number; movedVolume: number; changedCells: number; flowChanged: boolean; surfaceChanged: boolean } {
   const volume = getSpanVolume(world, span);
   const fallRate = Math.max(0, config.downFlowRate);
   if (fallRate <= config.minFlow || volume <= EPSILON) {
@@ -180,12 +188,14 @@ function settleSpan(
       movedVolume: 0,
       changedCells: 0,
       flowChanged: false,
+      surfaceChanged: false,
     };
   }
 
   const amounts = getSpanAmounts(world, span);
   let movedVolume = 0;
   let flowChanged = false;
+  let surfaceChanged = false;
 
   for (let offset = 0; offset < amounts.length - 1; offset += 1) {
     const lowerAmount = amounts[offset];
@@ -198,10 +208,12 @@ function settleSpan(
     amounts[offset] += transfer;
     amounts[offset + 1] -= transfer;
     movedVolume += transfer;
+    const surfaceCellIndex = getSpanSurfaceCellIndex(world, span, volume);
     flowChanged = recordWaterFlow(world, index(world, span.x, span.bottomY + offset, span.z), 0, -1, 0, transfer) || flowChanged;
     flowChanged =
       recordWaterFlow(world, index(world, span.x, span.bottomY + offset + 1, span.z), 0, -1, 0, transfer) ||
       flowChanged;
+    surfaceChanged = recordSurfaceImpulse(world, surfaceCellIndex, transfer, 0, -1, 0) || surfaceChanged;
   }
 
   const result = writeSpanAmounts(world, span, amounts, volume);
@@ -210,6 +222,7 @@ function settleSpan(
     movedVolume,
     changedCells: result.changedCells,
     flowChanged,
+    surfaceChanged,
   };
 }
 
@@ -221,10 +234,11 @@ function flowSpanLaterally(
   collectFlowEvents: boolean,
   nextActiveCells: Set<number>,
   nextFlux: Map<string, number>,
-): { movedVolume: number; changedCells: number; flowChanged: boolean } {
+): { movedVolume: number; changedCells: number; flowChanged: boolean; surfaceChanged: boolean } {
   let movedVolume = 0;
   let changedCells = 0;
   let flowChanged = false;
+  let surfaceChanged = false;
 
   for (const candidate of getLateralCandidates(world, span)) {
     const sourceVolume = getSpanVolume(world, span);
@@ -238,8 +252,10 @@ function flowSpanLaterally(
       continue;
     }
 
+    const sourceSurfaceCellIndex = getSpanSurfaceCellIndex(world, span, sourceVolume);
     const sourceResult = setSpanVolume(world, span, sourceVolume - transfer.amount);
     const targetResult = setSpanVolume(world, candidate.span, targetVolume + transfer.amount);
+    const targetSurfaceCellIndex = getSpanSurfaceCellIndex(world, candidate.span, targetVolume + transfer.amount);
     movedVolume += transfer.amount;
     changedCells += sourceResult.changedCells + targetResult.changedCells;
 
@@ -251,7 +267,7 @@ function flowSpanLaterally(
     flowChanged =
       recordWaterFlow(
         world,
-        getSpanSurfaceCellIndex(world, span, sourceVolume),
+        sourceSurfaceCellIndex,
         candidate.direction.x,
         0,
         candidate.direction.z,
@@ -260,6 +276,24 @@ function flowSpanLaterally(
     flowChanged =
       recordWaterFlow(world, targetCellIndex, candidate.direction.x, 0, candidate.direction.z, transfer.amount) ||
       flowChanged;
+    surfaceChanged =
+      recordSurfaceImpulse(
+        world,
+        sourceSurfaceCellIndex,
+        transfer.amount,
+        candidate.direction.x,
+        0,
+        candidate.direction.z,
+      ) || surfaceChanged;
+    surfaceChanged =
+      recordSurfaceImpulse(
+        world,
+        targetSurfaceCellIndex,
+        transfer.amount,
+        candidate.direction.x,
+        0,
+        candidate.direction.z,
+      ) || surfaceChanged;
 
     if (collectFlowEvents) {
       flowEvents.push({
@@ -274,7 +308,7 @@ function flowSpanLaterally(
     }
   }
 
-  return { movedVolume, changedCells, flowChanged };
+  return { movedVolume, changedCells, flowChanged, surfaceChanged };
 }
 
 function getLateralCandidates(world: VoxelWorld, source: ColumnSpan): LateralCandidate[] {
@@ -641,16 +675,36 @@ function writeCellWater(world: VoxelWorld, cellIndex: number, amount: number): v
 }
 
 function decayWaterFlow(world: VoxelWorld): boolean {
+  if (world.activeFlowCells.size === 0) {
+    return false;
+  }
+
+  const nextActiveFlowCells = new Set<number>();
   let changed = false;
-  for (let i = 0; i < world.waterFlow.length; i += 1) {
-    const previousFlow = world.waterFlow[i];
-    const nextFlow = world.waterFlow[i] * FLOW_VECTOR_DECAY;
-    const settledFlow = Math.abs(nextFlow) <= FLOW_VECTOR_CLEAR_EPSILON ? 0 : nextFlow;
-    if (previousFlow !== settledFlow) {
-      changed = true;
-      world.waterFlow[i] = settledFlow;
+  for (const cellIndex of world.activeFlowCells) {
+    const offset = cellIndex * 3;
+    let cellStillActive = false;
+
+    for (let axisOffset = 0; axisOffset < 3; axisOffset += 1) {
+      const flowOffset = offset + axisOffset;
+      const previousFlow = world.waterFlow[flowOffset];
+      const nextFlow = previousFlow * FLOW_VECTOR_DECAY;
+      const settledFlow = Math.abs(nextFlow) <= FLOW_VECTOR_CLEAR_EPSILON ? 0 : nextFlow;
+      if (previousFlow !== settledFlow) {
+        changed = true;
+        world.waterFlow[flowOffset] = settledFlow;
+      }
+      if (settledFlow !== 0) {
+        cellStillActive = true;
+      }
+    }
+
+    if (cellStillActive) {
+      nextActiveFlowCells.add(cellIndex);
     }
   }
+
+  world.activeFlowCells = nextActiveFlowCells;
   return changed;
 }
 
@@ -668,6 +722,11 @@ function recordWaterFlow(world: VoxelWorld, cellIndex: number, dx: number, dy: n
   world.waterFlow[offset] = nextX;
   world.waterFlow[offset + 1] = nextY;
   world.waterFlow[offset + 2] = nextZ;
+  if (nextX !== 0 || nextY !== 0 || nextZ !== 0) {
+    world.activeFlowCells.add(cellIndex);
+  } else {
+    world.activeFlowCells.delete(cellIndex);
+  }
   return changed;
 }
 

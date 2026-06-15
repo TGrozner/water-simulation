@@ -1167,7 +1167,13 @@ function animate(now: number): void {
       const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents });
       movedLastFrame += stats.movedVolume;
       recordFlowEvents(stats.flowEvents);
-      if (stats.movedVolume > 0 || stats.changedCells > 0 || stats.flowChanged || stats.flowEvents.length > 0) {
+      if (
+        stats.movedVolume > 0 ||
+        stats.changedCells > 0 ||
+        stats.flowChanged ||
+        stats.surfaceChanged ||
+        stats.flowEvents.length > 0
+      ) {
         waterChanged = true;
       }
       tickCount += 1;

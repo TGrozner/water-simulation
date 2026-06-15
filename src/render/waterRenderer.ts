@@ -13,6 +13,8 @@ import {
   RepeatWrapping,
   Scene,
 } from "three";
+import { getWaterMotionSample } from "../sim/waterMotion";
+import { getWaterSurfaceOffsetAt } from "../sim/waterSurface";
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { InstancedMeshBatch } from "./instancedMeshBatch";
@@ -43,7 +45,10 @@ const sprayDummy = new Object3D();
 const FULL_WATER_RENDER_THRESHOLD = 0.96;
 const EXPOSED_WATER_DELTA = 0.05;
 const SURFACE_LIFT = 0.024;
-const SURFACE_WAVE_AMPLITUDE = 0.072;
+const SURFACE_WAVE_AMPLITUDE = 0.032;
+const SURFACE_MOTION_SCALE = 0.86;
+const SURFACE_FLOW_TILT_SCALE = 0.036;
+const SURFACE_MOTION_HEADROOM = 0.14;
 const SURFACE_SHORE_INSET = 0.085;
 const SURFACE_SOLID_INSET = 0.18;
 const SURFACE_EDGE_JITTER = 0.045;
@@ -57,7 +62,6 @@ const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
 const FLOW_FOAM_THRESHOLD = 0.16;
-const FLOW_VISUAL_SCALE = 0.75;
 const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
@@ -349,6 +353,7 @@ function appendWaterCurtains(
         !debugMode &&
         waterHeight >= EDGE_SHEET_MIN_AMOUNT &&
         hasStrongVerticalWaterDrop(world, x, y, z, waterHeight) &&
+        hasActiveWaterMotion(world, x, y, z) &&
         neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP
       ) {
         appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight);
@@ -1023,9 +1028,53 @@ function getSurfaceCornerY(
   }
 
   const average = count > 0 ? total / count : y + waterHeight;
-  const wave = getSurfaceWave(x, y, z, cornerX, cornerZ) * SURFACE_WAVE_AMPLITUDE;
+  const motion = getWaterMotionSample(world, x, y, z);
+  const wave = getSurfaceWave(x, y, z, cornerX, cornerZ) * SURFACE_WAVE_AMPLITUDE * (0.35 + motion.strength * 0.65);
+  const surfaceOffset = getSurfaceCornerMotionOffset(world, x, y, z, cornerX, cornerZ) * SURFACE_MOTION_SCALE;
+  const flowTilt = getSurfaceFlowTilt(motion.x, motion.z, cornerX, cornerZ);
   const reliefSag = getSurfaceCornerReliefSag(world, x, y, z, waterHeight, cornerX, cornerZ);
-  return Math.max(y + 0.04, Math.min(y + 1.04, average + SURFACE_LIFT + wave - reliefSag));
+  const maxSurfaceY = y + Math.min(1.08, Math.max(0.08, waterHeight + SURFACE_MOTION_HEADROOM));
+  return Math.max(y + 0.04, Math.min(maxSurfaceY, average + SURFACE_LIFT + wave + surfaceOffset + flowTilt - reliefSag));
+}
+
+function getSurfaceCornerMotionOffset(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  cornerX: 0 | 1,
+  cornerZ: 0 | 1,
+): number {
+  const xs = cornerX === 0 ? [x - 1, x] : [x, x + 1];
+  const zs = cornerZ === 0 ? [z - 1, z] : [z, z + 1];
+  let total = 0;
+  let count = 0;
+
+  for (const sampleX of xs) {
+    for (const sampleZ of zs) {
+      const amount = getWaterAmountAt(world, sampleX, y, sampleZ);
+      if (amount <= EPSILON) {
+        continue;
+      }
+
+      total += getWaterSurfaceOffsetAt(world, sampleX, y, sampleZ);
+      count += 1;
+    }
+  }
+
+  return count > 0 ? total / count : 0;
+}
+
+function getSurfaceFlowTilt(flowX: number, flowZ: number, cornerX: 0 | 1, cornerZ: 0 | 1): number {
+  const horizontal = Math.hypot(flowX, flowZ);
+  if (horizontal <= EPSILON) {
+    return 0;
+  }
+
+  const localX = cornerX === 0 ? -0.5 : 0.5;
+  const localZ = cornerZ === 0 ? -0.5 : 0.5;
+  const downstream = (flowX * localX + flowZ * localZ) / horizontal;
+  return downstream * Math.min(SURFACE_FLOW_TILT_SCALE, horizontal * 0.018);
 }
 
 function getSurfaceWave(x: number, y: number, z: number, cornerX: number, cornerZ: number): number {
@@ -1036,12 +1085,14 @@ function getSurfaceWave(x: number, y: number, z: number, cornerX: number, corner
 
 function getSurfaceColor(world: VoxelWorld, x: number, y: number, z: number, amount: number): Rgb {
   const depth = Math.min(1, getWaterColumnDepth(world, x, y, z) / 4.5);
-  const flow = getWaterFlowStrength(world, x, y, z);
+  const motion = getWaterMotionSample(world, x, y, z);
+  const flow = motion.strength;
+  const surfaceEnergy = Math.min(1, (Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity)) / 0.14);
   const variation = getCellVariation(x, y + 7, z) * 0.08;
   return {
-    r: 0.08 + amount * 0.05 - depth * 0.04 + variation + flow * 0.02,
-    g: 0.5 + amount * 0.14 - depth * 0.05 + variation * 0.45 + flow * 0.08,
-    b: 0.76 + amount * 0.1 + flow * 0.1,
+    r: 0.08 + amount * 0.05 - depth * 0.04 + variation + flow * 0.02 + surfaceEnergy * 0.02,
+    g: 0.5 + amount * 0.14 - depth * 0.05 + variation * 0.45 + flow * 0.08 + surfaceEnergy * 0.05,
+    b: 0.76 + amount * 0.1 + flow * 0.1 + surfaceEnergy * 0.08,
   };
 }
 
@@ -1102,17 +1153,6 @@ function getWaterAmountAt(world: VoxelWorld, x: number, y: number, z: number): n
 
   const cellIndex = x + world.width * (z + world.depth * y);
   return world.solid[cellIndex] === 1 ? 0 : world.water[cellIndex];
-}
-
-function getWaterFlowStrength(world: VoxelWorld, x: number, y: number, z: number): number {
-  if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
-    return 0;
-  }
-
-  const cellIndex = x + world.width * (z + world.depth * y);
-  const offset = cellIndex * 3;
-  const magnitude = Math.hypot(world.waterFlow[offset], world.waterFlow[offset + 1], world.waterFlow[offset + 2]);
-  return Math.min(1, magnitude / FLOW_VISUAL_SCALE);
 }
 
 function isSolidWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number): boolean {
@@ -1185,7 +1225,7 @@ function hasStrongVerticalWaterDrop(world: VoxelWorld, x: number, y: number, z: 
 }
 
 function isFallingWaterCell(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
-  if (hasStrongVerticalWaterDrop(world, x, y, z, amount)) {
+  if (hasStrongVerticalWaterDrop(world, x, y, z, amount) && hasDownwardWaterMotion(world, x, y, z)) {
     return true;
   }
 
@@ -1196,16 +1236,26 @@ function isFallingWaterCell(world: VoxelWorld, x: number, y: number, z: number, 
     return false;
   }
 
-  return amount < 0.72 && getWaterDropScore(world, x, y, z, amount) >= 2;
+  return amount < 0.72 && getWaterDropScore(world, x, y, z, amount) >= 2 && hasActiveWaterMotion(world, x, y, z);
 }
 
 function shouldStartFallingRibbon(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
-  if (!hasStrongVerticalWaterDrop(world, x, y, z, amount)) {
+  if (!hasStrongVerticalWaterDrop(world, x, y, z, amount) || !hasDownwardWaterMotion(world, x, y, z)) {
     return false;
   }
 
   const aboveAmount = getWaterAmountAt(world, x, y + 1, z);
   return aboveAmount <= EPSILON || !hasStrongVerticalWaterDrop(world, x, y + 1, z, aboveAmount);
+}
+
+function hasDownwardWaterMotion(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  const motion = getWaterMotionSample(world, x, y, z);
+  return motion.kind === "falling" || motion.kind === "turbulent";
+}
+
+function hasActiveWaterMotion(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  const motion = getWaterMotionSample(world, x, y, z);
+  return motion.kind !== "settled";
 }
 
 function findFallingRibbonBottomY(world: VoxelWorld, x: number, y: number, z: number): number {
@@ -1285,9 +1335,10 @@ function shouldRenderWaterFoam(
 
   const dropScore = getWaterDropScore(world, x, y, z, amount);
   const verticalDrop = isWaterExposedToLowerNeighbor(world, x, y - 1, z, amount);
-  const flow = getWaterFlowStrength(world, x, y, z);
+  const motion = getWaterMotionSample(world, x, y, z);
+  const flow = motion.strength;
   if (verticalDrop && amount > 0.28) {
-    return getCellVariation(x, y + 41, z) > 0.34 - flow * 0.16;
+    return motion.kind !== "settled" && getCellVariation(x, y + 41, z) > 0.34 - flow * 0.16;
   }
 
   if (flow >= FLOW_FOAM_THRESHOLD && amount > 0.22 && shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
@@ -1303,7 +1354,12 @@ function shouldRenderWaterFoam(
 }
 
 function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
-  return Math.min(1.36, 0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16 + getWaterFlowStrength(world, x, y, z) * 0.22);
+  const motion = getWaterMotionSample(world, x, y, z);
+  const surfaceEnergy = Math.min(1, (Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity)) / 0.14);
+  return Math.min(
+    1.36,
+    0.42 + getWaterDropScore(world, x, y, z, amount) * 0.14 + amount * 0.16 + motion.strength * 0.2 + surfaceEnergy * 0.1,
+  );
 }
 
 function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {

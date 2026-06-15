@@ -10,8 +10,12 @@ export function createEmptyWorld(width: number, height: number, depth: number): 
     solid: new Uint8Array(cellCount),
     water: new Float32Array(cellCount),
     waterFlow: new Float32Array(cellCount * 3),
+    waterSurfaceOffset: new Float32Array(cellCount),
+    waterSurfaceVelocity: new Float32Array(cellCount),
     waterFlux: new Map<string, number>(),
     activeCells: new Set<number>(),
+    activeFlowCells: new Set<number>(),
+    activeSurfaceCells: new Set<number>(),
     wetCells: new Set<number>(),
   };
 }
@@ -80,7 +84,11 @@ export function rebuildWetCells(world: VoxelWorld): void {
 
 export function clearWaterMotion(world: VoxelWorld): void {
   world.waterFlow.fill(0);
+  world.waterSurfaceOffset.fill(0);
+  world.waterSurfaceVelocity.fill(0);
   world.waterFlux.clear();
+  world.activeFlowCells.clear();
+  world.activeSurfaceCells.clear();
 }
 
 export function getCapacity(world: VoxelWorld, x: number, y: number, z: number): number {

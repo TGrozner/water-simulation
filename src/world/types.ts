@@ -22,7 +22,11 @@ export type VoxelWorld = {
   solid: Uint8Array;
   water: Float32Array;
   waterFlow: Float32Array;
+  waterSurfaceOffset: Float32Array;
+  waterSurfaceVelocity: Float32Array;
   waterFlux: Map<string, number>;
   activeCells: Set<number>;
+  activeFlowCells: Set<number>;
+  activeSurfaceCells: Set<number>;
   wetCells: Set<number>;
 };

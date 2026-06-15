@@ -1,4 +1,6 @@
 import { stepWaterSimulation } from "./waterSimulation";
+import { getWaterMotionSample } from "./waterMotion";
+import { WATER_SURFACE_OFFSET_LIMIT, WATER_SURFACE_VELOCITY_LIMIT } from "./waterSurface";
 import {
   DEFAULT_TUNING_PRESET_ID,
   TUNING_PRESETS,
@@ -819,6 +821,7 @@ function runEdgeCaseHarness(): void {
   assertWaterTransfersThroughRaisedPortal();
   assertWaterTransfersThroughOverlappingPortal();
   assertWaterFluxMetadataTracksLateralTransfer();
+  assertWaterSurfaceMetadataTracksMotion();
   assertFlowEventCollectionDoesNotChangeWaterState();
   assertTopologyChangesClearWaterMotion();
   assertWaterSpillsIntoLowerAdjacentShaft();
@@ -1038,6 +1041,7 @@ function assertWaterFluxMetadataTracksLateralTransfer(): void {
 
   assert(stats.movedVolume > 0, "edge/flux-metadata: expected first tick to move water");
   assert(stats.flowChanged, "edge/flux-metadata: expected water flow metadata to change");
+  assert(stats.surfaceChanged, "edge/flux-metadata: expected water surface metadata to change");
   assert(world.waterFlux.size > 0, "edge/flux-metadata: expected persistent portal flux");
   assert(
     getCellFlowX(world, 2, 0, 1) > 0,
@@ -1048,6 +1052,36 @@ function assertWaterFluxMetadataTracksLateralTransfer(): void {
   runUntilStable(world, waterConfig, baselineWater, 320, "edge/flux-metadata");
   assert(world.waterFlux.size === 0, `edge/flux-metadata: expected pipe flux to clear at rest, got ${world.waterFlux.size}`);
   assertSmallWorldConserved(world, baselineWater, "edge/flux-metadata");
+}
+
+function assertWaterSurfaceMetadataTracksMotion(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+  const targetMotion = getWaterMotionSample(world, 2, 0, 1);
+
+  assert(stats.surfaceChanged, "edge/surface-motion: expected transfer to disturb water surface");
+  assert(totalWaterSurfaceMagnitude(world) > EPSILON, "edge/surface-motion: expected non-zero surface motion");
+  assert(
+    targetMotion.kind === "lateral" || targetMotion.kind === "turbulent",
+    `edge/surface-motion: expected lateral/turbulent target motion, got ${targetMotion.kind}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/surface-motion: first tick");
+
+  runUntilStable(world, waterConfig, baselineWater, 320, "edge/surface-motion");
+  const activeCellsAfterWaterSettles = world.activeCells.size;
+  runSurfaceUntilSettled(world, waterConfig, baselineWater, 240, "edge/surface-motion");
+  assert(
+    activeCellsAfterWaterSettles === 0 && world.activeCells.size === 0,
+    `edge/surface-motion: surface waves should not keep water active cells awake (${activeCellsAfterWaterSettles} -> ${world.activeCells.size})`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/surface-motion");
 }
 
 function assertFlowEventCollectionDoesNotChangeWaterState(): void {
@@ -1075,6 +1109,13 @@ function assertFlowEventCollectionDoesNotChangeWaterState(): void {
   );
   assertWaterArraysEqual(withoutEvents, withEvents, "edge/flow-events-contract");
   assertWaterFlowArraysEqual(withoutEvents, withEvents, "edge/flow-events-contract");
+  assertWaterSurfaceArraysEqual(withoutEvents, withEvents, "edge/flow-events-contract");
+  assertSetsEqual(withoutEvents.activeFlowCells, withEvents.activeFlowCells, "edge/flow-events-contract: active flow cells");
+  assertSetsEqual(
+    withoutEvents.activeSurfaceCells,
+    withEvents.activeSurfaceCells,
+    "edge/flow-events-contract: active surface cells",
+  );
 }
 
 function assertTopologyChangesClearWaterMotion(): void {
@@ -1088,11 +1129,15 @@ function assertTopologyChangesClearWaterMotion(): void {
   stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
   assert(world.waterFlux.size > 0, "edge/topology-clears-flow: expected flux before terrain change");
   assert(totalWaterFlowMagnitude(world) > EPSILON, "edge/topology-clears-flow: expected flow vector before terrain change");
+  assert(totalWaterSurfaceMagnitude(world) > EPSILON, "edge/topology-clears-flow: expected surface motion before terrain change");
 
   const removed = openClearBox(world, { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 });
   assert(removed === 1, `edge/topology-clears-flow: expected one solid cell removed, got ${removed}`);
   assert(world.waterFlux.size === 0, "edge/topology-clears-flow: terrain change should clear pipe flux");
   assert(totalWaterFlowMagnitude(world) <= EPSILON, "edge/topology-clears-flow: terrain change should clear flow vectors");
+  assert(world.activeFlowCells.size === 0, "edge/topology-clears-flow: terrain change should clear active flow cells");
+  assert(totalWaterSurfaceMagnitude(world) <= EPSILON, "edge/topology-clears-flow: terrain change should clear surface motion");
+  assert(world.activeSurfaceCells.size === 0, "edge/topology-clears-flow: terrain change should clear active surface cells");
 }
 
 function assertWaterSpillsIntoLowerAdjacentShaft(): void {
@@ -1255,6 +1300,14 @@ function totalWaterFlowMagnitude(world: VoxelWorld): number {
   return total;
 }
 
+function totalWaterSurfaceMagnitude(world: VoxelWorld): number {
+  let total = 0;
+  for (let cellIndex = 0; cellIndex < world.waterSurfaceOffset.length; cellIndex += 1) {
+    total += Math.abs(world.waterSurfaceOffset[cellIndex]) + Math.abs(world.waterSurfaceVelocity[cellIndex]);
+  }
+  return total;
+}
+
 function assertWaterArraysEqual(a: VoxelWorld, b: VoxelWorld, context: string): void {
   assert(a.water.length === b.water.length, `${context}: water array length mismatch`);
   for (let cellIndex = 0; cellIndex < a.water.length; cellIndex += 1) {
@@ -1275,9 +1328,58 @@ function assertWaterFlowArraysEqual(a: VoxelWorld, b: VoxelWorld, context: strin
   }
 }
 
+function assertWaterSurfaceArraysEqual(a: VoxelWorld, b: VoxelWorld, context: string): void {
+  assert(a.waterSurfaceOffset.length === b.waterSurfaceOffset.length, `${context}: water surface offset array length mismatch`);
+  assert(
+    a.waterSurfaceVelocity.length === b.waterSurfaceVelocity.length,
+    `${context}: water surface velocity array length mismatch`,
+  );
+  for (let cellIndex = 0; cellIndex < a.waterSurfaceOffset.length; cellIndex += 1) {
+    assert(
+      Math.abs(a.waterSurfaceOffset[cellIndex] - b.waterSurfaceOffset[cellIndex]) <= 0.0001,
+      `${context}: water surface offset mismatch at ${formatCell(a, cellIndex)} (${a.waterSurfaceOffset[cellIndex].toFixed(
+        6,
+      )} vs ${b.waterSurfaceOffset[cellIndex].toFixed(6)})`,
+    );
+    assert(
+      Math.abs(a.waterSurfaceVelocity[cellIndex] - b.waterSurfaceVelocity[cellIndex]) <= 0.0001,
+      `${context}: water surface velocity mismatch at ${formatCell(a, cellIndex)} (${a.waterSurfaceVelocity[
+        cellIndex
+      ].toFixed(6)} vs ${b.waterSurfaceVelocity[cellIndex].toFixed(6)})`,
+    );
+  }
+}
+
+function assertSetsEqual(a: Set<number>, b: Set<number>, context: string): void {
+  assert(a.size === b.size, `${context}: set size mismatch (${a.size} vs ${b.size})`);
+  for (const value of a) {
+    assert(b.has(value), `${context}: missing value ${value}`);
+  }
+}
+
 function assertSmallWorldConserved(world: VoxelWorld, baselineWater: number, context: string): void {
   const volumeDelta = Math.abs(totalWater(world) - baselineWater);
   assert(volumeDelta <= 0.0001, `${context}: expected strict conservation, drifted by ${volumeDelta.toFixed(6)}`);
+}
+
+function runSurfaceUntilSettled(
+  world: VoxelWorld,
+  waterConfig: ReturnType<typeof cloneTuningPreset>["waterConfig"],
+  baselineWater: number,
+  maxTicks: number,
+  context: string,
+): void {
+  for (let tick = 0; tick < maxTicks; tick += 1) {
+    const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+    assert(stats.movedVolume <= EPSILON, `${context}: expected no volume movement during surface settle, got ${stats.movedVolume}`);
+    scanWorldWater(world, baselineWater, 0.0001, `${context}: surface settle ${tick}`);
+
+    if (world.activeSurfaceCells.size === 0 && totalWaterSurfaceMagnitude(world) <= EPSILON) {
+      return;
+    }
+  }
+
+  assert(false, `${context}: expected water surface motion to settle within ${maxTicks} ticks`);
 }
 
 function assertQuiescentAfterRewake(
@@ -1628,6 +1730,14 @@ function assertNoInvalidWater(world: VoxelWorld, context: string): void {
     world.waterFlow.length === world.water.length * 3,
     `${context}: water flow buffer length ${world.waterFlow.length} does not match water cells ${world.water.length}`,
   );
+  assert(
+    world.waterSurfaceOffset.length === world.water.length,
+    `${context}: water surface offset buffer length ${world.waterSurfaceOffset.length} does not match water cells ${world.water.length}`,
+  );
+  assert(
+    world.waterSurfaceVelocity.length === world.water.length,
+    `${context}: water surface velocity buffer length ${world.waterSurfaceVelocity.length} does not match water cells ${world.water.length}`,
+  );
 
   for (let cellIndex = 0; cellIndex < world.water.length; cellIndex += 1) {
     const water = world.water[cellIndex];
@@ -1648,6 +1758,29 @@ function assertNoInvalidWater(world: VoxelWorld, context: string): void {
   for (const [key, flux] of world.waterFlux) {
     assert(Number.isFinite(flux), `${context}: non-finite pipe flux at ${key}`);
     assert(Math.abs(flux) <= 2.5001, `${context}: pipe flux out of range at ${key}: ${flux.toFixed(6)}`);
+  }
+
+  for (let cellIndex = 0; cellIndex < world.waterSurfaceOffset.length; cellIndex += 1) {
+    const offset = world.waterSurfaceOffset[cellIndex];
+    const velocity = world.waterSurfaceVelocity[cellIndex];
+    assert(Number.isFinite(offset), `${context}: non-finite water surface offset at ${formatCell(world, cellIndex)}`);
+    assert(Number.isFinite(velocity), `${context}: non-finite water surface velocity at ${formatCell(world, cellIndex)}`);
+    assert(
+      Math.abs(offset) <= WATER_SURFACE_OFFSET_LIMIT + 0.0001,
+      `${context}: water surface offset out of range at ${formatCell(world, cellIndex)}: ${offset.toFixed(6)}`,
+    );
+    assert(
+      Math.abs(velocity) <= WATER_SURFACE_VELOCITY_LIMIT + 0.0001,
+      `${context}: water surface velocity out of range at ${formatCell(world, cellIndex)}: ${velocity.toFixed(6)}`,
+    );
+  }
+
+  for (const cellIndex of world.activeSurfaceCells) {
+    assert(cellIndex >= 0 && cellIndex < world.water.length, `${context}: active surface cell out of bounds: ${cellIndex}`);
+  }
+
+  for (const cellIndex of world.activeFlowCells) {
+    assert(cellIndex >= 0 && cellIndex < world.water.length, `${context}: active flow cell out of bounds: ${cellIndex}`);
   }
 }
 
