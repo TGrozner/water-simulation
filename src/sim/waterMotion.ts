@@ -1,5 +1,5 @@
 import { inBounds, index } from "../world/grid";
-import type { VoxelWorld } from "../world/types";
+import { EPSILON, type VoxelWorld } from "../world/types";
 import {
   getWaterSurfaceOffsetAt,
   getWaterSurfaceVelocityAt,
@@ -21,10 +21,20 @@ export type WaterMotionSample = {
   kind: WaterMotionKind;
 };
 
+export type WaterParticleCueKind = "none" | "jet" | "spray" | "splash";
+
+export type WaterParticleCue = {
+  kind: WaterParticleCueKind;
+  intensity: number;
+  direction: { x: number; y: number; z: number };
+  surfaceEnergy: number;
+};
+
 export const WATER_FLOW_VISUAL_SCALE = 0.75;
 const LATERAL_MOTION_THRESHOLD = 0.08;
 const FALLING_MOTION_THRESHOLD = 0.11;
 const TURBULENT_SURFACE_THRESHOLD = 0.035;
+const PARTICLE_SURFACE_ENERGY_SCALE = 0.14;
 
 export function getWaterMotionSample(world: VoxelWorld, x: number, y: number, z: number): WaterMotionSample {
   const flow = getWaterFlowVector(world, x, y, z);
@@ -77,4 +87,129 @@ export function getWaterFlowVector(world: VoxelWorld, x: number, y: number, z: n
 
 export function getWaterFlowStrength(world: VoxelWorld, x: number, y: number, z: number): number {
   return getWaterMotionSample(world, x, y, z).strength;
+}
+
+export function getWaterParticleCue(world: VoxelWorld, x: number, y: number, z: number, amount: number): WaterParticleCue {
+  if (!isOpenWaterCell(world, x, y, z) || amount <= EPSILON) {
+    return createEmptyParticleCue();
+  }
+
+  const motion = getWaterMotionSample(world, x, y, z);
+  const surfaceEnergy = Math.min(
+    1,
+    (Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity)) / PARTICLE_SURFACE_ENERGY_SCALE,
+  );
+  const drop = getOpenDropVector(world, x, y, z, amount);
+  const moving = motion.kind !== "settled";
+  if (!moving && surfaceEnergy < 0.18) {
+    return createEmptyParticleCue();
+  }
+
+  if (drop.y < 0 && (motion.vertical >= FALLING_MOTION_THRESHOLD || surfaceEnergy >= 0.35)) {
+    return {
+      kind: surfaceEnergy >= 0.5 || motion.kind === "turbulent" ? "splash" : "spray",
+      intensity: clamp01(0.24 + motion.vertical * 0.52 + surfaceEnergy * 0.42 + drop.strength * 0.16),
+      direction: normalizeCueDirection(motion.x + drop.x * 0.35, -Math.max(0.35, motion.vertical + drop.strength), motion.z + drop.z * 0.35),
+      surfaceEnergy,
+    };
+  }
+
+  if (motion.horizontal >= LATERAL_MOTION_THRESHOLD) {
+    const lateralX = drop.x !== 0 || drop.z !== 0 ? motion.x + drop.x * 0.55 : motion.x;
+    const lateralZ = drop.x !== 0 || drop.z !== 0 ? motion.z + drop.z * 0.55 : motion.z;
+    return {
+      kind: drop.strength > 0.35 ? "spray" : "jet",
+      intensity: clamp01(0.18 + motion.horizontal * 0.55 + surfaceEnergy * 0.22 + drop.strength * 0.18),
+      direction: normalizeCueDirection(lateralX, -0.08 - surfaceEnergy * 0.16, lateralZ),
+      surfaceEnergy,
+    };
+  }
+
+  if (surfaceEnergy >= 0.35) {
+    return {
+      kind: "splash",
+      intensity: clamp01(0.12 + surfaceEnergy * 0.62),
+      direction: normalizeCueDirection(motion.x, 0.2, motion.z),
+      surfaceEnergy,
+    };
+  }
+
+  return createEmptyParticleCue(surfaceEnergy);
+}
+
+function getOpenDropVector(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  amount: number,
+): { x: number; y: number; z: number; strength: number } {
+  let dropX = 0;
+  let dropY = 0;
+  let dropZ = 0;
+  let strength = 0;
+
+  if (isLowerOpenWaterNeighbor(world, x, y - 1, z, amount)) {
+    dropY -= 1;
+    strength += 1;
+  }
+
+  const lateralDrops = [
+    { x: -1, z: 0 },
+    { x: 1, z: 0 },
+    { x: 0, z: -1 },
+    { x: 0, z: 1 },
+  ] as const;
+
+  for (const offset of lateralDrops) {
+    if (!isLowerOpenWaterNeighbor(world, x + offset.x, y, z + offset.z, amount)) {
+      continue;
+    }
+
+    dropX += offset.x;
+    dropZ += offset.z;
+    strength += 0.42;
+  }
+
+  return { x: dropX, y: dropY, z: dropZ, strength: Math.min(1, strength) };
+}
+
+function isLowerOpenWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number, amount: number): boolean {
+  if (!inBounds(world, x, y, z)) {
+    return true;
+  }
+
+  const cellIndex = index(world, x, y, z);
+  return world.solid[cellIndex] !== 1 && world.water[cellIndex] < amount - 0.2;
+}
+
+function isOpenWaterCell(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  if (!inBounds(world, x, y, z)) {
+    return false;
+  }
+
+  const cellIndex = index(world, x, y, z);
+  return world.solid[cellIndex] !== 1 && world.water[cellIndex] > EPSILON;
+}
+
+function normalizeCueDirection(x: number, y: number, z: number): { x: number; y: number; z: number } {
+  const length = Math.hypot(x, y, z);
+  if (length <= EPSILON) {
+    return { x: 0, y: 1, z: 0 };
+  }
+
+  return { x: x / length, y: y / length, z: z / length };
+}
+
+function createEmptyParticleCue(surfaceEnergy = 0): WaterParticleCue {
+  return {
+    kind: "none",
+    intensity: 0,
+    direction: { x: 0, y: 0, z: 0 },
+    surfaceEnergy,
+  };
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }

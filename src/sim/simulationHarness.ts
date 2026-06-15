@@ -1,5 +1,5 @@
 import { stepWaterSimulation } from "./waterSimulation";
-import { getWaterMotionSample } from "./waterMotion";
+import { getWaterMotionSample, getWaterParticleCue } from "./waterMotion";
 import { WATER_SURFACE_OFFSET_LIMIT, WATER_SURFACE_VELOCITY_LIMIT } from "./waterSurface";
 import {
   DEFAULT_TUNING_PRESET_ID,
@@ -822,6 +822,7 @@ function runEdgeCaseHarness(): void {
   assertWaterTransfersThroughOverlappingPortal();
   assertWaterFluxMetadataTracksLateralTransfer();
   assertWaterSurfaceMetadataTracksMotion();
+  assertWaterParticleCuesFollowMotion();
   assertFlowEventCollectionDoesNotChangeWaterState();
   assertTopologyChangesClearWaterMotion();
   assertWaterSpillsIntoLowerAdjacentShaft();
@@ -1082,6 +1083,52 @@ function assertWaterSurfaceMetadataTracksMotion(): void {
     `edge/surface-motion: surface waves should not keep water active cells awake (${activeCellsAfterWaterSettles} -> ${world.activeCells.size})`,
   );
   assertSmallWorldConserved(world, baselineWater, "edge/surface-motion");
+}
+
+function assertWaterParticleCuesFollowMotion(): void {
+  const settledWorld = createEmptyWorld(3, 3, 3);
+  setWater(settledWorld, 1, 0, 1, 1);
+  const settledCue = getWaterParticleCue(settledWorld, 1, 0, 1, 1);
+  assert(settledCue.kind === "none", `edge/particle-cue: expected settled water to emit none, got ${settledCue.kind}`);
+
+  const lateralWorld = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(lateralWorld, 1, y, 1, 1);
+    wakeCell(lateralWorld, 1, y, 1);
+  }
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  stepWaterSimulation(lateralWorld, waterConfig, { collectFlowEvents: false });
+  const lateralAmount = lateralWorld.water[index(lateralWorld, 2, 0, 1)];
+  const lateralCue = getWaterParticleCue(lateralWorld, 2, 0, 1, lateralAmount);
+  assert(
+    lateralCue.kind === "jet" || lateralCue.kind === "spray" || lateralCue.kind === "splash",
+    `edge/particle-cue: expected moving lateral water to emit particles, got ${lateralCue.kind}`,
+  );
+  assert(lateralCue.intensity > 0, "edge/particle-cue: expected positive lateral cue intensity");
+  assert(
+    lateralCue.direction.x > 0.25,
+    `edge/particle-cue: expected eastward lateral cue direction, got x=${lateralCue.direction.x.toFixed(3)}`,
+  );
+
+  const fallingWorld = createEmptyWorld(3, 6, 3);
+  fallingWorld.solid.fill(1);
+  for (let y = 0; y < 6; y += 1) {
+    fallingWorld.solid[index(fallingWorld, 1, y, 1)] = 0;
+  }
+  setWater(fallingWorld, 1, 4, 1, 1);
+  wakeCell(fallingWorld, 1, 4, 1);
+  stepWaterSimulation(fallingWorld, waterConfig, { collectFlowEvents: false });
+  const fallingAmount = fallingWorld.water[index(fallingWorld, 1, 3, 1)];
+  const fallingCue = getWaterParticleCue(fallingWorld, 1, 3, 1, fallingAmount);
+  assert(
+    fallingCue.kind === "spray" || fallingCue.kind === "splash",
+    `edge/particle-cue: expected falling water to emit spray/splash, got ${fallingCue.kind}`,
+  );
+  assert(fallingCue.intensity > 0, "edge/particle-cue: expected positive falling cue intensity");
+  assert(
+    fallingCue.direction.y < -0.25,
+    `edge/particle-cue: expected downward falling cue direction, got y=${fallingCue.direction.y.toFixed(3)}`,
+  );
 }
 
 function assertFlowEventCollectionDoesNotChangeWaterState(): void {

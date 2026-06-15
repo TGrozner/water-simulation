@@ -13,7 +13,7 @@ import {
   RepeatWrapping,
   Scene,
 } from "three";
-import { getWaterMotionSample } from "../sim/waterMotion";
+import { getWaterMotionSample, getWaterParticleCue, type WaterParticleCue } from "../sim/waterMotion";
 import { getWaterSurfaceOffsetAt } from "../sim/waterSurface";
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
@@ -272,6 +272,7 @@ function updateWaterMesh(
     }
 
     const fallingRibbon = shouldStartFallingRibbon(world, x, y, z, waterHeight);
+    const particleCue = gameplayMode && !debugMode ? getWaterParticleCue(world, x, y, z, amount) : null;
     curtainFaceCount += appendWaterCurtains(
       curtainPositions,
       curtainColors,
@@ -283,8 +284,8 @@ function updateWaterMesh(
       debugMode,
       gameplayMode,
     );
-    if (fallingRibbon && gameplayMode && !debugMode) {
-      sprayCount = appendWaterMist(renderer, world, x, y, z, waterHeight, sprayCount);
+    if (fallingRibbon && particleCue && particleCue.kind !== "none") {
+      sprayCount = appendWaterMist(renderer, world, x, y, z, waterHeight, particleCue, sprayCount);
     }
 
     if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
@@ -298,9 +299,11 @@ function updateWaterMesh(
       renderer.foamBatch.pushMatrix(foamDummy.matrix);
       foamCount += 1;
 
-      if (dropScore >= 2) {
-        sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount);
+      if (particleCue && particleCue.kind !== "none" && (dropScore >= 2 || particleCue.kind !== "jet")) {
+        sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount, particleCue);
       }
+    } else if (particleCue && particleCue.kind === "jet") {
+      sprayCount = appendWaterSpray(renderer, center.x, y + waterHeight, center.z, x, y, z, sprayCount, amount, particleCue);
     }
   }
 
@@ -541,16 +544,27 @@ function appendWaterSpray(
   z: number,
   sprayCount: number,
   amount: number,
+  cue: WaterParticleCue,
 ): number {
-  for (let i = 0; i < 4; i += 1) {
+  const particleCount = Math.max(1, Math.min(7, Math.round(2 + cue.intensity * (cue.kind === "splash" ? 5 : 3))));
+  const spread = 0.24 + cue.intensity * 0.46;
+  const horizontalAngle = Math.atan2(cue.direction.z, cue.direction.x);
+  const sideX = -cue.direction.z;
+  const sideZ = cue.direction.x;
+
+  for (let i = 0; i < particleCount; i += 1) {
     const variation = getCellVariation(x + i * 11, y + 19, z);
+    const sideOffset = (variation - 0.5) * spread;
+    const travel = (i / particleCount) * spread;
     sprayDummy.position.set(
-      centerX + (variation - 0.5) * 0.72,
-      topY - 0.18 - i * 0.16,
-      centerZ + (getCellVariation(z, y + i * 13, x) - 0.5) * 0.72,
+      centerX + cue.direction.x * travel + sideX * sideOffset,
+      topY + cue.direction.y * (0.12 + travel) - i * 0.035,
+      centerZ + cue.direction.z * travel + sideZ * sideOffset,
     );
-    sprayDummy.rotation.set(0.35 + variation * 0.7, variation * Math.PI * 2, 0.2);
-    sprayDummy.scale.setScalar(0.18 + amount * 0.28 + variation * 0.1);
+    sprayDummy.rotation.set(0.35 + variation * 0.7, horizontalAngle, 0.2 + cue.direction.y * 0.4);
+    const baseScale = 0.12 + amount * 0.18 + cue.intensity * 0.24 + variation * 0.08;
+    const stretch = cue.kind === "jet" ? 1.8 : cue.kind === "splash" ? 1.35 : 1.15;
+    sprayDummy.scale.set(baseScale * stretch, baseScale * (0.7 + cue.surfaceEnergy * 0.35), 1);
     sprayDummy.updateMatrix();
     renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
     sprayCount += 1;
@@ -565,23 +579,26 @@ function appendWaterMist(
   y: number,
   z: number,
   amount: number,
+  cue: WaterParticleCue,
   sprayCount: number,
 ): number {
   const bottomY = findFallingRibbonBottomY(world, x, y, z);
   const centerX = x - world.width / 2 + 0.5;
   const centerZ = z - world.depth / 2 + 0.5;
-  const particleCount = 6 + Math.floor(getCellVariation(x, y + 137, z) * 5);
+  const particleCount = 3 + Math.floor(cue.intensity * 6) + Math.floor(getCellVariation(x, y + 137, z) * 3);
+  const driftX = cue.direction.x * (0.12 + cue.intensity * 0.3);
+  const driftZ = cue.direction.z * (0.12 + cue.intensity * 0.3);
 
   for (let i = 0; i < particleCount; i += 1) {
     const angle = getCellVariation(x + i * 17, y + 149, z) * Math.PI * 2;
-    const radius = 0.2 + getCellVariation(z, y + i * 19, x) * 0.72;
+    const radius = 0.16 + getCellVariation(z, y + i * 19, x) * (0.42 + cue.intensity * 0.38);
     sprayDummy.position.set(
-      centerX + Math.cos(angle) * radius,
+      centerX + Math.cos(angle) * radius + driftX * (i / particleCount),
       bottomY + 0.08 + i * 0.035,
-      centerZ + Math.sin(angle) * radius,
+      centerZ + Math.sin(angle) * radius + driftZ * (i / particleCount),
     );
     sprayDummy.rotation.set(Math.PI / 2, 0, angle);
-    const scale = 0.34 + amount * 0.32 + getCellVariation(i, x, z) * 0.22;
+    const scale = 0.22 + amount * 0.24 + cue.intensity * 0.24 + getCellVariation(i, x, z) * 0.16;
     sprayDummy.scale.set(scale * 1.4, scale * 0.72, 1);
     sprayDummy.updateMatrix();
     renderer.sprayBatch.pushMatrix(sprayDummy.matrix);
