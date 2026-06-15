@@ -31,6 +31,7 @@ export type TerrainRenderer = {
 
 type TerrainChunk = {
   mesh: Mesh<BufferGeometry, MeshBasicMaterial>;
+  organicMesh: Mesh<BufferGeometry, MeshStandardMaterial>;
   faceSpans: FaceSpan[];
   minX: number;
   maxX: number;
@@ -39,6 +40,7 @@ type TerrainChunk = {
   minZ: number;
   maxZ: number;
   faceCount: number;
+  organicFaceCount: number;
 };
 
 type FaceAxis = "x" | "y" | "z";
@@ -103,22 +105,17 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
     depthTest: false,
   });
   pickMaterial.colorWrite = false;
-  const organicMesh = new Mesh(new BufferGeometry(), visualMaterial);
-  organicMesh.castShadow = true;
-  organicMesh.receiveShadow = true;
-  organicMesh.frustumCulled = false;
   const stats = createRendererStats(world.solid.length * 6);
   const chunkXCount = Math.ceil(world.width / TERRAIN_CHUNK_SIZE);
   const chunkYCount = Math.ceil(world.height / TERRAIN_CHUNK_SIZE);
   const chunkZCount = Math.ceil(world.depth / TERRAIN_CHUNK_SIZE);
-  const chunks = createTerrainChunks(root, pickMaterial, world, chunkXCount, chunkYCount, chunkZCount);
+  const chunks = createTerrainChunks(root, pickMaterial, visualMaterial, world, chunkXCount, chunkYCount, chunkZCount);
   const visibleChunkMeshes: Mesh<BufferGeometry, MeshBasicMaterial>[] = [];
   const dirtyChunks = new Set<number>();
   let allDirty = true;
   let lastOptionsKey = "";
 
   root.frustumCulled = false;
-  root.add(organicMesh);
   scene.add(root);
 
   const terrainRenderer: TerrainRenderer = {
@@ -139,8 +136,8 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
       scene.remove(root);
       for (const chunk of chunks) {
         chunk.mesh.geometry.dispose();
+        chunk.organicMesh.geometry.dispose();
       }
-      organicMesh.geometry.dispose();
       visualMaterial.dispose();
       pickMaterial.dispose();
     },
@@ -158,12 +155,12 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
 
     for (const chunkIndex of targetChunks) {
       rebuildTerrainChunk(chunks[chunkIndex], nextWorld, options);
+      rebuildOrganicTerrainChunk(chunks[chunkIndex], nextWorld, options);
     }
 
-    const organicFaceCount = rebuildOrganicTerrainMesh(organicMesh, nextWorld, options);
     refreshVisibleChunks();
     renderer.stats.updateMs = performance.now() - startedAt;
-    renderer.stats.instances = organicFaceCount;
+    renderer.stats.instances = chunks.reduce((total, chunk) => total + chunk.organicFaceCount, 0);
     dirtyChunks.clear();
     allDirty = false;
     lastOptionsKey = optionsKey;
@@ -171,9 +168,12 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
 
   function markCellNeighborhoodDirty(cellIndex: number): void {
     const cell = coords(world, cellIndex);
-    markChunkAt(cell.x, cell.y, cell.z);
-    for (const direction of FACE_DIRECTIONS) {
-      markChunkAt(cell.x + direction.nx, cell.y + direction.ny, cell.z + direction.nz);
+    for (let dy = -1; dy <= 1; dy += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        for (let dx = -1; dx <= 1; dx += 1) {
+          markChunkAt(cell.x + dx, cell.y + dy, cell.z + dz);
+        }
+      }
     }
   }
 
@@ -193,6 +193,7 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
       const chunk = chunks[chunkIndex];
       chunk.mesh.visible = chunk.faceCount > 0;
+      chunk.organicMesh.visible = chunk.organicFaceCount > 0;
       if (chunk.mesh.visible) {
         visibleChunkMeshes.push(chunk.mesh);
       }
@@ -227,7 +228,8 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
 
 function createTerrainChunks(
   root: Group,
-  material: MeshBasicMaterial,
+  pickMaterial: MeshBasicMaterial,
+  visualMaterial: MeshStandardMaterial,
   world: VoxelWorld,
   chunkXCount: number,
   chunkYCount: number,
@@ -238,15 +240,22 @@ function createTerrainChunks(
   for (let chunkY = 0; chunkY < chunkYCount; chunkY += 1) {
     for (let chunkZ = 0; chunkZ < chunkZCount; chunkZ += 1) {
       for (let chunkX = 0; chunkX < chunkXCount; chunkX += 1) {
-        const mesh = new Mesh(new BufferGeometry(), material);
+        const mesh = new Mesh(new BufferGeometry(), pickMaterial);
+        const organicMesh = new Mesh(new BufferGeometry(), visualMaterial);
         const chunkIndex = chunks.length;
         mesh.castShadow = false;
         mesh.receiveShadow = false;
         mesh.frustumCulled = false;
         mesh.userData.terrainChunkIndex = chunkIndex;
+        organicMesh.castShadow = true;
+        organicMesh.receiveShadow = true;
+        organicMesh.frustumCulled = false;
+        organicMesh.renderOrder = -1;
+        root.add(organicMesh);
         root.add(mesh);
         chunks.push({
           mesh,
+          organicMesh,
           faceSpans: [],
           minX: chunkX * TERRAIN_CHUNK_SIZE,
           maxX: Math.min(world.width, (chunkX + 1) * TERRAIN_CHUNK_SIZE),
@@ -255,6 +264,7 @@ function createTerrainChunks(
           minZ: chunkZ * TERRAIN_CHUNK_SIZE,
           maxZ: Math.min(world.depth, (chunkZ + 1) * TERRAIN_CHUNK_SIZE),
           faceCount: 0,
+          organicFaceCount: 0,
         });
       }
     }
@@ -287,30 +297,56 @@ function rebuildTerrainChunk(chunk: TerrainChunk, world: VoxelWorld, options: Re
   chunk.faceCount = faceCount;
 }
 
-function rebuildOrganicTerrainMesh(mesh: Mesh<BufferGeometry, MeshStandardMaterial>, world: VoxelWorld, options: RenderOptions): number {
-  const nodeWidth = world.width + 1;
-  const nodeHeight = world.height + 1;
-  const nodeDepth = world.depth + 1;
+function rebuildOrganicTerrainChunk(chunk: TerrainChunk, world: VoxelWorld, options: RenderOptions): void {
+  const cellMinX = Math.max(0, chunk.minX - 1);
+  const cellMinY = Math.max(0, chunk.minY - 1);
+  const cellMinZ = Math.max(0, chunk.minZ - 1);
+  const cellMaxX = chunk.maxX;
+  const cellMaxY = chunk.maxY;
+  const cellMaxZ = chunk.maxZ;
+  const cellWidth = cellMaxX - cellMinX;
+  const cellHeight = cellMaxY - cellMinY;
+  const cellDepth = cellMaxZ - cellMinZ;
+  const nodeMinX = cellMinX;
+  const nodeMinY = cellMinY;
+  const nodeMinZ = cellMinZ;
+  const nodeMaxX = cellMaxX + 1;
+  const nodeMaxY = cellMaxY + 1;
+  const nodeMaxZ = cellMaxZ + 1;
+  const nodeWidth = nodeMaxX - nodeMinX;
+  const nodeHeight = nodeMaxY - nodeMinY;
+  const nodeDepth = nodeMaxZ - nodeMinZ;
   const nodeDensities = new Float32Array(nodeWidth * nodeHeight * nodeDepth);
-  const cellVertices = new Int32Array(world.width * world.height * world.depth);
+  const cellVertices = new Int32Array(cellWidth * cellHeight * cellDepth);
   const positions: number[] = [];
   const colors: number[] = [];
   const indices: number[] = [];
 
   cellVertices.fill(-1);
 
-  for (let y = 0; y < nodeHeight; y += 1) {
-    for (let z = 0; z < nodeDepth; z += 1) {
-      for (let x = 0; x < nodeWidth; x += 1) {
-        nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)] = getTerrainNodeDensity(world, options, x, y, z);
+  for (let y = nodeMinY; y < nodeMaxY; y += 1) {
+    for (let z = nodeMinZ; z < nodeMaxZ; z += 1) {
+      for (let x = nodeMinX; x < nodeMaxX; x += 1) {
+        nodeDensities[getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, nodeMinX, nodeMinY, nodeMinZ, x, y, z)] =
+          getTerrainNodeDensity(world, options, x, y, z);
       }
     }
   }
 
-  for (let y = 0; y < world.height; y += 1) {
-    for (let z = 0; z < world.depth; z += 1) {
-      for (let x = 0; x < world.width; x += 1) {
-        const cornerDensities = getSurfaceCellCornerDensities(nodeDensities, nodeWidth, nodeDepth, x, y, z);
+  for (let y = cellMinY; y < cellMaxY; y += 1) {
+    for (let z = cellMinZ; z < cellMaxZ; z += 1) {
+      for (let x = cellMinX; x < cellMaxX; x += 1) {
+        const cornerDensities = getSurfaceCellCornerDensities(
+          nodeDensities,
+          nodeWidth,
+          nodeDepth,
+          nodeMinX,
+          nodeMinY,
+          nodeMinZ,
+          x,
+          y,
+          z,
+        );
         const solidCornerCount = cornerDensities.reduce(
           (total, density) => total + Number(density >= ORGANIC_TERRAIN_ISO_LEVEL),
           0,
@@ -324,14 +360,42 @@ function rebuildOrganicTerrainMesh(mesh: Mesh<BufferGeometry, MeshStandardMateri
         const vertexIndex = positions.length / 3;
         positions.push(vertex.x - world.width / 2, vertex.y, vertex.z - world.depth / 2);
         colors.push(color.r, color.g, color.b);
-        cellVertices[getSurfaceCellIndex(world, x, y, z)] = vertexIndex;
+        cellVertices[getLocalSurfaceCellIndex(cellWidth, cellDepth, cellMinX, cellMinY, cellMinZ, x, y, z)] =
+          vertexIndex;
       }
     }
   }
 
-  appendSurfaceNetXQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
-  appendSurfaceNetYQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
-  appendSurfaceNetZQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, world);
+  appendSurfaceNetXQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, chunk, world, {
+    cellMinX,
+    cellMinY,
+    cellMinZ,
+    cellWidth,
+    cellDepth,
+    nodeMinX,
+    nodeMinY,
+    nodeMinZ,
+  });
+  appendSurfaceNetYQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, chunk, world, {
+    cellMinX,
+    cellMinY,
+    cellMinZ,
+    cellWidth,
+    cellDepth,
+    nodeMinX,
+    nodeMinY,
+    nodeMinZ,
+  });
+  appendSurfaceNetZQuads(indices, cellVertices, nodeDensities, nodeWidth, nodeDepth, chunk, world, {
+    cellMinX,
+    cellMinY,
+    cellMinZ,
+    cellWidth,
+    cellDepth,
+    nodeMinX,
+    nodeMinY,
+    nodeMinZ,
+  });
 
   const nextGeometry = new BufferGeometry();
   nextGeometry.setIndex(indices);
@@ -339,10 +403,10 @@ function rebuildOrganicTerrainMesh(mesh: Mesh<BufferGeometry, MeshStandardMateri
   nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   nextGeometry.computeVertexNormals();
   nextGeometry.computeBoundingSphere();
-  mesh.geometry.dispose();
-  mesh.geometry = nextGeometry;
-  mesh.visible = indices.length > 0;
-  return indices.length / 3;
+  chunk.organicMesh.geometry.dispose();
+  chunk.organicMesh.geometry = nextGeometry;
+  chunk.organicMesh.visible = indices.length > 0;
+  chunk.organicFaceCount = indices.length / 3;
 }
 
 const SURFACE_NET_CORNERS = [
@@ -397,14 +461,30 @@ function getSurfaceCellCornerDensities(
   nodeDensities: Float32Array,
   nodeWidth: number,
   nodeDepth: number,
+  nodeMinX: number,
+  nodeMinY: number,
+  nodeMinZ: number,
   x: number,
   y: number,
   z: number,
 ): number[] {
   return SURFACE_NET_CORNERS.map(([offsetX, offsetY, offsetZ]) =>
-    nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x + offsetX, y + offsetY, z + offsetZ)]
+    nodeDensities[
+      getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, nodeMinX, nodeMinY, nodeMinZ, x + offsetX, y + offsetY, z + offsetZ)
+    ]
   );
 }
+
+type LocalSurfaceBounds = {
+  cellMinX: number;
+  cellMinY: number;
+  cellMinZ: number;
+  cellWidth: number;
+  cellDepth: number;
+  nodeMinX: number;
+  nodeMinY: number;
+  nodeMinZ: number;
+};
 
 function getSurfaceNetVertex(
   x: number,
@@ -453,21 +533,27 @@ function appendSurfaceNetXQuads(
   nodeDensities: Float32Array,
   nodeWidth: number,
   nodeDepth: number,
+  chunk: TerrainChunk,
   world: VoxelWorld,
+  bounds: LocalSurfaceBounds,
 ): void {
-  for (let y = 1; y < world.height; y += 1) {
-    for (let z = 1; z < world.depth; z += 1) {
-      for (let x = 0; x < world.width; x += 1) {
-        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
-        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x + 1, y, z)];
+  for (let y = Math.max(1, chunk.minY); y < chunk.maxY; y += 1) {
+    for (let z = Math.max(1, chunk.minZ); z < chunk.maxZ; z += 1) {
+      for (let x = chunk.minX; x < chunk.maxX; x += 1) {
+        const densityA =
+          nodeDensities[getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x, y, z)];
+        const densityB =
+          nodeDensities[
+            getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x + 1, y, z)
+          ];
         if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
           continue;
         }
 
-        const a = getSurfaceCellVertex(cellVertices, world, x, y - 1, z - 1);
-        const b = getSurfaceCellVertex(cellVertices, world, x, y, z - 1);
-        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
-        const d = getSurfaceCellVertex(cellVertices, world, x, y - 1, z);
+        const a = getSurfaceCellVertex(cellVertices, world, bounds, x, y - 1, z - 1);
+        const b = getSurfaceCellVertex(cellVertices, world, bounds, x, y, z - 1);
+        const c = getSurfaceCellVertex(cellVertices, world, bounds, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, bounds, x, y - 1, z);
         appendSurfaceQuad(indices, a, b, c, d, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
       }
     }
@@ -480,21 +566,27 @@ function appendSurfaceNetYQuads(
   nodeDensities: Float32Array,
   nodeWidth: number,
   nodeDepth: number,
+  chunk: TerrainChunk,
   world: VoxelWorld,
+  bounds: LocalSurfaceBounds,
 ): void {
-  for (let y = 0; y < world.height; y += 1) {
-    for (let z = 1; z < world.depth; z += 1) {
-      for (let x = 1; x < world.width; x += 1) {
-        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
-        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y + 1, z)];
+  for (let y = chunk.minY; y < chunk.maxY; y += 1) {
+    for (let z = Math.max(1, chunk.minZ); z < chunk.maxZ; z += 1) {
+      for (let x = Math.max(1, chunk.minX); x < chunk.maxX; x += 1) {
+        const densityA =
+          nodeDensities[getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x, y, z)];
+        const densityB =
+          nodeDensities[
+            getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x, y + 1, z)
+          ];
         if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
           continue;
         }
 
-        const a = getSurfaceCellVertex(cellVertices, world, x - 1, y, z - 1);
-        const b = getSurfaceCellVertex(cellVertices, world, x, y, z - 1);
-        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
-        const d = getSurfaceCellVertex(cellVertices, world, x - 1, y, z);
+        const a = getSurfaceCellVertex(cellVertices, world, bounds, x - 1, y, z - 1);
+        const b = getSurfaceCellVertex(cellVertices, world, bounds, x, y, z - 1);
+        const c = getSurfaceCellVertex(cellVertices, world, bounds, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, bounds, x - 1, y, z);
         appendSurfaceQuad(indices, a, d, c, b, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
       }
     }
@@ -507,21 +599,27 @@ function appendSurfaceNetZQuads(
   nodeDensities: Float32Array,
   nodeWidth: number,
   nodeDepth: number,
+  chunk: TerrainChunk,
   world: VoxelWorld,
+  bounds: LocalSurfaceBounds,
 ): void {
-  for (let y = 1; y < world.height; y += 1) {
-    for (let z = 0; z < world.depth; z += 1) {
-      for (let x = 1; x < world.width; x += 1) {
-        const densityA = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z)];
-        const densityB = nodeDensities[getSurfaceNodeIndex(nodeWidth, nodeDepth, x, y, z + 1)];
+  for (let y = Math.max(1, chunk.minY); y < chunk.maxY; y += 1) {
+    for (let z = chunk.minZ; z < chunk.maxZ; z += 1) {
+      for (let x = Math.max(1, chunk.minX); x < chunk.maxX; x += 1) {
+        const densityA =
+          nodeDensities[getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x, y, z)];
+        const densityB =
+          nodeDensities[
+            getLocalSurfaceNodeIndex(nodeWidth, nodeDepth, bounds.nodeMinX, bounds.nodeMinY, bounds.nodeMinZ, x, y, z + 1)
+          ];
         if ((densityA >= ORGANIC_TERRAIN_ISO_LEVEL) === (densityB >= ORGANIC_TERRAIN_ISO_LEVEL)) {
           continue;
         }
 
-        const a = getSurfaceCellVertex(cellVertices, world, x - 1, y - 1, z);
-        const b = getSurfaceCellVertex(cellVertices, world, x, y - 1, z);
-        const c = getSurfaceCellVertex(cellVertices, world, x, y, z);
-        const d = getSurfaceCellVertex(cellVertices, world, x - 1, y, z);
+        const a = getSurfaceCellVertex(cellVertices, world, bounds, x - 1, y - 1, z);
+        const b = getSurfaceCellVertex(cellVertices, world, bounds, x, y - 1, z);
+        const c = getSurfaceCellVertex(cellVertices, world, bounds, x, y, z);
+        const d = getSurfaceCellVertex(cellVertices, world, bounds, x - 1, y, z);
         appendSurfaceQuad(indices, a, b, c, d, densityA >= ORGANIC_TERRAIN_ISO_LEVEL && densityB < ORGANIC_TERRAIN_ISO_LEVEL);
       }
     }
@@ -552,20 +650,51 @@ function getOrganicTerrainColor(world: VoxelWorld, x: number, y: number, z: numb
   return scaleHexColor(baseColor, 0.6 + heightFactor * 0.24 + largeVariation * 0.13 + strata * 0.08);
 }
 
-function getSurfaceNodeIndex(width: number, depth: number, x: number, y: number, z: number): number {
-  return x + width * (z + depth * y);
-}
-
 function getSurfaceCellIndex(world: VoxelWorld, x: number, y: number, z: number): number {
   return x + world.width * (z + world.depth * y);
 }
 
-function getSurfaceCellVertex(cellVertices: Int32Array, world: VoxelWorld, x: number, y: number, z: number): number {
+function getLocalSurfaceNodeIndex(
+  width: number,
+  depth: number,
+  minX: number,
+  minY: number,
+  minZ: number,
+  x: number,
+  y: number,
+  z: number,
+): number {
+  return x - minX + width * (z - minZ + depth * (y - minY));
+}
+
+function getLocalSurfaceCellIndex(
+  width: number,
+  depth: number,
+  minX: number,
+  minY: number,
+  minZ: number,
+  x: number,
+  y: number,
+  z: number,
+): number {
+  return x - minX + width * (z - minZ + depth * (y - minY));
+}
+
+function getSurfaceCellVertex(
+  cellVertices: Int32Array,
+  world: VoxelWorld,
+  bounds: LocalSurfaceBounds,
+  x: number,
+  y: number,
+  z: number,
+): number {
   if (!inBounds(world, x, y, z)) {
     return -1;
   }
 
-  return cellVertices[getSurfaceCellIndex(world, x, y, z)];
+  return cellVertices[
+    getLocalSurfaceCellIndex(bounds.cellWidth, bounds.cellDepth, bounds.cellMinX, bounds.cellMinY, bounds.cellMinZ, x, y, z)
+  ];
 }
 
 function appendGreedyFacesForDirection(
