@@ -50,6 +50,7 @@ type HarnessOptions = {
 
 const MAX_TICKS = 1800;
 const MAX_STAGE_TICKS = 1000;
+const LARGE_CAVERN_MAX_TICKS = 5000;
 const CONSERVATION_TOLERANCE = 0.1;
 const CONSERVATION_RELATIVE_TOLERANCE = 0.0005;
 const STANDARD_WATER_SCAN_INTERVAL_TICKS = 25;
@@ -812,6 +813,15 @@ function assertUnfinishedManualRouteDoesNotFail(
 function runEdgeCaseHarness(): void {
   assertWaterFallsThroughOpenedShaft();
   assertWaterLeaksThroughOpenedSideWall();
+  assertVerticalSpanSettlesAndConservesWater();
+  assertDownFlowRateLimitsVerticalSettling();
+  assertWaterDoesNotMergeDisconnectedVerticalSpans();
+  assertWaterTransfersThroughRaisedPortal();
+  assertWaterTransfersThroughOverlappingPortal();
+  assertWaterSpillsIntoLowerAdjacentShaft();
+  assertWaterDoesNotCrossNonOverlappingPortal();
+  assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang();
+  assertStackedOverhangSpansAreEnumeratedSeparately();
   assertFirstPersonCornerClearanceUsesRoundFootprint();
   assertFirstPersonVelocitySmoothsInput();
   assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly();
@@ -876,6 +886,308 @@ function assertWaterLeaksThroughOpenedSideWall(): void {
     }
   }
   assert(leakedWater > 0.1, "edge/opened-side-wall: expected water to leak through opened wall");
+}
+
+function assertVerticalSpanSettlesAndConservesWater(): void {
+  const world = createEmptyWorld(3, 6, 3);
+  world.solid.fill(1);
+  for (let y = 0; y < world.height; y += 1) {
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+  setWater(world, 1, 5, 1, 0.6);
+  setWater(world, 1, 3, 1, 0.7);
+  wakeCell(world, 1, 5, 1);
+  wakeCell(world, 1, 3, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 80, "edge/vertical-span-settle");
+
+  assertSmallWorldConserved(world, baselineWater, "edge/vertical-span-settle");
+  assert(Math.abs(world.water[index(world, 1, 0, 1)] - 1) <= 0.0001, "edge/vertical-span-settle: expected bottom cell full");
+  assert(
+    Math.abs(world.water[index(world, 1, 1, 1)] - 0.3) <= 0.0001,
+    `edge/vertical-span-settle: expected second cell to hold remaining 0.3, got ${world.water[index(world, 1, 1, 1)].toFixed(6)}`,
+  );
+  assert(
+    measureColumnWater(world, 1, 1, 2, 5) <= EPSILON,
+    "edge/vertical-span-settle: expected upper column to drain dry",
+  );
+  assertQuiescentAfterRewake(world, waterConfig, "edge/vertical-span-settle");
+}
+
+function assertDownFlowRateLimitsVerticalSettling(): void {
+  const world = createEmptyWorld(3, 6, 3);
+  world.solid.fill(1);
+  for (let y = 0; y < world.height; y += 1) {
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+  setWater(world, 1, 5, 1, 1);
+  wakeCell(world, 1, 5, 1);
+
+  const waterConfig = {
+    ...cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig,
+    downFlowRate: 0.25,
+    minFlow: 0.001,
+  };
+  const baselineWater = totalWater(world);
+  const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+
+  assert(stats.movedVolume >= 0.249 && stats.movedVolume <= 0.251, "edge/down-flow-rate: expected limited fall");
+  assert(world.water[index(world, 1, 0, 1)] <= EPSILON, "edge/down-flow-rate: water should not teleport to bottom");
+  assert(
+    world.water[index(world, 1, 4, 1)] >= 0.249 && world.water[index(world, 1, 4, 1)] <= 0.251,
+    `edge/down-flow-rate: expected one-cell fall amount near 0.25, got ${world.water[index(world, 1, 4, 1)].toFixed(6)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/down-flow-rate: first tick");
+
+  runUntilStable(world, waterConfig, baselineWater, 80, "edge/down-flow-rate");
+  assert(Math.abs(world.water[index(world, 1, 0, 1)] - 1) <= 0.0001, "edge/down-flow-rate: expected bottom cell full");
+  assertSmallWorldConserved(world, baselineWater, "edge/down-flow-rate");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/down-flow-rate");
+}
+
+function assertWaterDoesNotMergeDisconnectedVerticalSpans(): void {
+  const world = createEmptyWorld(3, 6, 3);
+  world.solid.fill(1);
+  for (const y of [0, 1, 3, 4, 5]) {
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+  setWater(world, 1, 5, 1, 1);
+  wakeCell(world, 1, 5, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 80, "edge/disconnected-vertical-spans");
+
+  assert(
+    measureColumnWater(world, 1, 1, 3, 5) > 0.99,
+    "edge/disconnected-vertical-spans: expected upper span to retain water",
+  );
+  assert(
+    measureColumnWater(world, 1, 1, 0, 1) <= EPSILON,
+    "edge/disconnected-vertical-spans: expected lower span to stay dry below solid blocker",
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/disconnected-vertical-spans");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/disconnected-vertical-spans");
+}
+
+function assertWaterTransfersThroughRaisedPortal(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 2, 4);
+  for (let y = 0; y <= 2; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 180, "edge/raised-portal");
+
+  const sourceWater = measureColumnWater(world, 1, 1, 0, 4);
+  const targetWater = measureColumnWater(world, 2, 1, 2, 4);
+  assert(
+    targetWater >= 0.45 && targetWater <= 0.55,
+    `edge/raised-portal: expected raised target span to hold about 0.5 water, got ${targetWater.toFixed(3)}`,
+  );
+  assert(
+    sourceWater >= 2.45 && sourceWater <= 2.55,
+    `edge/raised-portal: expected source span to hold about 2.5 water, got ${sourceWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/raised-portal");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/raised-portal");
+}
+
+function assertWaterTransfersThroughOverlappingPortal(): void {
+  const world = createTwoColumnPortalWorld(0, 4, 0, 4);
+  for (let y = 0; y <= 3; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 160, "edge/overlapping-portal");
+
+  const leftWater = measureColumnWater(world, 1, 1, 0, 4);
+  const rightWater = measureColumnWater(world, 2, 1, 0, 4);
+  assert(
+    rightWater > 1.8,
+    `edge/overlapping-portal: expected right span to receive water, got ${rightWater.toFixed(3)}`,
+  );
+  assert(
+    Math.abs(leftWater - rightWater) < 0.35,
+    `edge/overlapping-portal: expected water heads to nearly equalize, got left=${leftWater.toFixed(3)} right=${rightWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/overlapping-portal");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/overlapping-portal");
+}
+
+function assertWaterSpillsIntoLowerAdjacentShaft(): void {
+  const world = createTwoColumnPortalWorld(2, 4, 0, 4);
+  for (let y = 2; y <= 4; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 220, "edge/lower-adjacent-shaft");
+
+  const targetLowerWater = measureColumnWater(world, 2, 1, 0, 1);
+  const sourceWater = measureColumnWater(world, 1, 1, 2, 4);
+  assert(
+    targetLowerWater >= 1.95,
+    `edge/lower-adjacent-shaft: expected lower shaft to fill before equalizing, got ${targetLowerWater.toFixed(3)}`,
+  );
+  assert(
+    sourceWater >= 0.35 && sourceWater <= 0.65,
+    `edge/lower-adjacent-shaft: expected source head near target head, got ${sourceWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/lower-adjacent-shaft");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/lower-adjacent-shaft");
+}
+
+function assertWaterDoesNotCrossNonOverlappingPortal(): void {
+  const world = createTwoColumnPortalWorld(3, 4, 0, 1);
+  setWater(world, 1, 3, 1, 1);
+  setWater(world, 1, 4, 1, 1);
+  wakeCell(world, 1, 3, 1);
+  wakeCell(world, 1, 4, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 80, "edge/non-overlapping-portal");
+
+  const rightWater = measureColumnWater(world, 2, 1, 0, 1);
+  assert(
+    rightWater <= EPSILON,
+    `edge/non-overlapping-portal: expected disconnected neighbor span to stay dry, got ${rightWater.toFixed(3)}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "edge/non-overlapping-portal");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/non-overlapping-portal");
+}
+
+function assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang(): void {
+  const world = createSplitTargetPortalWorld(5);
+  setWater(world, 1, 0, 1, 1);
+  setWater(world, 1, 1, 1, 1);
+  setWater(world, 1, 2, 1, 0.4);
+  wakeCell(world, 1, 0, 1);
+  wakeCell(world, 1, 1, 1);
+  wakeCell(world, 1, 2, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 180, "edge/disconnected-overhang-pocket");
+
+  const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
+  const upperTargetWater = measureColumnWater(world, 2, 1, 3, 4);
+  assert(
+    lowerTargetWater > 1,
+    `edge/disconnected-overhang-pocket: expected lower target span to receive water, got ${lowerTargetWater.toFixed(3)}`,
+  );
+  assert(
+    upperTargetWater <= EPSILON,
+    `edge/disconnected-overhang-pocket: expected upper target pocket to stay dry, got ${upperTargetWater.toFixed(3)}`,
+  );
+  assert(world.solid[index(world, 2, 2, 1)] === 1, "edge/disconnected-overhang-pocket: separator should stay solid");
+  assert(world.water[index(world, 2, 2, 1)] <= EPSILON, "edge/disconnected-overhang-pocket: separator should stay dry");
+  assertSmallWorldConserved(world, baselineWater, "edge/disconnected-overhang-pocket");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/disconnected-overhang-pocket");
+}
+
+function assertStackedOverhangSpansAreEnumeratedSeparately(): void {
+  const world = createSplitTargetPortalWorld(6);
+  for (let y = 0; y <= 4; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+  setWater(world, 1, 5, 1, 0.6);
+  wakeCell(world, 1, 5, 1);
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  runUntilStable(world, waterConfig, baselineWater, 240, "edge/stacked-overhang-spans");
+
+  const lowerTargetWater = measureColumnWater(world, 2, 1, 0, 1);
+  const upperTargetWater = measureColumnWater(world, 2, 1, 3, 5);
+  assert(
+    lowerTargetWater >= 1.95,
+    `edge/stacked-overhang-spans: expected lower target span nearly full, got ${lowerTargetWater.toFixed(3)}`,
+  );
+  assert(
+    upperTargetWater >= 0.2 && upperTargetWater <= 0.45,
+    `edge/stacked-overhang-spans: expected upper target span to receive partial water, got ${upperTargetWater.toFixed(3)}`,
+  );
+  assert(world.solid[index(world, 2, 2, 1)] === 1, "edge/stacked-overhang-spans: separator should stay solid");
+  assert(world.water[index(world, 2, 2, 1)] <= EPSILON, "edge/stacked-overhang-spans: separator should stay dry");
+  assertSmallWorldConserved(world, baselineWater, "edge/stacked-overhang-spans");
+  assertQuiescentAfterRewake(world, waterConfig, "edge/stacked-overhang-spans");
+}
+
+function createTwoColumnPortalWorld(
+  leftMinY: number,
+  leftMaxY: number,
+  rightMinY: number,
+  rightMaxY: number,
+): VoxelWorld {
+  const world = createEmptyWorld(4, 5, 3);
+  world.solid.fill(1);
+
+  for (let y = leftMinY; y <= leftMaxY; y += 1) {
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+
+  for (let y = rightMinY; y <= rightMaxY; y += 1) {
+    world.solid[index(world, 2, y, 1)] = 0;
+  }
+
+  return world;
+}
+
+function createSplitTargetPortalWorld(height: number): VoxelWorld {
+  const world = createEmptyWorld(4, height, 3);
+  world.solid.fill(1);
+
+  for (let y = 0; y < height; y += 1) {
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+
+  world.solid[index(world, 2, 0, 1)] = 0;
+  world.solid[index(world, 2, 1, 1)] = 0;
+  for (let y = 3; y < height; y += 1) {
+    world.solid[index(world, 2, y, 1)] = 0;
+  }
+
+  return world;
+}
+
+function measureColumnWater(world: VoxelWorld, x: number, z: number, minY: number, maxY: number): number {
+  let water = 0;
+  for (let y = minY; y <= maxY; y += 1) {
+    water += world.water[index(world, x, y, z)];
+  }
+  return water;
+}
+
+function assertSmallWorldConserved(world: VoxelWorld, baselineWater: number, context: string): void {
+  const volumeDelta = Math.abs(totalWater(world) - baselineWater);
+  assert(volumeDelta <= 0.0001, `${context}: expected strict conservation, drifted by ${volumeDelta.toFixed(6)}`);
+}
+
+function assertQuiescentAfterRewake(
+  world: VoxelWorld,
+  waterConfig: ReturnType<typeof cloneTuningPreset>["waterConfig"],
+  context: string,
+): void {
+  for (const cellIndex of world.wetCells) {
+    world.activeCells.add(cellIndex);
+  }
+
+  const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
+  assert(stats.movedVolume <= EPSILON, `${context}: expected no moved volume after rewake, got ${stats.movedVolume.toFixed(6)}`);
+  assert(stats.changedCells === 0, `${context}: expected no changed cells after rewake, got ${stats.changedCells}`);
+  assert(world.activeCells.size === 0, `${context}: expected rewoken stable water to sleep immediately`);
 }
 
 function assertFirstPersonVelocitySmoothsInput(): void {
@@ -1085,7 +1397,7 @@ function assertProgressiveStagesMoveWater(preset: ScenePresetId): void {
         `${preset}: opening stage ${stageIndex + 1} (${stages[stageIndex].label}) did not move water`,
       );
     }
-    if (stageIndex === stages.length - 1 && !isLargeCavernPreset(preset)) {
+    if (stageIndex === stages.length - 1) {
       assert(world.activeCells.size === 0, `${preset}: final stage did not stabilize`);
     }
   }
@@ -1114,12 +1426,10 @@ function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): Harne
   );
 
   assert(movedVolume > 0, `${preset}/${tuningPreset}: expected water to move after opening drain`);
-  if (!isLargeCavernPreset(preset)) {
-    assert(
-      world.activeCells.size === 0,
-      `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
-    );
-  }
+  assert(
+    world.activeCells.size === 0,
+    `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
+  );
 
   return {
     preset,
@@ -1137,11 +1447,11 @@ function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetI
 }
 
 function getProgressiveStageMaxTicks(preset: ScenePresetId): number {
-  return isLargeCavernPreset(preset) ? MAX_TICKS : MAX_STAGE_TICKS;
+  return isLargeCavernPreset(preset) ? LARGE_CAVERN_MAX_TICKS : MAX_STAGE_TICKS;
 }
 
 function getScenarioMaxTicks(preset: ScenePresetId): number {
-  return isLargeCavernPreset(preset) ? 2800 : MAX_TICKS;
+  return isLargeCavernPreset(preset) ? LARGE_CAVERN_MAX_TICKS : MAX_TICKS;
 }
 
 function isLargeCavernPreset(preset: ScenePresetId): boolean {

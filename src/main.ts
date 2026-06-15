@@ -70,6 +70,7 @@ configureOrbitControls(sceneContext.controls);
 const VOLUME_WARNING_TOLERANCE = 0.05;
 const FLOW_DEBUG_TTL = 16;
 const STABLE_COMPLETE_TICKS = 18;
+const MAX_INITIAL_WARMUP_TICKS = 12_000;
 const SONAR_TERRAIN_UPDATE_INTERVAL_MS = 250;
 const SONAR_WATER_UPDATE_INTERVAL_MS = 125;
 const SONAR_RENDER_INTERVAL_MS = 66;
@@ -90,6 +91,7 @@ const ACTIVE_STAGE_GUIDE_STYLE = {
 type AimFeedbackState = "idle" | "dig" | "blocked" | "hazard";
 
 const initialUrlParams = new URLSearchParams(window.location.search);
+const captureMode = initialUrlParams.get("capture") === "1";
 seedCaptureBestScores();
 
 let gameModeEnabled = getInitialGameModeEnabled();
@@ -868,9 +870,22 @@ function getInitialSliceZ(): number {
 function runInitialSimulationWarmup(): number {
   const requestedTicks = Number.parseInt(initialUrlParams.get("warmupTicks") ?? "0", 10);
   const warmupTicks = Number.isFinite(requestedTicks) ? Math.min(3000, Math.max(0, requestedTicks)) : 0;
+  const warmupUntilStable = initialUrlParams.get("warmupUntilStable") === "1";
+  const requestedMaxTicks = Number.parseInt(initialUrlParams.get("warmupMaxTicks") ?? "", 10);
+  const maxWarmupTicks = warmupUntilStable
+    ? Math.min(
+        MAX_INITIAL_WARMUP_TICKS,
+        Math.max(warmupTicks, Number.isFinite(requestedMaxTicks) ? requestedMaxTicks : warmupTicks),
+      )
+    : warmupTicks;
+  const requestedStableTicks = Number.parseInt(initialUrlParams.get("warmupStableTicks") ?? `${STABLE_COMPLETE_TICKS}`, 10);
+  const requiredStableTicks =
+    warmupUntilStable && Number.isFinite(requestedStableTicks)
+      ? Math.min(240, Math.max(1, requestedStableTicks))
+      : STABLE_COMPLETE_TICKS;
   let idleTicks = 0;
 
-  for (let i = 0; i < warmupTicks; i += 1) {
+  for (let i = 0; i < maxWarmupTicks; i += 1) {
     stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
     tickCount += 1;
     if (world.activeCells.size === 0) {
@@ -878,9 +893,13 @@ function runInitialSimulationWarmup(): number {
     } else {
       idleTicks = 0;
     }
+
+    if (warmupUntilStable && i + 1 >= warmupTicks && idleTicks >= requiredStableTicks) {
+      break;
+    }
   }
 
-  if (warmupTicks > 0) {
+  if (maxWarmupTicks > 0) {
     inputState.forceWaterUpdate = true;
   }
 
@@ -1206,7 +1225,7 @@ function animate(now: number): void {
   updateGamePanelIfNeeded(now);
   syncBodyModeClasses();
 
-  waterRenderer.animate(now / 1000);
+  waterRenderer.animate(captureMode ? 0 : now / 1000);
   sceneContext.renderer.render(sceneContext.scene, sceneContext.camera);
   if (now - lastSonarRenderAt >= SONAR_RENDER_INTERVAL_MS) {
     sonarRenderer.render(sceneContext.camera);

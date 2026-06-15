@@ -40,12 +40,12 @@ const GAME_CAPTURES: GameCapture[] = [
     timeoutMs: 700,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=2800&camera=fps&spawn=basins`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=2800&warmupUntilStable=1&warmupMaxTicks=9000&camera=fps&spawn=basins`,
     filename: "game-generated-cavern-complete.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&camera=fps&spawn=south-basin`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=2800&warmupUntilStable=1&warmupMaxTicks=9000&camera=fps&spawn=south-basin`,
     filename: "game-generated-cavern-hazard.png",
     timeoutMs: 5000,
   },
@@ -92,7 +92,7 @@ async function run(): Promise<void> {
       if (shouldCapture(sliceFilename, onlyFilenames)) {
         await captureNonBlank(
           chrome,
-          getSceneSliceCaptureUrl(preset),
+          withCaptureMode(getSceneSliceCaptureUrl(preset)),
           `${ACTUAL_DIR}/${sliceFilename}`,
           getSceneCaptureTimeout(preset),
         );
@@ -163,7 +163,7 @@ async function captureAndCompare(
   updateBaseline: boolean,
   timeoutMs?: number,
 ): Promise<void> {
-  await captureNonBlank(chrome, url, `${ACTUAL_DIR}/${filename}`, timeoutMs);
+  await captureNonBlank(chrome, withCaptureMode(url), `${ACTUAL_DIR}/${filename}`, timeoutMs);
   await compareOrUpdateBaseline(filename, updateBaseline);
 }
 
@@ -207,6 +207,10 @@ async function captureNonBlank(chrome: string, url: string, outputPath: string, 
     }
     throw error;
   }
+}
+
+function withCaptureMode(url: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}capture=1`;
 }
 
 async function compareOrUpdateBaseline(filename: string, updateBaseline: boolean): Promise<void> {
