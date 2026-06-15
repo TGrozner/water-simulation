@@ -27,6 +27,8 @@ export type WaterRenderer = {
   curtainMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
   foamBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
   sprayBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
+  surfaceHeightMemory: Map<string, number>;
+  surfaceHeightMemorySizeKey: string;
   stats: RendererStats;
   pickCell: (raycaster: Raycaster) => { cellIndex: number; distance: number } | null;
   update: (world: VoxelWorld, debugMode: boolean, options?: RenderOptions, gameplayMode?: boolean) => void;
@@ -37,7 +39,16 @@ export type WaterRenderer = {
 type Rgb = { r: number; g: number; b: number };
 type SideDirection = { dx: number; dz: number; axis: "x" | "z"; side: -1 | 1 };
 type SurfaceCell = { x: number; y: number; z: number; waterHeight: number };
-type SurfaceFootprint = { minX: number; maxX: number; minZ: number; maxZ: number };
+type SurfaceSample = { x: number; y: number; z: number; value: number; height: number; color: Rgb };
+type SurfaceVertex = { x: number; y: number; z: number; value: number; color: Rgb };
+type SurfaceHeightState = { surfaceHeightMemory: Map<string, number>; surfaceHeightMemorySizeKey: string };
+export type WaterSurfaceMeshDebugStats = {
+  vertexCount: number;
+  triangleCount: number;
+  minY: number;
+  maxY: number;
+  finite: boolean;
+};
 
 const bodyDummy = new Object3D();
 const foamDummy = new Object3D();
@@ -50,9 +61,10 @@ const SURFACE_FLOW_TILT_SCALE = 0.012;
 const SURFACE_MOTION_HEADROOM = 0.14;
 const SURFACE_SHORE_INSET = 0.085;
 const SURFACE_SOLID_INSET = 0.18;
-const SURFACE_EDGE_JITTER = 0.045;
+const SURFACE_ISO_LEVEL = 0.42;
+const SURFACE_MEMORY_ALPHA = 0.38;
+const SURFACE_MEMORY_SNAP_DELTA = 0.6;
 const SURFACE_SHORE_DROP_DELTA = 0.2;
-const MIN_SURFACE_SPAN = 0.34;
 const CURTAIN_INSET = 0.1;
 const SIDE_CURTAIN_MIN_DROP = 0.45;
 const EDGE_SHEET_MIN_DROP = 0.42;
@@ -165,6 +177,8 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     curtainMesh,
     foamBatch,
     sprayBatch,
+    surfaceHeightMemory: new Map(),
+    surfaceHeightMemorySizeKey: getSurfaceMemorySizeKey(world),
     stats,
     pickCell: (raycaster) => {
       const hit = bodyBatch.pick(raycaster);
@@ -298,7 +312,7 @@ function updateWaterMesh(
   }
 
   renderer.bodyBatch.finish();
-  replacePoolSurfaceGeometry(renderer.surfaceMesh, world, surfaceCells);
+  replacePoolSurfaceGeometry(renderer, world, surfaceCells);
   replaceDynamicGeometry(renderer.curtainMesh, curtainPositions, curtainColors);
   renderer.foamBatch.finish();
   renderer.sprayBatch.finish();
@@ -612,105 +626,145 @@ function appendShoreFoam(
   return foamCount;
 }
 
-function replacePoolSurfaceGeometry(mesh: Mesh<BufferGeometry, MeshPhongMaterial>, world: VoxelWorld, cells: SurfaceCell[]): void {
+export function getWaterSurfaceMeshDebugStats(world: VoxelWorld): WaterSurfaceMeshDebugStats {
+  const cells = collectDebugSurfaceCells(world);
+  const surfaceState: SurfaceHeightState = {
+    surfaceHeightMemory: new Map(),
+    surfaceHeightMemorySizeKey: getSurfaceMemorySizeKey(world),
+  };
+  const { geometry } = buildPoolSurfaceGeometry(surfaceState, world, cells);
+  const position = geometry.getAttribute("position") as Float32BufferAttribute | undefined;
+  const index = geometry.getIndex();
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  let finite = true;
+
+  if (position) {
+    for (let i = 0; i < position.count; i += 1) {
+      const y = position.getY(i);
+      finite = finite && Number.isFinite(position.getX(i)) && Number.isFinite(y) && Number.isFinite(position.getZ(i));
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  const stats = {
+    vertexCount: position?.count ?? 0,
+    triangleCount: Math.floor((index?.count ?? 0) / 3),
+    minY: minY === Number.POSITIVE_INFINITY ? 0 : minY,
+    maxY: maxY === Number.NEGATIVE_INFINITY ? 0 : maxY,
+    finite,
+  };
+  geometry.dispose();
+  return stats;
+}
+
+function collectDebugSurfaceCells(world: VoxelWorld): SurfaceCell[] {
+  const cells: SurfaceCell[] = [];
+  const layerSize = world.width * world.depth;
+
+  for (const cellIndex of world.wetCells) {
+    const y = Math.floor(cellIndex / layerSize);
+    const layerIndex = cellIndex - y * layerSize;
+    const z = Math.floor(layerIndex / world.width);
+    const x = layerIndex - z * world.width;
+    const amount = world.water[cellIndex];
+    if (
+      amount > EPSILON &&
+      world.solid[cellIndex] !== 1 &&
+      shouldRenderWaterCell(world, x, y, z, amount, false, true) &&
+      shouldRenderWaterSurface(world, x, y, z, amount, false, true)
+    ) {
+      cells.push({ x, y, z, waterHeight: Math.max(0.05, Math.min(1, amount)) });
+    }
+  }
+
+  return cells;
+}
+
+function replacePoolSurfaceGeometry(renderer: WaterRenderer, world: VoxelWorld, cells: SurfaceCell[]): void {
+  const { geometry, activeHeightKeys } = buildPoolSurfaceGeometry(renderer, world, cells);
+  renderer.surfaceMesh.geometry.dispose();
+  renderer.surfaceMesh.geometry = geometry;
+  pruneSurfaceHeightMemory(renderer, activeHeightKeys);
+}
+
+function buildPoolSurfaceGeometry(
+  surfaceState: SurfaceHeightState,
+  world: VoxelWorld,
+  cells: SurfaceCell[],
+): { geometry: BufferGeometry; activeHeightKeys: Set<string> } {
   const positions: number[] = [];
   const normals: number[] = [];
   const colors: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
-  const nodeIndices = new Map<string, number>();
+  const vertexIndices = new Map<string, number>();
+  const activeHeightKeys = new Set<string>();
 
-  const getSharedNodeIndex = (
-    cell: SurfaceCell,
-    nodeX: number,
-    nodeZ: number,
-    cornerX: 0 | 1,
-    cornerZ: 0 | 1,
-  ): number => {
-    const key = `${cell.y}:${nodeX}:${nodeZ}`;
-    const existing = nodeIndices.get(key);
+  if (surfaceState.surfaceHeightMemorySizeKey !== getSurfaceMemorySizeKey(world)) {
+    surfaceState.surfaceHeightMemory.clear();
+    surfaceState.surfaceHeightMemorySizeKey = getSurfaceMemorySizeKey(world);
+  }
+
+  const getSharedVertexIndex = (vertex: SurfaceVertex): number => {
+    const key = `${vertex.y}:${Math.round(vertex.x * 1000)}:${Math.round(vertex.z * 1000)}`;
+    const existing = vertexIndices.get(key);
     if (existing !== undefined) {
       return existing;
     }
 
     const index = positions.length / 3;
-    appendSurfaceVertex(
-      positions,
-      normals,
-      colors,
-      uvs,
-      world,
-      nodeX,
-      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, cornerX, cornerZ),
-      nodeZ,
-      getSurfaceColor(world, cell.x, cell.y, cell.z, cell.waterHeight),
-    );
-    nodeIndices.set(key, index);
+    positions.push(vertex.x - world.width / 2, vertex.y, vertex.z - world.depth / 2);
+    normals.push(0, 1, 0);
+    colors.push(vertex.color.r, vertex.color.g, vertex.color.b);
+    uvs.push(vertex.x * 0.22, vertex.z * 0.22);
+    vertexIndices.set(key, index);
     return index;
   };
 
-  for (const cell of cells) {
-    const footprint = getSurfaceFootprint(world, cell);
-    if (!footprint) {
-      continue;
+  for (const layer of getSurfaceLayers(cells)) {
+    const bounds = getSurfaceLayerBounds(layer);
+    const layerCells = new Map<string, SurfaceCell>();
+    const sampleCache = new Map<string, SurfaceSample>();
+
+    for (const cell of layer) {
+      layerCells.set(getSurfaceCellKey(cell.x, cell.z), cell);
     }
 
-    if (isFullSurfaceFootprint(cell, footprint)) {
-      const a = getSharedNodeIndex(cell, cell.x, cell.z, 0, 0);
-      const b = getSharedNodeIndex(cell, cell.x + 1, cell.z, 1, 0);
-      const c = getSharedNodeIndex(cell, cell.x + 1, cell.z + 1, 1, 1);
-      const d = getSharedNodeIndex(cell, cell.x, cell.z + 1, 0, 1);
-      indices.push(a, b, c, a, c, d);
-      continue;
-    }
+    const getSample = (x: number, z: number): SurfaceSample => {
+      const key = getSurfaceCellKey(x, z);
+      const cached = sampleCache.get(key);
+      if (cached) {
+        return cached;
+      }
 
-    const color = getSurfaceColor(world, cell.x, cell.y, cell.z, cell.waterHeight);
-    const index = positions.length / 3;
-    appendSurfaceVertex(
-      positions,
-      normals,
-      colors,
-      uvs,
-      world,
-      footprint.minX,
-      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 0, 0),
-      footprint.minZ,
-      color,
-    );
-    appendSurfaceVertex(
-      positions,
-      normals,
-      colors,
-      uvs,
-      world,
-      footprint.maxX,
-      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 1, 0),
-      footprint.minZ,
-      color,
-    );
-    appendSurfaceVertex(
-      positions,
-      normals,
-      colors,
-      uvs,
-      world,
-      footprint.maxX,
-      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 1, 1),
-      footprint.maxZ,
-      color,
-    );
-    appendSurfaceVertex(
-      positions,
-      normals,
-      colors,
-      uvs,
-      world,
-      footprint.minX,
-      getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 0, 1),
-      footprint.maxZ,
-      color,
-    );
-    indices.push(index, index + 1, index + 2, index, index + 2, index + 3);
+      const sample = createSurfaceSample(surfaceState, world, layerCells, layer[0].y, x, z, activeHeightKeys);
+      sampleCache.set(key, sample);
+      return sample;
+    };
+
+    for (let z = bounds.minZ - 1; z <= bounds.maxZ; z += 1) {
+      for (let x = bounds.minX - 1; x <= bounds.maxX; x += 1) {
+        const polygons = getSurfaceSquarePolygons([
+          sampleToSurfaceVertex(getSample(x, z)),
+          sampleToSurfaceVertex(getSample(x + 1, z)),
+          sampleToSurfaceVertex(getSample(x + 1, z + 1)),
+          sampleToSurfaceVertex(getSample(x, z + 1)),
+        ]);
+
+        for (const polygon of polygons) {
+          if (polygon.length < 3) {
+            continue;
+          }
+
+          const baseIndex = getSharedVertexIndex(polygon[0]);
+          for (let i = 1; i < polygon.length - 1; i += 1) {
+            indices.push(baseIndex, getSharedVertexIndex(polygon[i]), getSharedVertexIndex(polygon[i + 1]));
+          }
+        }
+      }
+    }
   }
 
   const nextGeometry = new BufferGeometry();
@@ -721,88 +775,213 @@ function replacePoolSurfaceGeometry(mesh: Mesh<BufferGeometry, MeshPhongMaterial
   nextGeometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   nextGeometry.computeVertexNormals();
   nextGeometry.computeBoundingSphere();
-  mesh.geometry.dispose();
-  mesh.geometry = nextGeometry;
+  return { geometry: nextGeometry, activeHeightKeys };
 }
 
-function appendSurfaceVertex(
-  positions: number[],
-  normals: number[],
-  colors: number[],
-  uvs: number[],
-  world: VoxelWorld,
-  x: number,
-  y: number,
-  z: number,
-  color: Rgb,
-): void {
-  positions.push(x - world.width / 2, y, z - world.depth / 2);
-  normals.push(0, 1, 0);
-  colors.push(color.r, color.g, color.b);
-  uvs.push(x * 0.18, z * 0.18);
+function getSurfaceLayers(cells: SurfaceCell[]): SurfaceCell[][] {
+  const layers = new Map<number, SurfaceCell[]>();
+  for (const cell of cells) {
+    const layer = layers.get(cell.y);
+    if (layer) {
+      layer.push(cell);
+    } else {
+      layers.set(cell.y, [cell]);
+    }
+  }
+
+  return [...layers.values()];
 }
 
-function getSurfaceFootprint(world: VoxelWorld, cell: SurfaceCell): SurfaceFootprint | null {
-  const leftInset = getSurfaceInsetWithJitter(
-    getSurfaceEdgeInset(world, cell.x, cell.y, cell.z, -1, 0, cell.waterHeight),
-    cell.x,
-    cell.y,
-    cell.z,
-    -1,
-    0,
-  );
-  const rightInset = getSurfaceInsetWithJitter(
-    getSurfaceEdgeInset(world, cell.x, cell.y, cell.z, 1, 0, cell.waterHeight),
-    cell.x,
-    cell.y,
-    cell.z,
-    1,
-    0,
-  );
-  const frontInset = getSurfaceInsetWithJitter(
-    getSurfaceEdgeInset(world, cell.x, cell.y, cell.z, 0, -1, cell.waterHeight),
-    cell.x,
-    cell.y,
-    cell.z,
-    0,
-    -1,
-  );
-  const backInset = getSurfaceInsetWithJitter(
-    getSurfaceEdgeInset(world, cell.x, cell.y, cell.z, 0, 1, cell.waterHeight),
-    cell.x,
-    cell.y,
-    cell.z,
-    0,
-    1,
-  );
-  const minX = cell.x + leftInset;
-  const maxX = cell.x + 1 - rightInset;
-  const minZ = cell.z + frontInset;
-  const maxZ = cell.z + 1 - backInset;
+function getSurfaceLayerBounds(cells: SurfaceCell[]): { minX: number; maxX: number; minZ: number; maxZ: number } {
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
 
-  if (maxX - minX < MIN_SURFACE_SPAN || maxZ - minZ < MIN_SURFACE_SPAN) {
-    return null;
+  for (const cell of cells) {
+    minX = Math.min(minX, cell.x);
+    maxX = Math.max(maxX, cell.x);
+    minZ = Math.min(minZ, cell.z);
+    maxZ = Math.max(maxZ, cell.z);
   }
 
   return { minX, maxX, minZ, maxZ };
 }
 
-function isFullSurfaceFootprint(cell: SurfaceCell, footprint: SurfaceFootprint): boolean {
-  return (
-    Math.abs(footprint.minX - cell.x) <= EPSILON &&
-    Math.abs(footprint.maxX - (cell.x + 1)) <= EPSILON &&
-    Math.abs(footprint.minZ - cell.z) <= EPSILON &&
-    Math.abs(footprint.maxZ - (cell.z + 1)) <= EPSILON
-  );
-}
-
-function getSurfaceInsetWithJitter(inset: number, x: number, y: number, z: number, dx: number, dz: number): number {
-  if (inset <= EPSILON) {
-    return 0;
+function createSurfaceSample(
+  surfaceState: SurfaceHeightState,
+  world: VoxelWorld,
+  cells: Map<string, SurfaceCell>,
+  y: number,
+  x: number,
+  z: number,
+  activeHeightKeys: Set<string>,
+): SurfaceSample {
+  const cell = cells.get(getSurfaceCellKey(x, z));
+  if (cell) {
+    const targetHeight = getSurfaceCellCenterY(world, cell);
+    const heightKey = getSurfaceHeightMemoryKey(cell.y, cell.x, cell.z);
+    const previousHeight = surfaceState.surfaceHeightMemory.get(heightKey);
+    const height =
+      previousHeight === undefined || Math.abs(targetHeight - previousHeight) > SURFACE_MEMORY_SNAP_DELTA
+        ? targetHeight
+        : previousHeight + (targetHeight - previousHeight) * SURFACE_MEMORY_ALPHA;
+    surfaceState.surfaceHeightMemory.set(heightKey, height);
+    activeHeightKeys.add(heightKey);
+    return {
+      x: x + 0.5,
+      y,
+      z: z + 0.5,
+      value: getSurfaceFieldValue(cell.waterHeight),
+      height,
+      color: getSurfaceColor(world, cell.x, cell.y, cell.z, cell.waterHeight),
+    };
   }
 
-  const jitter = (getCellVariation(x + dx * 11, y + 59, z + dz * 13) - 0.5) * SURFACE_EDGE_JITTER;
-  return Math.max(0.04, inset + jitter);
+  return createDrySurfaceSample(world, cells, y, x, z);
+}
+
+function createDrySurfaceSample(
+  world: VoxelWorld,
+  cells: Map<string, SurfaceCell>,
+  y: number,
+  x: number,
+  z: number,
+): SurfaceSample {
+  let heightTotal = 0;
+  let colorTotal: Rgb = { r: 0, g: 0, b: 0 };
+  let count = 0;
+
+  for (let dz = -1; dz <= 1; dz += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      const cell = cells.get(getSurfaceCellKey(x + dx, z + dz));
+      if (!cell) {
+        continue;
+      }
+
+      heightTotal += getSurfaceCellCenterY(world, cell);
+      const color = getSurfaceColor(world, cell.x, cell.y, cell.z, cell.waterHeight);
+      colorTotal = addRgb(colorTotal, color);
+      count += 1;
+    }
+  }
+
+  const fallbackColor = { r: 0.05, g: 0.31, b: 0.5 };
+  return {
+    x: x + 0.5,
+    y,
+    z: z + 0.5,
+    value: 0,
+    height: count > 0 ? heightTotal / count : y,
+    color: count > 0 ? scaleRgb(colorTotal, 1 / count) : fallbackColor,
+  };
+}
+
+function sampleToSurfaceVertex(sample: SurfaceSample): SurfaceVertex {
+  return { x: sample.x, y: sample.height, z: sample.z, value: sample.value, color: sample.color };
+}
+
+function getSurfaceSquarePolygons(vertices: SurfaceVertex[]): SurfaceVertex[][] {
+  const inside = vertices.map((vertex) => vertex.value >= SURFACE_ISO_LEVEL);
+  if (inside[0] && inside[2] && !inside[1] && !inside[3]) {
+    return [
+      [vertices[0], interpolateSurfaceVertex(vertices[0], vertices[1]), interpolateSurfaceVertex(vertices[0], vertices[3])],
+      [vertices[2], interpolateSurfaceVertex(vertices[2], vertices[3]), interpolateSurfaceVertex(vertices[2], vertices[1])],
+    ];
+  }
+
+  if (inside[1] && inside[3] && !inside[0] && !inside[2]) {
+    return [
+      [vertices[1], interpolateSurfaceVertex(vertices[1], vertices[2]), interpolateSurfaceVertex(vertices[1], vertices[0])],
+      [vertices[3], interpolateSurfaceVertex(vertices[3], vertices[0]), interpolateSurfaceVertex(vertices[3], vertices[2])],
+    ];
+  }
+
+  const polygon = clipSurfacePolygon(vertices);
+  return polygon.length >= 3 ? [polygon] : [];
+}
+
+function clipSurfacePolygon(vertices: SurfaceVertex[]): SurfaceVertex[] {
+  const clipped: SurfaceVertex[] = [];
+
+  for (let i = 0; i < vertices.length; i += 1) {
+    const current = vertices[i];
+    const previous = vertices[(i + vertices.length - 1) % vertices.length];
+    const currentInside = current.value >= SURFACE_ISO_LEVEL;
+    const previousInside = previous.value >= SURFACE_ISO_LEVEL;
+
+    if (currentInside) {
+      if (!previousInside) {
+        clipped.push(interpolateSurfaceVertex(previous, current));
+      }
+      clipped.push(current);
+    } else if (previousInside) {
+      clipped.push(interpolateSurfaceVertex(previous, current));
+    }
+  }
+
+  return clipped;
+}
+
+function interpolateSurfaceVertex(a: SurfaceVertex, b: SurfaceVertex): SurfaceVertex {
+  const range = b.value - a.value;
+  const t = Math.abs(range) <= EPSILON ? 0.5 : Math.min(1, Math.max(0, (SURFACE_ISO_LEVEL - a.value) / range));
+  return {
+    x: a.x + (b.x - a.x) * t,
+    y: a.y + (b.y - a.y) * t,
+    z: a.z + (b.z - a.z) * t,
+    value: SURFACE_ISO_LEVEL,
+    color: lerpRgb(a.color, b.color, t),
+  };
+}
+
+function getSurfaceCellCenterY(world: VoxelWorld, cell: SurfaceCell): number {
+  return (
+    getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 0, 0) +
+    getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 1, 0) +
+    getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 1, 1) +
+    getSurfaceCornerY(world, cell.x, cell.y, cell.z, cell.waterHeight, 0, 1)
+  ) / 4;
+}
+
+function getSurfaceFieldValue(waterHeight: number): number {
+  return Math.min(1, 0.78 + Math.max(0, waterHeight) * 0.22);
+}
+
+function getSurfaceCellKey(x: number, z: number): string {
+  return `${x}:${z}`;
+}
+
+function getSurfaceHeightMemoryKey(y: number, x: number, z: number): string {
+  return `${y}:${x}:${z}`;
+}
+
+function getSurfaceMemorySizeKey(world: VoxelWorld): string {
+  return `${world.width}:${world.height}:${world.depth}`;
+}
+
+function pruneSurfaceHeightMemory(surfaceState: SurfaceHeightState, activeHeightKeys: Set<string>): void {
+  for (const key of surfaceState.surfaceHeightMemory.keys()) {
+    if (!activeHeightKeys.has(key)) {
+      surfaceState.surfaceHeightMemory.delete(key);
+    }
+  }
+}
+
+function addRgb(a: Rgb, b: Rgb): Rgb {
+  return { r: a.r + b.r, g: a.g + b.g, b: a.b + b.b };
+}
+
+function scaleRgb(color: Rgb, scale: number): Rgb {
+  return { r: color.r * scale, g: color.g * scale, b: color.b * scale };
+}
+
+function lerpRgb(a: Rgb, b: Rgb, t: number): Rgb {
+  return {
+    r: a.r + (b.r - a.r) * t,
+    g: a.g + (b.g - a.g) * t,
+    b: a.b + (b.b - a.b) * t,
+  };
 }
 
 function getSurfaceEdgeInset(

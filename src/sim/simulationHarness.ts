@@ -31,6 +31,7 @@ import {
   STAGE_CLEAR_RATIO,
   isStageChoiceComplete,
 } from "../game/stageCompletion";
+import { getWaterSurfaceMeshDebugStats } from "../render/waterRenderer";
 
 type HarnessResult = {
   preset: ScenePresetId;
@@ -823,6 +824,7 @@ function runEdgeCaseHarness(): void {
   assertWaterOutflowSplitsAcrossEqualPortals();
   assertWaterFluxMetadataTracksLateralTransfer();
   assertWaterSurfaceMetadataTracksMotion();
+  assertContinuousWaterSurfaceMeshIsFinite();
   assertWaterParticleCuesFollowMotion();
   assertFlowEventCollectionDoesNotChangeWaterState();
   assertTopologyChangesClearWaterMotion();
@@ -1126,6 +1128,27 @@ function assertWaterSurfaceMetadataTracksMotion(): void {
     `edge/surface-motion: surface waves should not keep water active cells awake (${activeCellsAfterWaterSettles} -> ${world.activeCells.size})`,
   );
   assertSmallWorldConserved(world, baselineWater, "edge/surface-motion");
+}
+
+function assertContinuousWaterSurfaceMeshIsFinite(): void {
+  const world = createEmptyWorld(5, 3, 5);
+  for (let z = 1; z <= 3; z += 1) {
+    for (let x = 1; x <= 3; x += 1) {
+      if (x === 1 && z === 1) {
+        continue;
+      }
+      setWater(world, x, 0, z, 1);
+    }
+  }
+
+  const stats = getWaterSurfaceMeshDebugStats(world);
+  assert(stats.finite, "edge/water-surface-mesh: expected finite mesh vertices");
+  assert(stats.vertexCount >= 12, `edge/water-surface-mesh: expected shared surface vertices, got ${stats.vertexCount}`);
+  assert(stats.triangleCount >= 8, `edge/water-surface-mesh: expected reconstructed surface triangles, got ${stats.triangleCount}`);
+  assert(
+    stats.minY >= 0.96 && stats.maxY <= 1.2,
+    `edge/water-surface-mesh: expected bounded pool surface height, got ${stats.minY.toFixed(3)}..${stats.maxY.toFixed(3)}`,
+  );
 }
 
 function assertWaterParticleCuesFollowMotion(): void {
