@@ -6,9 +6,15 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test:sim": "tsx src/sim/simulationHarness.ts",
+    "test:sim": "tsx src/sim/simulationHarness.ts --tier=standard",
+    "test:sim:smoke": "tsx src/sim/simulationHarness.ts --tier=smoke",
+    "test:sim:standard": "tsx src/sim/simulationHarness.ts --tier=standard",
+    "test:sim:full": "tsx src/sim/simulationHarness.ts --tier=full",
     "screenshots": "tsx src/debug/captureScreenshots.ts",
+    "screenshots:smoke": "tsx src/debug/captureScreenshots.ts --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png",
+    "screenshots:full": "tsx src/debug/captureScreenshots.ts",
     "screenshots:update": "tsx src/debug/captureScreenshots.ts --update-baseline",
+    "screenshots:update:smoke": "tsx src/debug/captureScreenshots.ts --update-baseline --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png",
     "preview": "vite preview"
   },
   "dependencies": {

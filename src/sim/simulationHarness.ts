@@ -38,27 +38,75 @@ type HarnessResult = {
   movedVolume: number;
 };
 
+type HarnessTier = "smoke" | "standard" | "full";
+type HarnessGroup = "edge" | "rules" | "contracts" | "game" | "progressive" | "routes" | "scenario";
+type HarnessOptions = {
+  tier: HarnessTier;
+  groups: readonly HarnessGroup[];
+  scanIntervalTicks: number;
+};
+
 const MAX_TICKS = 1800;
 const MAX_STAGE_TICKS = 1000;
 const CONSERVATION_TOLERANCE = 0.1;
 const CONSERVATION_RELATIVE_TOLERANCE = 0.0005;
+const STANDARD_WATER_SCAN_INTERVAL_TICKS = 25;
+const SMALL_WORLD_SCAN_CELL_LIMIT = 10_000;
+
+const HARNESS_GROUPS_BY_TIER: Record<HarnessTier, readonly HarnessGroup[]> = {
+  smoke: ["edge", "rules", "contracts"],
+  standard: ["edge", "rules", "contracts", "game", "progressive", "scenario"],
+  full: ["edge", "rules", "contracts", "game", "progressive", "routes", "scenario"],
+};
+
+const ALL_HARNESS_GROUPS = Object.freeze(
+  Array.from(new Set(Object.values(HARNESS_GROUPS_BY_TIER).flat())),
+) as readonly HarnessGroup[];
+
+const HARNESS_OPTIONS = parseHarnessOptions();
 
 function runHarness(): void {
   const results: HarnessResult[] = [];
 
-  runEdgeCaseHarness();
-  assertStageCompletionRules();
-  assertLevelScoreRules();
-  assertBestScoreRules();
-  assertLevelSelectRows();
-  assertGeneratedCavernDeterministic();
-  assertGameLevelsComplete();
+  console.log(`simulation harness tier=${HARNESS_OPTIONS.tier} groups=${HARNESS_OPTIONS.groups.join(",")}`);
+
+  if (shouldRunGroup("edge")) {
+    runEdgeCaseHarness();
+  }
+
+  if (shouldRunGroup("rules")) {
+    assertStageCompletionRules();
+    assertLevelScoreRules();
+    assertBestScoreRules();
+    assertLevelSelectRows();
+  }
+
+  if (shouldRunGroup("contracts")) {
+    assertGeneratedCavernDeterministic();
+    assertGeneratedCavernContracts();
+  }
+
+  if (shouldRunGroup("game")) {
+    assertGameLevelsComplete();
+  }
 
   for (const preset of SCENE_PRESETS) {
-    assertAuthoredStagesRemoveTerrain(preset);
-    assertProgressiveStagesMoveWater(preset);
-    for (const tuningPreset of getScenarioTuningPresets(preset)) {
-      results.push(runScenario(preset, tuningPreset));
+    if (shouldRunGroup("progressive")) {
+      assertProgressiveStagesMoveWater(preset);
+    }
+
+    if (shouldRunGroup("routes")) {
+      for (const level of GAME_LEVELS.filter((level) => level.scene === preset)) {
+        assertDeliveryRequirementsGateCompletion(preset, level);
+        assertChoiceStagesCanComplete(preset, level);
+        assertManualChoiceStagesCanComplete(preset, level);
+      }
+    }
+
+    if (shouldRunGroup("scenario")) {
+      for (const tuningPreset of getScenarioTuningPresets(preset)) {
+        results.push(runScenario(preset, tuningPreset));
+      }
     }
   }
 
@@ -71,6 +119,67 @@ function runHarness(): void {
       }`,
     );
   }
+}
+
+function parseHarnessOptions(): HarnessOptions {
+  const tier = parseHarnessTier(getArgValue("--tier") ?? "standard");
+  const groups = parseHarnessGroups(getArgValue("--only")) ?? HARNESS_GROUPS_BY_TIER[tier];
+  const scanIntervalTicks =
+    tier === "full" || process.argv.includes("--paranoid") ? 1 : STANDARD_WATER_SCAN_INTERVAL_TICKS;
+
+  return {
+    tier,
+    groups,
+    scanIntervalTicks,
+  };
+}
+
+function getArgValue(name: string): string | null {
+  const inlinePrefix = `${name}=`;
+  for (let index = 2; index < process.argv.length; index += 1) {
+    const arg = process.argv[index];
+    if (arg.startsWith(inlinePrefix)) {
+      return arg.slice(inlinePrefix.length);
+    }
+    if (arg === name) {
+      return process.argv[index + 1] ?? null;
+    }
+  }
+
+  return null;
+}
+
+function parseHarnessTier(value: string): HarnessTier {
+  if (value === "smoke" || value === "standard" || value === "full") {
+    return value;
+  }
+
+  throw new Error(`Unknown simulation harness tier "${value}". Expected smoke, standard, or full.`);
+}
+
+function parseHarnessGroups(value: string | null): readonly HarnessGroup[] | null {
+  if (!value) {
+    return null;
+  }
+
+  const groups = value
+    .split(",")
+    .map((group) => group.trim())
+    .filter(Boolean)
+    .map(parseHarnessGroup);
+  return groups.length > 0 ? groups : null;
+}
+
+function parseHarnessGroup(value: string): HarnessGroup {
+  if (ALL_HARNESS_GROUPS.includes(value as HarnessGroup)) {
+    return value as HarnessGroup;
+  }
+
+  throw new Error(`Unknown simulation harness group "${value}". Expected one of ${ALL_HARNESS_GROUPS.join(", ")}.`);
+}
+
+function shouldRunGroup(group: HarnessGroup): boolean {
+  return HARNESS_OPTIONS.groups.includes(group);
 }
 
 function assertGameLevelsComplete(): void {
@@ -186,10 +295,16 @@ function assertGameLevelsComplete(): void {
       );
       assert(hazardProgress.score === null, `game/${level.id}: failed hazard route should not produce a score`);
     }
+  }
+}
 
-    assertDeliveryRequirementsGateCompletion(level.scene, level);
-    assertChoiceStagesCanComplete(level.scene, level);
-    assertManualChoiceStagesCanComplete(level.scene, level);
+function assertGeneratedCavernContracts(): void {
+  for (const level of GAME_LEVELS) {
+    assertGeneratedCavernLevelContract(level);
+  }
+
+  for (const preset of SCENE_PRESETS) {
+    assertAuthoredStagesRemoveTerrain(preset);
   }
 }
 
@@ -807,37 +922,44 @@ function assertProgressiveStagesMoveWater(preset: ScenePresetId): void {
 }
 
 function runScenario(preset: ScenePresetId, tuningPreset: TuningPresetId): HarnessResult {
-    const world = createWorld(preset);
-    const tuning = cloneTuningPreset(tuningPreset);
-    const baselineWater = totalWater(world);
-    assert(baselineWater > 0, `${preset}/${tuningPreset}: expected initial water`);
-    assertNoInvalidWater(world, `${preset}/${tuningPreset}: initial`);
+  const world = createWorld(preset);
+  const tuning = cloneTuningPreset(tuningPreset);
+  const baselineWater = totalWater(world);
+  assert(baselineWater > 0, `${preset}/${tuningPreset}: expected initial water`);
+  assertNoInvalidWater(world, `${preset}/${tuningPreset}: initial`);
 
-    openSceneDrain(world, preset);
+  openSceneDrain(world, preset);
 
-    let maxVolumeDelta = 0;
-    const maxTicks = getScenarioMaxTicks(preset);
-    const movedVolume = runUntilStable(world, tuning.waterConfig, baselineWater, maxTicks, `${preset}/${tuningPreset}`, (volumeDelta) => {
+  let maxVolumeDelta = 0;
+  const maxTicks = getScenarioMaxTicks(preset);
+  const movedVolume = runUntilStable(
+    world,
+    tuning.waterConfig,
+    baselineWater,
+    maxTicks,
+    `${preset}/${tuningPreset}`,
+    (volumeDelta) => {
       maxVolumeDelta = Math.max(maxVolumeDelta, volumeDelta);
-    });
+    },
+  );
 
-    assert(movedVolume > 0, `${preset}/${tuningPreset}: expected water to move after opening drain`);
-    if (!isLargeCavernPreset(preset)) {
-      assert(
-        world.activeCells.size === 0,
-        `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
-      );
-    }
+  assert(movedVolume > 0, `${preset}/${tuningPreset}: expected water to move after opening drain`);
+  if (!isLargeCavernPreset(preset)) {
+    assert(
+      world.activeCells.size === 0,
+      `${preset}/${tuningPreset}: expected water to stabilize before ${maxTicks} ticks`,
+    );
+  }
 
-    return {
-      preset,
-      tuningPreset,
-      baselineWater,
-      finalWater: totalWater(world),
-      finalActiveCells: world.activeCells.size,
-      maxVolumeDelta,
-      movedVolume,
-    };
+  return {
+    preset,
+    tuningPreset,
+    baselineWater,
+    finalWater: totalWater(world),
+    finalActiveCells: world.activeCells.size,
+    maxVolumeDelta,
+    movedVolume,
+  };
 }
 
 function getScenarioTuningPresets(preset: ScenePresetId): readonly TuningPresetId[] {
@@ -867,14 +989,14 @@ function runUntilStable(
   let movedVolume = 0;
   let idleTicks = 0;
   const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
+  const scanIntervalTicks = getWaterScanIntervalTicks(world);
 
   for (let tick = 0; tick < maxTicks; tick += 1) {
     const stats = stepWaterSimulation(world, waterConfig, { collectFlowEvents: false });
     movedVolume += stats.movedVolume;
-    const volumeDelta = Math.abs(totalWater(world) - baselineWater);
-    onVolumeDelta?.(volumeDelta);
-    assert(volumeDelta <= volumeTolerance, `${context}: water volume drifted by ${volumeDelta.toFixed(6)}`);
-    assertNoInvalidWater(world, `${context}: tick ${tick}`);
+    if (shouldScanWaterTick(tick, scanIntervalTicks)) {
+      scanWorldWater(world, baselineWater, volumeTolerance, `${context}: tick ${tick}`, onVolumeDelta);
+    }
 
     if (world.activeCells.size === 0) {
       idleTicks += 1;
@@ -887,7 +1009,33 @@ function runUntilStable(
     }
   }
 
+  scanWorldWater(world, baselineWater, volumeTolerance, `${context}: final`, onVolumeDelta);
   return movedVolume;
+}
+
+function getWaterScanIntervalTicks(world: VoxelWorld): number {
+  if (world.water.length <= SMALL_WORLD_SCAN_CELL_LIMIT) {
+    return 1;
+  }
+
+  return HARNESS_OPTIONS.scanIntervalTicks;
+}
+
+function shouldScanWaterTick(tick: number, scanIntervalTicks: number): boolean {
+  return scanIntervalTicks <= 1 || tick === 0 || tick % scanIntervalTicks === 0;
+}
+
+function scanWorldWater(
+  world: VoxelWorld,
+  baselineWater: number,
+  volumeTolerance: number,
+  context: string,
+  onVolumeDelta?: (volumeDelta: number) => void,
+): void {
+  const volumeDelta = Math.abs(totalWater(world) - baselineWater);
+  onVolumeDelta?.(volumeDelta);
+  assert(volumeDelta <= volumeTolerance, `${context}: water volume drifted by ${volumeDelta.toFixed(6)}`);
+  assertNoInvalidWater(world, context);
 }
 
 function assertNoInvalidWater(world: VoxelWorld, context: string): void {

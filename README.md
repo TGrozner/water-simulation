@@ -25,16 +25,35 @@ https://tgrozner.github.io/water-simulation/
 
 Pull requests run the same build and simulation checks without deploying.
 
-Run the non-browser simulation harness:
+Run the standard non-browser simulation harness:
 
 ```bash
 npm run test:sim
+```
+
+For faster iteration or exhaustive checks:
+
+```bash
+npm run test:sim:smoke
+npm run test:sim:full
+```
+
+The simulation harness also accepts targeted groups, for example:
+
+```bash
+npm run test:sim -- --only=contracts,game
 ```
 
 Capture the authored scenes, staged-open states, and game screens:
 
 ```bash
 npm run screenshots
+```
+
+For a faster visual smoke pass:
+
+```bash
+npm run screenshots:smoke
 ```
 
 Refresh screenshot baselines:
@@ -189,5 +208,5 @@ storage.
 ## Recommended next steps
 
 - Add greedy meshing only if a separate voxel picking path is introduced.
-- Add a faster large-cavern harness tier if validation becomes too slow for every local run.
+- Add more shard-safe screenshot options if full visual validation becomes too slow for every local run.
 - Promote the seeded-cavern plan generator to more room variants only after the current seed has stronger playtest coverage.
