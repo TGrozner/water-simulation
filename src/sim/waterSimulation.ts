@@ -129,6 +129,7 @@ export function stepWaterSimulation(
   config: WaterSimulationConfig = DEFAULT_WATER_SIMULATION_CONFIG,
   options: WaterStepOptions = {},
 ): WaterStepStats {
+  world.waterEdgeEvents.length = 0;
   const collectFlowEvents = options.collectFlowEvents ?? true;
   if (options.solver === "sparse-hydraulic-graph") {
     const stats = stepSparseHydraulicSpanGraph(world, config, { collectFlowEvents });

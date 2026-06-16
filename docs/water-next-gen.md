@@ -29,13 +29,26 @@ the older sequential span solver still available for comparison:
 - lateral edge fluxes are proposed simultaneously from head delta, aperture,
   capacity, and stored pipe flux;
 - pipe flux metadata now carries bounded momentum across tiny adverse heads;
+- applied span-edge transfers now emit solver-owned visual events for edge
+  flow, falls, and impacts;
 - solver diagnostics expose active span count, edge count, flux magnitude, max
   head delta, and correction volume;
-- rendering reconstructs continuous sheets, curtains, foam, and spray from the
-  simulated values.
+- terrain and water rendering now share the same organic terrain density field
+  for shoreline/contact decisions;
+- rendering reconstructs continuous water surfaces from contiguous simulated
+  water segments rather than from entire open voxel columns;
+- gameplay can emit localized waterfall/impact ribbons from solver-owned
+  hydraulic events.
 
 That baseline is strong enough to iterate visually and physically, but not the
 final water model.
+
+The gameplay renderer intentionally keeps decorative shoreline skirts, broad
+heuristic waterfall sheets, and foam quads disabled. Re-enabling axis-aligned
+quads would make screenshots look busier, but it would hide the exact
+terrain/water defects the simulation still needs to solve. The only gameplay
+fall sheets currently allowed are localized ribbons emitted directly from
+hydraulic `fall` and `impact` events.
 
 ## Architecture Direction
 
@@ -88,6 +101,20 @@ The final renderer should make the hydraulic state legible:
 Any effect that does not trace back to solver state should be treated as suspect
 until it proves it improves readability without hiding a simulation defect.
 
+## No Cache-Misere Contract
+
+Water visuals are allowed only when their source is auditable:
+
+- primary water surface vertices come from conserved simulated water volume;
+- terrain clipping/contact comes from the shared terrain density field;
+- waterfall, foam, spray, and mist activation comes from hydraulic edge events,
+  head gradients, impact energy, or surface velocity;
+- debug-only legacy quads may exist for inspection, but gameplay must not depend
+  on them as the final look.
+
+When a visual artifact appears, prefer fixing the simulation data or shared
+surface extraction before adding a masking layer.
+
 ## Validation Standard
 
 Every major water slice should prove three things:
@@ -125,13 +152,15 @@ can be substantially slower on the generated cavern.
 
 1. Move surface rendering inputs further from voxel top cells toward span
    surface targets and edge flow metadata.
-2. Add span-edge waterfall event extraction so falling sheets and impact spray
-   are emitted from hydraulic events, not visual heuristics.
-3. Add terrain-aware shoreline skirts and foam bands driven by depth/head
-   gradients.
-4. Profile the sparse graph on generated-cavern carving bursts and add chunked
+2. Replace disabled gameplay shoreline skirts and foam with terrain-contact
+   geometry emitted from hydraulic events.
+3. Extend local particle spray/mist around high-energy impact events while
+   keeping activation solver-driven.
+4. Add stronger profiler coverage for `test:sim:full` and generated-cavern
+   warmup so long checks can be split intentionally instead of skipped.
+5. Profile the sparse graph on generated-cavern carving bursts and add chunked
    span invalidation only if the metrics require it.
-5. Add optional local particle spray for impacts and constrictions, while
-   keeping the main water volume in the conserved span graph.
-6. Expand visual captures to post-carve sluice sequences and side-by-side
+6. Add terrain-aware foam variants for constrictions, shore rebound, and
+   waterfall impact zones.
+7. Expand visual captures to post-carve sluice sequences and side-by-side
    `solver=sparse` / `solver=legacy` comparisons when debugging regressions.

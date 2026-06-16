@@ -30,6 +30,19 @@ export type WaterParticleCue = {
   surfaceEnergy: number;
 };
 
+export type WaterEdgeCueKind = "none" | "edge-flow" | "fall" | "impact";
+
+export type WaterEdgeCue = {
+  kind: WaterEdgeCueKind;
+  intensity: number;
+  amount: number;
+  dropDistance: number;
+  direction: { x: number; y: number; z: number };
+  surfaceEnergy: number;
+};
+
+export type WaterEdgeCueMap = Map<number, WaterEdgeCue>;
+
 export const WATER_FLOW_VISUAL_SCALE = 0.75;
 const LATERAL_MOTION_THRESHOLD = 0.14;
 const FALLING_MOTION_THRESHOLD = 0.11;
@@ -89,7 +102,54 @@ export function getWaterFlowStrength(world: VoxelWorld, x: number, y: number, z:
   return getWaterMotionSample(world, x, y, z).strength;
 }
 
-export function getWaterParticleCue(world: VoxelWorld, x: number, y: number, z: number, amount: number): WaterParticleCue {
+export function buildWaterEdgeCueMap(world: VoxelWorld): WaterEdgeCueMap {
+  const cues: WaterEdgeCueMap = new Map();
+
+  for (const event of world.waterEdgeEvents) {
+    const horizontal = Math.hypot(event.dx, event.dz);
+    mergeWaterEdgeCue(cues, event.targetCellIndex, {
+      kind: event.kind,
+      intensity: event.intensity,
+      amount: event.amount,
+      dropDistance: event.dropDistance,
+      direction: normalizeCueDirection(event.dx, event.dy, event.dz),
+      surfaceEnergy: clamp01(event.intensity * 0.7 + event.dropDistance * 0.08),
+    });
+    mergeWaterEdgeCue(cues, event.sourceCellIndex, {
+      kind: horizontal > 0.1 ? "edge-flow" : event.kind === "impact" ? "fall" : event.kind,
+      intensity: event.intensity * (horizontal > 0.1 ? 0.35 : 0.55),
+      amount: event.amount,
+      dropDistance: event.dropDistance,
+      direction: normalizeCueDirection(event.dx, event.dy, event.dz),
+      surfaceEnergy: clamp01(event.intensity * 0.42 + event.dropDistance * 0.05),
+    });
+  }
+
+  return cues;
+}
+
+export function getWaterEdgeCueForCell(
+  cues: WaterEdgeCueMap,
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+): WaterEdgeCue {
+  if (!inBounds(world, x, y, z)) {
+    return createEmptyWaterEdgeCue();
+  }
+
+  return cues.get(index(world, x, y, z)) ?? createEmptyWaterEdgeCue();
+}
+
+export function getWaterParticleCue(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  amount: number,
+  edgeCue: WaterEdgeCue = createEmptyWaterEdgeCue(),
+): WaterParticleCue {
   if (!isOpenWaterCell(world, x, y, z) || amount <= EPSILON) {
     return createEmptyParticleCue();
   }
@@ -101,6 +161,41 @@ export function getWaterParticleCue(world: VoxelWorld, x: number, y: number, z: 
   );
   const drop = getOpenDropVector(world, x, y, z, amount);
   const moving = motion.kind !== "settled";
+
+  if (edgeCue.kind !== "none" && edgeCue.intensity > 0.18) {
+    const eventSurfaceEnergy = Math.max(surfaceEnergy, edgeCue.surfaceEnergy);
+    if (edgeCue.kind === "impact") {
+      return {
+        kind: "splash",
+        intensity: clamp01(0.28 + edgeCue.intensity * 0.7 + eventSurfaceEnergy * 0.18),
+        direction: normalizeCueDirection(
+          edgeCue.direction.x + motion.x * 0.22,
+          Math.max(0.16, 0.42 - edgeCue.dropDistance * 0.04),
+          edgeCue.direction.z + motion.z * 0.22,
+        ),
+        surfaceEnergy: eventSurfaceEnergy,
+      };
+    }
+
+    if (edgeCue.kind === "fall") {
+      return {
+        kind: edgeCue.intensity > 0.58 ? "splash" : "spray",
+        intensity: clamp01(0.22 + edgeCue.intensity * 0.68 + edgeCue.dropDistance * 0.06),
+        direction: normalizeCueDirection(edgeCue.direction.x + motion.x * 0.18, -Math.max(0.32, edgeCue.dropDistance * 0.12), edgeCue.direction.z + motion.z * 0.18),
+        surfaceEnergy: eventSurfaceEnergy,
+      };
+    }
+
+    if (edgeCue.intensity > 0.34) {
+      return {
+        kind: edgeCue.dropDistance > 0.35 ? "spray" : "jet",
+        intensity: clamp01(0.14 + edgeCue.intensity * 0.62 + motion.horizontal * 0.18),
+        direction: normalizeCueDirection(edgeCue.direction.x + motion.x * 0.28, -0.08 - eventSurfaceEnergy * 0.12, edgeCue.direction.z + motion.z * 0.28),
+        surfaceEnergy: eventSurfaceEnergy,
+      };
+    }
+  }
+
   if (!moving && surfaceEnergy < 0.18) {
     return createEmptyParticleCue();
   }
@@ -208,6 +303,59 @@ function createEmptyParticleCue(surfaceEnergy = 0): WaterParticleCue {
     direction: { x: 0, y: 0, z: 0 },
     surfaceEnergy,
   };
+}
+
+function createEmptyWaterEdgeCue(): WaterEdgeCue {
+  return {
+    kind: "none",
+    intensity: 0,
+    amount: 0,
+    dropDistance: 0,
+    direction: { x: 0, y: 0, z: 0 },
+    surfaceEnergy: 0,
+  };
+}
+
+function mergeWaterEdgeCue(cues: WaterEdgeCueMap, cellIndex: number, cue: WaterEdgeCue): void {
+  const previous = cues.get(cellIndex);
+  if (!previous) {
+    cues.set(cellIndex, cue);
+    return;
+  }
+
+  const lowerIntensity = Math.min(previous.intensity, cue.intensity);
+  const nextIntensity = Math.min(1, Math.max(previous.intensity, cue.intensity) + lowerIntensity * 0.18);
+  const previousWeight = previous.intensity;
+  const cueWeight = cue.intensity;
+  cues.set(cellIndex, {
+    kind: getDominantCueKind(previous.kind, cue.kind),
+    intensity: nextIntensity,
+    amount: previous.amount + cue.amount,
+    dropDistance: Math.max(previous.dropDistance, cue.dropDistance),
+    direction: normalizeCueDirection(
+      previous.direction.x * previousWeight + cue.direction.x * cueWeight,
+      previous.direction.y * previousWeight + cue.direction.y * cueWeight,
+      previous.direction.z * previousWeight + cue.direction.z * cueWeight,
+    ),
+    surfaceEnergy: Math.max(previous.surfaceEnergy, cue.surfaceEnergy),
+  });
+}
+
+function getDominantCueKind(a: WaterEdgeCueKind, b: WaterEdgeCueKind): WaterEdgeCueKind {
+  return getCueKindPriority(b) > getCueKindPriority(a) ? b : a;
+}
+
+function getCueKindPriority(kind: WaterEdgeCueKind): number {
+  switch (kind) {
+    case "impact":
+      return 3;
+    case "fall":
+      return 2;
+    case "edge-flow":
+      return 1;
+    case "none":
+      return 0;
+  }
 }
 
 function clamp01(value: number): number {

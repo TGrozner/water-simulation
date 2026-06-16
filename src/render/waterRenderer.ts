@@ -14,13 +14,22 @@ import {
   RepeatWrapping,
   Scene,
 } from "three";
-import { getWaterMotionSample, getWaterParticleCue, type WaterMotionSample } from "../sim/waterMotion";
+import {
+  buildWaterEdgeCueMap,
+  getWaterEdgeCueForCell,
+  getWaterMotionSample,
+  getWaterParticleCue,
+  type WaterEdgeCue,
+  type WaterEdgeCueMap,
+  type WaterMotionSample,
+} from "../sim/waterMotion";
 import { getWaterSurfaceOffsetAt } from "../sim/waterSurface";
 import { cellCenter } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 import { createRendererStats, type RendererStats } from "./renderStats";
+import { getTerrainNodeDensity, ORGANIC_TERRAIN_ISO_LEVEL } from "./terrainField";
 
 export type WaterRenderer = {
   bodyBatch: InstancedMeshBatch<BoxGeometry, MeshPhongMaterial, number>;
@@ -106,6 +115,8 @@ const SURFACE_FIELD_RISE_ALPHA = 0.62;
 const SURFACE_FIELD_DECAY_ALPHA = 0.2;
 const SURFACE_FIELD_CLEAR_EPSILON = 0.035;
 const SURFACE_LAYER_MAX_STEP = 0.62;
+const SURFACE_TERRAIN_OCCLUSION_START = 0.48;
+const SURFACE_TERRAIN_OCCLUSION_END = 0.78;
 const SHORE_FOAM_INSET = 0.08;
 const SHORE_FOAM_WIDTH = 0.075;
 const SHORE_SKIRT_DROP = 0.32;
@@ -117,7 +128,15 @@ const EDGE_SHEET_MIN_AMOUNT = 0.48;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
+const HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY = 0.34;
+const HYDRAULIC_EVENT_RIBBON_MAX_COUNT = 160;
+// Gameplay keeps decorative sheet layers disabled until they are generated from
+// solver-owned terrain/contact events instead of axis-aligned voxel quads.
+const ENABLE_GAMEPLAY_SHORELINE_SKIRTS = false;
+const ENABLE_GAMEPLAY_WATER_RIBBONS = false;
+const ENABLE_GAMEPLAY_FOAM_QUADS = false;
 const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
+const SURFACE_VERTEX_KEY_SCALE = 1000;
 const SIDE_DIRECTIONS: SideDirection[] = [
   { dx: -1, dz: 0, axis: "x", side: -1 },
   { dx: 1, dz: 0, axis: "x", side: 1 },
@@ -315,6 +334,7 @@ function updateWaterMesh(
   sprayMaterial.opacity = debugMode ? 0.14 : gameplayMode ? 0.08 : 0.12;
   const layerSize = world.width * world.depth;
   const columnSurfaceCache = new Map<string, ColumnSurfaceSample | null>();
+  const edgeCueMap = buildWaterEdgeCueMap(world);
   renderer.bodyBatch.begin();
   renderer.foamBatch.begin();
   renderer.sprayBatch.begin();
@@ -336,6 +356,7 @@ function updateWaterMesh(
 
     const center = cellCenter(world, x, y, z);
     const waterHeight = Math.max(0.05, Math.min(1, amount));
+    const edgeCue = getWaterEdgeCueForCell(edgeCueMap, world, x, y, z);
     bodyDummy.position.set(center.x, y + waterHeight * 0.5, center.z);
     bodyDummy.rotation.set(0, 0, 0);
     bodyDummy.scale.set(1, waterHeight, 1);
@@ -350,8 +371,21 @@ function updateWaterMesh(
       }
       surfaceFaceCount += 1;
       if (gameplayMode && !debugMode) {
-        curtainFaceCount += appendShorelineSkirts(curtainPositions, curtainColors, world, x, y, z, waterHeight);
-        foamCount += appendShoreFoamStrips(foamStripPositions, foamStripColors, world, x, y, z, waterHeight);
+        if (ENABLE_GAMEPLAY_SHORELINE_SKIRTS) {
+          curtainFaceCount += appendShorelineSkirts(
+            curtainPositions,
+            curtainColors,
+            world,
+            x,
+            y,
+            z,
+            waterHeight,
+            edgeCueMap,
+          );
+        }
+        if (ENABLE_GAMEPLAY_FOAM_QUADS) {
+          foamCount += appendShoreFoamStrips(foamStripPositions, foamStripColors, world, x, y, z, waterHeight, edgeCueMap);
+        }
       }
     }
 
@@ -368,11 +402,11 @@ function updateWaterMesh(
         gameplayMode,
       );
     } else {
-      curtainFaceCount += appendGameplayWaterDrops(curtainPositions, curtainColors, world, x, y, z, waterHeight);
+      curtainFaceCount += appendGameplayWaterDrops(curtainPositions, curtainColors, world, x, y, z, waterHeight, edgeCueMap);
     }
 
-    if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode)) {
-      const foamScale = getWaterFoamScale(world, x, y, z, amount);
+    if (shouldRenderWaterFoam(world, x, y, z, amount, debugMode, gameplayMode, edgeCue)) {
+      const foamScale = getWaterFoamScale(world, x, y, z, amount, edgeCue);
       const foamStretch = 0.72 + getCellVariation(x, y + 17, z) * 0.34;
       foamDummy.position.set(center.x, y + waterHeight + 0.05, center.z);
       foamDummy.rotation.set(-Math.PI / 2, 0, getCellVariation(z, y, x) * Math.PI * 2);
@@ -383,8 +417,12 @@ function updateWaterMesh(
     }
 
     if (gameplayMode && !debugMode) {
-      sprayCount = appendWaterParticleCue(renderer, world, x, y, z, waterHeight, sprayCount);
+      sprayCount = appendWaterParticleCue(renderer, world, x, y, z, waterHeight, edgeCue, sprayCount);
     }
+  }
+
+  if (gameplayMode && !debugMode) {
+    curtainFaceCount += appendHydraulicEventRibbons(curtainPositions, curtainColors, world);
   }
 
   renderer.bodyBatch.finish();
@@ -395,6 +433,76 @@ function updateWaterMesh(
   renderer.sprayBatch.finish();
   renderer.stats.instances = instanceCount + surfaceFaceCount + curtainFaceCount + foamCount + sprayCount;
   renderer.stats.updateMs = performance.now() - startedAt;
+}
+
+function appendHydraulicEventRibbons(positions: number[], colors: number[], world: VoxelWorld): number {
+  let faceCount = 0;
+  for (const event of world.waterEdgeEvents) {
+    if (faceCount >= HYDRAULIC_EVENT_RIBBON_MAX_COUNT) {
+      break;
+    }
+
+    if (
+      (event.kind !== "fall" && event.kind !== "impact") ||
+      event.intensity < HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY ||
+      event.dropDistance < 0.42
+    ) {
+      continue;
+    }
+
+    const source = getCoordsFromCellIndex(world, event.sourceCellIndex);
+    const target = getCoordsFromCellIndex(world, event.targetCellIndex);
+    if (!source || !target || isTerrainBlockingWaterSheet(world, target.x, event.targetSurfaceY, target.z)) {
+      continue;
+    }
+
+    const topY = Math.max(event.sourceSurfaceY, event.portalTopY) + 0.012;
+    const bottomY = Math.max(event.targetSurfaceY + 0.035, topY - Math.min(FALLING_RIBBON_MAX_DROP, event.dropDistance + 0.24));
+    if (topY - bottomY < 0.18) {
+      continue;
+    }
+
+    appendHydraulicRibbon(positions, colors, world, source.x, source.z, event.dx, event.dz, topY, bottomY, event.amount, event.intensity);
+    faceCount += 1;
+  }
+
+  return faceCount;
+}
+
+function appendHydraulicRibbon(
+  positions: number[],
+  colors: number[],
+  world: VoxelWorld,
+  x: number,
+  z: number,
+  dx: number,
+  dz: number,
+  topY: number,
+  bottomY: number,
+  amount: number,
+  intensity: number,
+): void {
+  const centerX = x - world.width / 2 + 0.5 + dx * 0.32;
+  const centerZ = z - world.depth / 2 + 0.5 + dz * 0.32;
+  const horizontal = Math.hypot(dx, dz);
+  const tangentX = horizontal > 0 ? -dz / horizontal : 1;
+  const tangentZ = horizontal > 0 ? dx / horizontal : 0;
+  const width = 0.08 + Math.min(0.16, amount * 0.13 + intensity * 0.08);
+  const driftX = dx * (0.1 + intensity * 0.09) + (getCellVariation(x + 313, 17, z) - 0.5) * 0.08;
+  const driftZ = dz * (0.1 + intensity * 0.09) + (getCellVariation(x, 19, z + 317) - 0.5) * 0.08;
+  const topColor = getCurtainTopColor(x, z, Math.min(1, amount + intensity * 0.35));
+  const bottomColor = eventRibbonBottomColor(amount, intensity);
+
+  appendCurtainQuad(
+    positions,
+    colors,
+    [centerX - tangentX * width, topY, centerZ - tangentZ * width],
+    [centerX + tangentX * width, topY - getCurtainSag(x, z) * 0.45, centerZ + tangentZ * width],
+    [centerX + tangentX * width * 0.58 + driftX, bottomY, centerZ + tangentZ * width * 0.58 + driftZ],
+    [centerX - tangentX * width * 0.58 + driftX, bottomY + getCurtainSag(z, x) * 0.24, centerZ - tangentZ * width * 0.58 + driftZ],
+    topColor,
+    bottomColor,
+  );
 }
 
 function appendWaterCurtains(
@@ -438,9 +546,10 @@ function appendWaterCurtains(
         waterHeight >= EDGE_SHEET_MIN_AMOUNT &&
         hasStrongVerticalWaterDrop(world, x, y, z, waterHeight) &&
         hasActiveWaterMotion(world, x, y, z) &&
-        neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP
+        neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP &&
+        !isTerrainBlockingWaterSheet(world, neighborX, y + waterHeight, neighborZ)
       ) {
-        appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight);
+        appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight, getWaterMotionSample(world, x, y, z).strength);
         faceCount += 1;
       }
     }
@@ -466,11 +575,19 @@ function appendGameplayWaterDrops(
   y: number,
   z: number,
   waterHeight: number,
+  edgeCueMap: WaterEdgeCueMap,
 ): number {
+  if (!ENABLE_GAMEPLAY_WATER_RIBBONS) {
+    return 0;
+  }
+
   let faceCount = 0;
   const topY = y + waterHeight + 0.01;
+  const edgeCue = getWaterEdgeCueForCell(edgeCueMap, world, x, y, z);
+  const solverDrop = edgeCue.kind === "fall" || edgeCue.kind === "impact";
   const verticalDrop = hasStrongVerticalWaterDrop(world, x, y, z, waterHeight);
-  const activeDrop = verticalDrop && hasDownwardWaterMotion(world, x, y, z);
+  const eventVerticalDrop = solverDrop && edgeCue.direction.y < -0.25 && verticalDrop;
+  const activeDrop = (verticalDrop && hasDownwardWaterMotion(world, x, y, z)) || (eventVerticalDrop && edgeCue.intensity > 0.28);
 
   if (activeDrop && shouldStartFallingRibbon(world, x, y, z, waterHeight)) {
     const bottomY = findFallingRibbonBottomY(world, x, y, z);
@@ -481,13 +598,17 @@ function appendGameplayWaterDrops(
     }
   }
 
-  if (!verticalDrop || !hasActiveWaterMotion(world, x, y, z) || waterHeight < EDGE_SHEET_MIN_AMOUNT) {
+  if (
+    (!verticalDrop && edgeCue.kind === "none") ||
+    (!hasActiveWaterMotion(world, x, y, z) && edgeCue.intensity <= 0.24) ||
+    waterHeight < EDGE_SHEET_MIN_AMOUNT
+  ) {
     return faceCount;
   }
 
   const motion = getWaterMotionSample(world, x, y, z);
   for (const direction of SIDE_DIRECTIONS) {
-    if (!isFlowAlignedWithDirection(motion, direction)) {
+    if (!isFlowAlignedWithDirection(motion, direction) && !isEdgeCueAlignedWithDirection(edgeCue, direction)) {
       continue;
     }
 
@@ -498,8 +619,8 @@ function appendGameplayWaterDrops(
     }
 
     const neighborAmount = getWaterAmountAt(world, neighborX, y, neighborZ);
-    if (neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP) {
-      appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight);
+    if (neighborAmount < waterHeight - EDGE_SHEET_MIN_DROP && !isTerrainBlockingWaterSheet(world, neighborX, y + waterHeight, neighborZ)) {
+      appendEdgeSheet(positions, colors, world, x, z, direction, topY, waterHeight, Math.max(motion.strength, edgeCue.intensity));
       faceCount += 1;
     }
   }
@@ -514,6 +635,19 @@ function isFlowAlignedWithDirection(motion: WaterMotionSample, direction: SideDi
 
   const alignment = motion.x * direction.dx + motion.z * direction.dz;
   return alignment >= Math.max(0.04, motion.horizontal * 0.18);
+}
+
+function isEdgeCueAlignedWithDirection(cue: WaterEdgeCue, direction: SideDirection): boolean {
+  if (cue.kind === "none" || cue.intensity <= 0.2) {
+    return false;
+  }
+
+  const horizontal = Math.hypot(cue.direction.x, cue.direction.z);
+  if (horizontal <= 0.05) {
+    return false;
+  }
+
+  return cue.direction.x * direction.dx + cue.direction.z * direction.dz >= horizontal * 0.16;
 }
 
 function appendSideCurtain(
@@ -586,46 +720,60 @@ function appendEdgeSheet(
   direction: SideDirection,
   topY: number,
   amount: number,
+  intensity: number,
 ): void {
   const color = getFoamColor(amount);
   const edgeY = topY + 0.018;
   const innerY = topY - 0.012;
-  const inset = 0.16;
-  const min = 0.08;
-  const max = 0.92;
+  const inset = 0.12 + clamp01(intensity) * 0.08;
+  const ribbonCount = 2 + Math.floor(clamp01(intensity) * 3);
+  const usable = 0.78;
+  const start = 0.11;
 
   if (direction.axis === "x") {
     const edgeX = x + (direction.side > 0 ? 1 : 0) - world.width / 2;
     const innerX = edgeX - direction.side * inset;
-    const minZ = z - world.depth / 2 + min;
-    const maxZ = z - world.depth / 2 + max;
-    appendCurtainQuad(
-      positions,
-      colors,
-      [innerX, innerY, minZ],
-      [innerX, innerY, maxZ],
-      [edgeX, edgeY, maxZ],
-      [edgeX, edgeY, minZ],
-      color,
-      color,
-    );
+    for (let ribbonIndex = 0; ribbonIndex < ribbonCount; ribbonIndex += 1) {
+      const slotStart = start + (usable / ribbonCount) * ribbonIndex;
+      const slotEnd = start + (usable / ribbonCount) * (ribbonIndex + 1);
+      const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(x + ribbonIndex * 3, 211, z) - 0.5) * 0.06;
+      const halfWidth = ((slotEnd - slotStart) * (0.28 + getCellVariation(z, 223 + ribbonIndex, x) * 0.28)) / 2;
+      const minZ = z - world.depth / 2 + Math.max(0.06, center - halfWidth);
+      const maxZ = z - world.depth / 2 + Math.min(0.94, center + halfWidth);
+      appendCurtainQuad(
+        positions,
+        colors,
+        [innerX, innerY + getFoamLift(x + ribbonIndex, z) * 0.35, minZ],
+        [innerX, innerY + getFoamLift(x, z + ribbonIndex) * 0.35, maxZ],
+        [edgeX, edgeY, maxZ],
+        [edgeX, edgeY, minZ],
+        color,
+        color,
+      );
+    }
     return;
   }
 
   const edgeZ = z + (direction.side > 0 ? 1 : 0) - world.depth / 2;
   const innerZ = edgeZ - direction.side * inset;
-  const minX = x - world.width / 2 + min;
-  const maxX = x - world.width / 2 + max;
-  appendCurtainQuad(
-    positions,
-    colors,
-    [minX, innerY, innerZ],
-    [maxX, innerY, innerZ],
-    [maxX, edgeY, edgeZ],
-    [minX, edgeY, edgeZ],
-    color,
-    color,
-  );
+  for (let ribbonIndex = 0; ribbonIndex < ribbonCount; ribbonIndex += 1) {
+    const slotStart = start + (usable / ribbonCount) * ribbonIndex;
+    const slotEnd = start + (usable / ribbonCount) * (ribbonIndex + 1);
+    const center = (slotStart + slotEnd) * 0.5 + (getCellVariation(z + ribbonIndex * 3, 239, x) - 0.5) * 0.06;
+    const halfWidth = ((slotEnd - slotStart) * (0.28 + getCellVariation(x, 251 + ribbonIndex, z) * 0.28)) / 2;
+    const minX = x - world.width / 2 + Math.max(0.06, center - halfWidth);
+    const maxX = x - world.width / 2 + Math.min(0.94, center + halfWidth);
+    appendCurtainQuad(
+      positions,
+      colors,
+      [minX, innerY + getFoamLift(z + ribbonIndex, x) * 0.35, innerZ],
+      [maxX, innerY + getFoamLift(z, x + ribbonIndex) * 0.35, innerZ],
+      [maxX, edgeY, edgeZ],
+      [minX, edgeY, edgeZ],
+      color,
+      color,
+    );
+  }
 }
 
 function appendFallingRibbon(
@@ -681,12 +829,13 @@ function appendShoreFoamStrips(
   y: number,
   z: number,
   waterHeight: number,
+  edgeCueMap: WaterEdgeCueMap,
 ): number {
   let faceCount = 0;
   const topY = y + waterHeight + 0.052;
 
   for (const direction of SIDE_DIRECTIONS) {
-    const cue = getShorelineCue(world, x, y, z, direction, waterHeight);
+    const cue = getShorelineCue(world, x, y, z, direction, waterHeight, edgeCueMap);
     if (!cue?.foam) {
       continue;
     }
@@ -742,12 +891,13 @@ function appendShorelineSkirts(
   y: number,
   z: number,
   waterHeight: number,
+  edgeCueMap: WaterEdgeCueMap,
 ): number {
   let faceCount = 0;
   const topY = y + waterHeight + 0.018;
 
   for (const direction of SIDE_DIRECTIONS) {
-    const cue = getShorelineCue(world, x, y, z, direction, waterHeight);
+    const cue = getShorelineCue(world, x, y, z, direction, waterHeight, edgeCueMap);
     if (!cue?.skirt) {
       continue;
     }
@@ -850,15 +1000,16 @@ function appendWaterParticleCue(
   y: number,
   z: number,
   waterHeight: number,
+  edgeCue: WaterEdgeCue,
   sprayCount: number,
 ): number {
-  const cue = getWaterParticleCue(world, x, y, z, waterHeight);
+  const cue = getWaterParticleCue(world, x, y, z, waterHeight, edgeCue);
   if (cue.kind === "none" || cue.kind === "jet" || cue.intensity <= 0.55) {
     return sprayCount;
   }
 
   const variation = getCellVariation(x + 151, y + 157, z + 163);
-  const impactStrength = getImpactVisualStrength(world, x, y, z, waterHeight, cue.surfaceEnergy);
+  const impactStrength = Math.max(getImpactVisualStrength(world, x, y, z, waterHeight, cue.surfaceEnergy), edgeCue.intensity * 0.82);
   if (variation > Math.min(0.38, cue.intensity * 0.13 + impactStrength * 0.16)) {
     return sprayCount;
   }
@@ -998,12 +1149,12 @@ function getColumnSurfaceSample(
   }
 
   let bottomY = y;
-  while (bottomY > 0 && !isSolidWaterNeighbor(world, x, bottomY - 1, z)) {
+  while (bottomY > 0 && isSurfaceColumnWaterCell(world, x, bottomY - 1, z)) {
     bottomY -= 1;
   }
 
   let topY = y;
-  while (topY + 1 < world.height && !isSolidWaterNeighbor(world, x, topY + 1, z)) {
+  while (topY + 1 < world.height && isSurfaceColumnWaterCell(world, x, topY + 1, z)) {
     topY += 1;
   }
 
@@ -1032,6 +1183,10 @@ function getColumnSurfaceSample(
   };
   cache.set(spanKey, sample);
   return sample;
+}
+
+function isSurfaceColumnWaterCell(world: VoxelWorld, x: number, y: number, z: number): boolean {
+  return getWaterAmountAt(world, x, y, z) > EPSILON;
 }
 
 function replacePoolSurfaceGeometry(renderer: WaterRenderer, world: VoxelWorld, cells: SurfaceCell[]): void {
@@ -1067,7 +1222,7 @@ function buildPoolSurfaceGeometry(
   };
 
   const getSharedVertexIndex = (vertex: SurfaceVertex): number => {
-    const key = `${vertex.y}:${Math.round(vertex.x * 1000)}:${Math.round(vertex.z * 1000)}`;
+    const key = getSurfaceVertexKey(vertex);
     const existing = vertexIndices.get(key);
     if (existing !== undefined) {
       return existing;
@@ -1240,14 +1395,15 @@ function createSurfaceSample(
         : previousHeight + (targetHeight - previousHeight) * SURFACE_MEMORY_ALPHA;
     surfaceState.surfaceHeightMemory.set(heightKey, height);
     activeHeightKeys.add(heightKey);
+    const terrainOcclusion = getSurfaceTerrainOcclusion(world, cell);
     return {
       x: x + 0.5,
       y,
       z: z + 0.5,
-      value: smoothSurfaceFieldValue(surfaceState, heightKey, getSurfaceFieldValue(cell.waterHeight), activeHeightKeys),
+      value: smoothSurfaceFieldValue(surfaceState, heightKey, getWetSurfaceFieldTarget(world, cell), activeHeightKeys),
       height,
       color: getSurfaceCellColor(cell),
-      terrainContact: false,
+      terrainContact: terrainOcclusion >= SURFACE_TERRAIN_OCCLUSION_START || hasRenderedTerrainContactNearSurface(world, cell),
     };
   }
 
@@ -1264,6 +1420,7 @@ function createDrySurfaceSample(
   activeHeightKeys: Set<string>,
 ): SurfaceSample {
   let heightTotal = 0;
+  let wetFieldTotal = 0;
   let wetCenterXTotal = 0;
   let wetCenterZTotal = 0;
   let colorTotal: Rgb = { r: 0, g: 0, b: 0 };
@@ -1277,6 +1434,7 @@ function createDrySurfaceSample(
       }
 
       heightTotal += getSurfaceCellCenterY(world, cell);
+      wetFieldTotal += getWetSurfaceFieldTarget(world, cell);
       wetCenterXTotal += cell.x + 0.5;
       wetCenterZTotal += cell.z + 0.5;
       const color = getSurfaceCellColor(cell);
@@ -1288,13 +1446,13 @@ function createDrySurfaceSample(
   const fallbackColor = { r: 0.05, g: 0.31, b: 0.5 };
   const terrainContact = count > 0 && isTerrainContactSurfaceSample(world, cells, x, z);
   const fieldKey = getSurfaceHeightMemoryKey(y, x, z);
-  const targetValue = getDrySurfaceFieldTarget(terrainContact, count);
+  const targetValue = getDrySurfaceFieldTarget(terrainContact, count, count > 0 ? wetFieldTotal / count : 0);
   const value = smoothSurfaceFieldValue(surfaceState, fieldKey, targetValue, activeHeightKeys);
   const dryX = x + 0.5;
   const dryZ = z + 0.5;
-  const contactBias = terrainContact && count > 0 ? 0.52 : 0;
-  const sampleX = contactBias > 0 ? dryX + (wetCenterXTotal / count - dryX) * contactBias : dryX;
-  const sampleZ = contactBias > 0 ? dryZ + (wetCenterZTotal / count - dryZ) * contactBias : dryZ;
+  const openWaterBias = !terrainContact && count > 0 ? 0.12 : 0;
+  const sampleX = openWaterBias > 0 ? dryX + (wetCenterXTotal / count - dryX) * openWaterBias : dryX;
+  const sampleZ = openWaterBias > 0 ? dryZ + (wetCenterZTotal / count - dryZ) * openWaterBias : dryZ;
   return {
     x: sampleX,
     y,
@@ -1306,13 +1464,13 @@ function createDrySurfaceSample(
   };
 }
 
-function getDrySurfaceFieldTarget(terrainContact: boolean, nearbyWaterCount: number): number {
+function getDrySurfaceFieldTarget(terrainContact: boolean, nearbyWaterCount: number, nearbyWetFieldValue: number): number {
   if (nearbyWaterCount <= 0) {
     return 0;
   }
 
   if (terrainContact) {
-    return SURFACE_TERRAIN_CONTACT_VALUE;
+    return Math.max(0, Math.min(SURFACE_TERRAIN_CONTACT_VALUE, SURFACE_ISO_LEVEL * 2 - nearbyWetFieldValue));
   }
 
   return nearbyWaterCount >= 3 ? SURFACE_OPEN_CONTACT_VALUE : 0;
@@ -1368,7 +1526,7 @@ function hasOrganicTerrainIsoContact(world: VoxelWorld, x: number, y: number, z:
   for (let nodeY = minNodeY; nodeY <= maxNodeY; nodeY += 1) {
     for (let nodeZ = z; nodeZ <= z + 1; nodeZ += 1) {
       for (let nodeX = x; nodeX <= x + 1; nodeX += 1) {
-        if (getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ) >= 0.5) {
+        if (getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ) >= ORGANIC_TERRAIN_ISO_LEVEL) {
           return true;
         }
       }
@@ -1379,24 +1537,7 @@ function hasOrganicTerrainIsoContact(world: VoxelWorld, x: number, y: number, z:
 }
 
 function getOrganicTerrainNodeDensity(world: VoxelWorld, nodeX: number, nodeY: number, nodeZ: number): number {
-  let total = 0;
-  let count = 0;
-
-  for (let y = nodeY - 1; y <= nodeY; y += 1) {
-    for (let z = nodeZ - 1; z <= nodeZ; z += 1) {
-      for (let x = nodeX - 1; x <= nodeX; x += 1) {
-        count += 1;
-        if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth) {
-          total += 1;
-          continue;
-        }
-
-        total += isSolidWaterNeighbor(world, x, y, z) ? 1 : 0;
-      }
-    }
-  }
-
-  return count > 0 ? total / count : 0;
+  return getTerrainNodeDensity(world, undefined, nodeX, nodeY, nodeZ);
 }
 
 function sampleToSurfaceVertex(sample: SurfaceSample): SurfaceVertex {
@@ -1408,6 +1549,16 @@ function sampleToSurfaceVertex(sample: SurfaceSample): SurfaceVertex {
     color: sample.color,
     terrainContact: sample.terrainContact,
   };
+}
+
+function getWetSurfaceFieldTarget(world: VoxelWorld, cell: SurfaceCell): number {
+  return getSurfaceFieldValue(cell.waterHeight) * getSurfaceTerrainVisibility(getSurfaceTerrainOcclusion(world, cell));
+}
+
+function getSurfaceVertexKey(vertex: SurfaceVertex): string {
+  return `${Math.round(vertex.x * SURFACE_VERTEX_KEY_SCALE)}:${Math.round(vertex.y * SURFACE_VERTEX_KEY_SCALE)}:${Math.round(
+    vertex.z * SURFACE_VERTEX_KEY_SCALE,
+  )}`;
 }
 
 function getSurfaceSquarePolygons(vertices: SurfaceVertex[]): SurfaceVertex[][] {
@@ -1453,19 +1604,6 @@ function clipSurfacePolygon(vertices: SurfaceVertex[]): SurfaceVertex[] {
 }
 
 function interpolateSurfaceVertex(a: SurfaceVertex, b: SurfaceVertex): SurfaceVertex {
-  if (a.terrainContact !== b.terrainContact) {
-    const contact = a.terrainContact ? a : b;
-    const water = a.terrainContact ? b : a;
-    return {
-      x: contact.x,
-      y: contact.y,
-      z: contact.z,
-      value: SURFACE_ISO_LEVEL,
-      color: lerpRgb(contact.color, water.color, 0.28),
-      terrainContact: true,
-    };
-  }
-
   const range = b.value - a.value;
   const t = Math.abs(range) <= EPSILON ? 0.5 : Math.min(1, Math.max(0, (SURFACE_ISO_LEVEL - a.value) / range));
   return {
@@ -1478,6 +1616,38 @@ function interpolateSurfaceVertex(a: SurfaceVertex, b: SurfaceVertex): SurfaceVe
   };
 }
 
+function getSurfaceTerrainOcclusion(world: VoxelWorld, cell: SurfaceCell): number {
+  const surfaceNodeY = clampInt(Math.floor(cell.surfaceY), 0, world.height);
+  let total = 0;
+  let count = 0;
+
+  for (let nodeY = surfaceNodeY; nodeY <= Math.min(world.height, surfaceNodeY + 1); nodeY += 1) {
+    for (let nodeZ = cell.z; nodeZ <= cell.z + 1; nodeZ += 1) {
+      for (let nodeX = cell.x; nodeX <= cell.x + 1; nodeX += 1) {
+        total += getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ);
+        count += 1;
+      }
+    }
+  }
+
+  return count > 0 ? total / count : 0;
+}
+
+function getSurfaceTerrainVisibility(terrainOcclusion: number): number {
+  if (terrainOcclusion <= SURFACE_TERRAIN_OCCLUSION_START) {
+    return 1;
+  }
+
+  if (terrainOcclusion >= SURFACE_TERRAIN_OCCLUSION_END) {
+    return 0.08;
+  }
+
+  const t =
+    (terrainOcclusion - SURFACE_TERRAIN_OCCLUSION_START) /
+    (SURFACE_TERRAIN_OCCLUSION_END - SURFACE_TERRAIN_OCCLUSION_START);
+  return 1 - t * 0.92;
+}
+
 function getSurfaceCellCenterY(world: VoxelWorld, cell: SurfaceCell): number {
   const motionOffset = getWaterSurfaceOffsetAt(world, cell.x, cell.y, cell.z) * SURFACE_MOTION_SCALE;
   const flowLift = Math.min(0.026, cell.motion.strength * 0.016);
@@ -1486,8 +1656,8 @@ function getSurfaceCellCenterY(world: VoxelWorld, cell: SurfaceCell): number {
     SURFACE_WAVE_AMPLITUDE *
     (0.15 + cell.motion.strength * 0.25 + Math.min(0.35, cell.columnDepth / 8));
   const reliefSag =
-    getSurfaceCornerReliefSag(world, cell.x, cell.y, cell.z, cell.waterHeight, 0, 0) * 0.5 +
-    getSurfaceCornerReliefSag(world, cell.x, cell.y, cell.z, cell.waterHeight, 1, 1) * 0.5;
+    getSurfaceCornerReliefSag(world, cell, 0, 0) * 0.5 +
+    getSurfaceCornerReliefSag(world, cell, 1, 1) * 0.5;
   const maxSurfaceY = cell.spanTopY + 1 + SURFACE_MOTION_HEADROOM;
   return Math.max(cell.spanBottomY + 0.04, Math.min(maxSurfaceY, cell.surfaceY + SURFACE_LIFT + motionOffset + flowLift + wave - reliefSag));
 }
@@ -1564,11 +1734,10 @@ function lerpRgb(a: Rgb, b: Rgb, t: number): Rgb {
 function getSurfaceEdgeInset(
   world: VoxelWorld,
   x: number,
-  y: number,
+  surfaceY: number,
   z: number,
   dx: number,
   dz: number,
-  _waterHeight: number,
 ): number {
   const neighborX = x + dx;
   const neighborZ = z + dz;
@@ -1576,8 +1745,13 @@ function getSurfaceEdgeInset(
     return SURFACE_SHORE_INSET;
   }
 
-  if (isSolidWaterNeighbor(world, neighborX, y, neighborZ) || isSolidWaterNeighbor(world, neighborX, y + 1, neighborZ)) {
-    return SURFACE_SOLID_INSET;
+  const contact = getTerrainContactFactor(world, neighborX, surfaceY, neighborZ);
+  if (contact >= ORGANIC_TERRAIN_ISO_LEVEL) {
+    return SURFACE_SOLID_INSET * Math.min(1.18, 0.72 + contact * 0.62);
+  }
+
+  if (contact >= ORGANIC_TERRAIN_ISO_LEVEL - 0.14) {
+    return SURFACE_SHORE_INSET + (SURFACE_SOLID_INSET - SURFACE_SHORE_INSET) * clamp01((contact - 0.36) / 0.22);
   }
 
   return 0;
@@ -1585,30 +1759,44 @@ function getSurfaceEdgeInset(
 
 function getSurfaceCornerReliefSag(
   world: VoxelWorld,
-  x: number,
-  y: number,
-  z: number,
-  waterHeight: number,
+  cell: SurfaceCell,
   cornerX: 0 | 1,
   cornerZ: 0 | 1,
 ): number {
   const dx = cornerX === 0 ? -1 : 1;
   const dz = cornerZ === 0 ? -1 : 1;
+  const surfaceY = cell.surfaceY;
   let sag = 0;
 
-  if (getSurfaceEdgeInset(world, x, y, z, dx, 0, waterHeight) >= SURFACE_SOLID_INSET * 0.9) {
+  if (getSurfaceEdgeInset(world, cell.x, surfaceY, cell.z, dx, 0) >= SURFACE_SOLID_INSET * 0.9) {
     sag += 0.032;
   }
 
-  if (getSurfaceEdgeInset(world, x, y, z, 0, dz, waterHeight) >= SURFACE_SOLID_INSET * 0.9) {
+  if (getSurfaceEdgeInset(world, cell.x, surfaceY, cell.z, 0, dz) >= SURFACE_SOLID_INSET * 0.9) {
     sag += 0.032;
   }
 
-  if (isSolidWaterNeighbor(world, x + dx, y + 1, z + dz)) {
-    sag += 0.02;
-  }
+  sag += Math.max(0, getTerrainContactFactor(world, cell.x + dx, surfaceY, cell.z + dz) - ORGANIC_TERRAIN_ISO_LEVEL) * 0.045;
 
   return Math.min(0.07, sag);
+}
+
+function getTerrainContactFactor(world: VoxelWorld, x: number, surfaceY: number, z: number): number {
+  if (!isHorizontalInBounds(world, x, z)) {
+    return 0;
+  }
+
+  const surfaceNodeY = clampInt(Math.floor(surfaceY), 0, world.height);
+  let maxDensity = 0;
+  for (let nodeY = Math.max(0, surfaceNodeY - 1); nodeY <= Math.min(world.height, surfaceNodeY + 1); nodeY += 1) {
+    for (let nodeZ = z; nodeZ <= z + 1; nodeZ += 1) {
+      for (let nodeX = x; nodeX <= x + 1; nodeX += 1) {
+        maxDensity = Math.max(maxDensity, getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ));
+      }
+    }
+  }
+
+  return maxDensity;
 }
 
 function getShorelineCue(
@@ -1618,6 +1806,7 @@ function getShorelineCue(
   z: number,
   direction: SideDirection,
   waterHeight: number,
+  edgeCueMap: WaterEdgeCueMap,
 ): ShorelineCue | null {
   const neighborX = x + direction.dx;
   const neighborZ = z + direction.dz;
@@ -1628,15 +1817,20 @@ function getShorelineCue(
   const neighborAmount = getWaterAmountAt(world, neighborX, y, neighborZ);
   const againstTerrain = neighborAmount <= EPSILON && hasTerrainAgainstShore(world, neighborX, y + waterHeight, neighborZ);
   const motion = getWaterMotionSample(world, x, y, z);
+  const edgeCue = getWaterEdgeCueForCell(edgeCueMap, world, x, y, z);
   const headDelta = Math.max(0, waterHeight - neighborAmount);
   const depthGradient = Math.max(0, getWaterColumnDepth(world, x, y, z) - getWaterColumnDepth(world, neighborX, y, neighborZ));
   const surfaceEnergy = Math.abs(motion.surfaceOffset) + Math.abs(motion.surfaceVelocity);
-  const intensity = clamp01(headDelta * 0.62 + motion.horizontal * 0.16 + surfaceEnergy * 2.4 + depthGradient * 0.04);
+  const solverEnergy = isEdgeCueAlignedWithDirection(edgeCue, direction) ? edgeCue.intensity : edgeCue.intensity * 0.35;
+  const solverFoam = edgeCue.kind === "impact" || edgeCue.kind === "fall";
+  const intensity = clamp01(
+    headDelta * 0.62 + motion.horizontal * 0.16 + surfaceEnergy * 2.4 + depthGradient * 0.04 + solverEnergy * 0.44,
+  );
 
   if (againstTerrain) {
     return waterHeight > 0.22
       ? {
-          foam: intensity > 0.62 && motion.kind === "turbulent",
+          foam: intensity > 0.62 && (motion.kind === "turbulent" || solverFoam),
           skirt: true,
           width: SHORE_FOAM_WIDTH * (0.75 + intensity * 0.65),
           intensity,
@@ -1651,7 +1845,7 @@ function getShorelineCue(
   }
 
   return {
-    foam: waterHeight > 0.52 && motion.kind === "turbulent" && intensity > 0.58,
+    foam: waterHeight > 0.52 && (motion.kind === "turbulent" || solverFoam) && intensity > 0.58,
     skirt: false,
     width: SHORE_FOAM_WIDTH * (0.72 + intensity * 0.8),
     intensity,
@@ -1676,7 +1870,7 @@ function hasTerrainAgainstShore(world: VoxelWorld, x: number, surfaceY: number, 
   for (let nodeY = minNodeY; nodeY <= maxNodeY; nodeY += 1) {
     for (let nodeZ = z; nodeZ <= z + 1; nodeZ += 1) {
       for (let nodeX = x; nodeX <= x + 1; nodeX += 1) {
-        if (getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ) >= 0.5) {
+        if (getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ) >= ORGANIC_TERRAIN_ISO_LEVEL) {
           return true;
         }
       }
@@ -1684,6 +1878,28 @@ function hasTerrainAgainstShore(world: VoxelWorld, x: number, surfaceY: number, 
   }
 
   return false;
+}
+
+function isTerrainBlockingWaterSheet(world: VoxelWorld, x: number, surfaceY: number, z: number): boolean {
+  if (!isHorizontalInBounds(world, x, z)) {
+    return true;
+  }
+
+  if (!hasTerrainAgainstShore(world, x, surfaceY, z)) {
+    return false;
+  }
+
+  const surfaceNodeY = clampInt(Math.floor(surfaceY), 0, world.height);
+  let maxDensity = 0;
+  for (let nodeY = surfaceNodeY; nodeY <= Math.min(world.height, surfaceNodeY + 1); nodeY += 1) {
+    for (let nodeZ = z; nodeZ <= z + 1; nodeZ += 1) {
+      for (let nodeX = x; nodeX <= x + 1; nodeX += 1) {
+        maxDensity = Math.max(maxDensity, getOrganicTerrainNodeDensity(world, nodeX, nodeY, nodeZ));
+      }
+    }
+  }
+
+  return maxDensity >= ORGANIC_TERRAIN_ISO_LEVEL + 0.08;
 }
 
 function isHorizontalInBounds(world: VoxelWorld, x: number, z: number): boolean {
@@ -1854,6 +2070,14 @@ function getMistColor(amount: number): Rgb {
   };
 }
 
+function eventRibbonBottomColor(amount: number, intensity: number): Rgb {
+  return {
+    r: 0.24 + amount * 0.08 + intensity * 0.1,
+    g: 0.68 + amount * 0.08 + intensity * 0.12,
+    b: 0.9 + intensity * 0.08,
+  };
+}
+
 function getCurtainSag(x: number, z: number): number {
   return 0.015 + getCellVariation(x, 31, z) * 0.045;
 }
@@ -1890,6 +2114,19 @@ function isSolidWaterNeighbor(world: VoxelWorld, x: number, y: number, z: number
 
   const cellIndex = x + world.width * (z + world.depth * y);
   return world.solid[cellIndex] === 1;
+}
+
+function getCoordsFromCellIndex(world: VoxelWorld, cellIndex: number): { x: number; y: number; z: number } | null {
+  if (cellIndex < 0 || cellIndex >= world.water.length) {
+    return null;
+  }
+
+  const layerSize = world.width * world.depth;
+  const y = Math.floor(cellIndex / layerSize);
+  const layerIndex = cellIndex - y * layerSize;
+  const z = Math.floor(layerIndex / world.width);
+  const x = layerIndex - z * world.width;
+  return { x, y, z };
 }
 
 function getCellVariation(x: number, y: number, z: number): number {
@@ -2056,9 +2293,18 @@ function shouldRenderWaterFoam(
   amount: number,
   debugMode: boolean,
   gameplayMode: boolean,
+  edgeCue: WaterEdgeCue,
 ): boolean {
+  if (!ENABLE_GAMEPLAY_FOAM_QUADS) {
+    return false;
+  }
+
   if (!gameplayMode || debugMode || amount < 0.12) {
     return false;
+  }
+
+  if ((edgeCue.kind === "impact" || edgeCue.kind === "fall") && edgeCue.intensity > 0.4) {
+    return getCellVariation(x, y + 41, z) > 0.9 - edgeCue.intensity * 0.14;
   }
 
   const dropScore = getWaterDropScore(world, x, y, z, amount);
@@ -2072,11 +2318,11 @@ function shouldRenderWaterFoam(
   return getCellVariation(x, y + 41, z) > 0.9 - flow * 0.04;
 }
 
-function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number): number {
+function getWaterFoamScale(world: VoxelWorld, x: number, y: number, z: number, amount: number, edgeCue: WaterEdgeCue): number {
   const motion = getWaterMotionSample(world, x, y, z);
   return Math.min(
-    0.4,
-    0.12 + getWaterDropScore(world, x, y, z, amount) * 0.04 + amount * 0.05 + motion.strength * 0.06,
+    0.48,
+    0.12 + getWaterDropScore(world, x, y, z, amount) * 0.04 + amount * 0.05 + motion.strength * 0.06 + edgeCue.intensity * 0.1,
   );
 }
 
@@ -2092,6 +2338,10 @@ function getWaterDropScore(world: VoxelWorld, x: number, y: number, z: number, a
 
 function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
+}
+
+function clampInt(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function defaultRenderOptions(world: VoxelWorld): RenderOptions {

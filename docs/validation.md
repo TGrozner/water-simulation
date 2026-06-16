@@ -28,6 +28,11 @@ reservoir drops, basin shorelines, tunnel contact, and hazard flow. They expect 
 Chrome-compatible binary named `google-chrome`; set `CHROME_BIN` when the binary
 has another name.
 
+CI runs `npm run screenshots:smoke` in the build job before the Pages artifact
+is uploaded. The workflow installs Chrome explicitly and passes its binary path
+through `CHROME_BIN`, so local failures should be reproduced with that variable
+when the default browser command differs.
+
 Only run `npm run screenshots:update` or `npm run screenshots:update:smoke` when
 the expected visual output changed and the baseline PNGs are intentionally in
 scope for the task.
@@ -35,3 +40,6 @@ scope for the task.
 `npm run test:sim:full` keeps periodic water-integrity scans so it remains usable
 as a pre-push check. `npm run test:sim:paranoid` scans every tick and is reserved
 for deep solver debugging because it can be much slower on the generated cavern.
+The simulation harness prints `[timing]` lines for groups, scenarios, and heavy
+solver assertions; use those logs to decide whether to narrow a slow check or
+move it out of the default tier.

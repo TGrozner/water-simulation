@@ -13,6 +13,7 @@ export function createEmptyWorld(width: number, height: number, depth: number): 
     waterSurfaceOffset: new Float32Array(cellCount),
     waterSurfaceVelocity: new Float32Array(cellCount),
     waterFlux: new Map<string, number>(),
+    waterEdgeEvents: [],
     activeCells: new Set<number>(),
     activeFlowCells: new Set<number>(),
     activeSurfaceCells: new Set<number>(),
@@ -87,6 +88,7 @@ export function clearWaterMotion(world: VoxelWorld): void {
   world.waterSurfaceOffset.fill(0);
   world.waterSurfaceVelocity.fill(0);
   world.waterFlux.clear();
+  world.waterEdgeEvents.length = 0;
   world.activeFlowCells.clear();
   world.activeSurfaceCells.clear();
 }

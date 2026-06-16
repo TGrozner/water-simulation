@@ -13,6 +13,7 @@ import { coords, inBounds, isSolid } from "../world/grid";
 import { EPSILON, type VoxelWorld } from "../world/types";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 import { createRendererStats, type RendererStats } from "./renderStats";
+import { getTerrainNodeDensity, ORGANIC_TERRAIN_ISO_LEVEL } from "./terrainField";
 
 export type TerrainPick = {
   cellIndex: number;
@@ -77,7 +78,6 @@ const GENERATED_CAVERN_NORMAL_ROUGHNESS = 0.36;
 const DEFAULT_NORMAL_ROUGHNESS = 0.16;
 const GENERATED_CAVERN_FACE_TILE_SIZE = 1;
 const GENERATED_CAVERN_FACE_RELIEF = 0.28;
-const ORGANIC_TERRAIN_ISO_LEVEL = 0.5;
 
 const FACE_DIRECTIONS: FaceDirection[] = [
   { nx: 1, ny: 0, nz: 0, vertices: [[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 0], [1, 1, 1], [1, 0, 1]] },
@@ -435,28 +435,6 @@ const SURFACE_NET_EDGES = [
   [3, 7],
 ] as const;
 
-function getTerrainNodeDensity(world: VoxelWorld, options: RenderOptions, nodeX: number, nodeY: number, nodeZ: number): number {
-  let total = 0;
-  let count = 0;
-
-  for (let y = nodeY - 1; y <= nodeY; y += 1) {
-    for (let z = nodeZ - 1; z <= nodeZ; z += 1) {
-      for (let x = nodeX - 1; x <= nodeX; x += 1) {
-        count += 1;
-        if (!inBounds(world, x, y, z)) {
-          total += 1;
-          continue;
-        }
-        if (shouldRenderCell(world, z, options) && world.solid[getSurfaceCellIndex(world, x, y, z)] === 1) {
-          total += 1;
-        }
-      }
-    }
-  }
-
-  return total / count;
-}
-
 function getSurfaceCellCornerDensities(
   nodeDensities: Float32Array,
   nodeWidth: number,
@@ -648,10 +626,6 @@ function getOrganicTerrainColor(world: VoxelWorld, x: number, y: number, z: numb
   const largeVariation = getCellVariation(Math.floor(x / 5), Math.floor(y / 3), Math.floor(z / 5));
   const strata = 0.5 + Math.sin(y * 1.15 + x * 0.12 + z * 0.08) * 0.5;
   return scaleHexColor(baseColor, 0.6 + heightFactor * 0.24 + largeVariation * 0.13 + strata * 0.08);
-}
-
-function getSurfaceCellIndex(world: VoxelWorld, x: number, y: number, z: number): number {
-  return x + world.width * (z + world.depth * y);
 }
 
 function getLocalSurfaceNodeIndex(

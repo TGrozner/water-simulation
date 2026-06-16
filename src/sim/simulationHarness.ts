@@ -73,63 +73,83 @@ const ALL_HARNESS_GROUPS = Object.freeze(
 const HARNESS_OPTIONS = parseHarnessOptions();
 
 function runHarness(): void {
+  const startedAt = performance.now();
   const results: HarnessResult[] = [];
 
-  console.log(`simulation harness tier=${HARNESS_OPTIONS.tier} groups=${HARNESS_OPTIONS.groups.join(",")}`);
+  try {
+    console.log(`simulation harness tier=${HARNESS_OPTIONS.tier} groups=${HARNESS_OPTIONS.groups.join(",")}`);
 
-  if (shouldRunGroup("edge")) {
-    runEdgeCaseHarness();
-  }
-
-  if (shouldRunGroup("solver")) {
-    runSpanGraphPrototypeHarness();
-  }
-
-  if (shouldRunGroup("rules")) {
-    assertStageCompletionRules();
-    assertLevelScoreRules();
-    assertBestScoreRules();
-    assertLevelSelectRows();
-  }
-
-  if (shouldRunGroup("contracts")) {
-    assertGeneratedCavernDeterministic();
-    assertGeneratedCavernContracts();
-  }
-
-  if (shouldRunGroup("game")) {
-    assertGameLevelsComplete();
-  }
-
-  for (const preset of SCENE_PRESETS) {
-    if (shouldRunGroup("progressive")) {
-      assertProgressiveStagesMoveWater(preset);
+    if (shouldRunGroup("edge")) {
+      timeHarnessStep("group/edge", runEdgeCaseHarness);
     }
 
-    if (shouldRunGroup("routes")) {
-      for (const level of GAME_LEVELS.filter((level) => level.scene === preset)) {
-        assertDeliveryRequirementsGateCompletion(preset, level);
-        assertChoiceStagesCanComplete(preset, level);
-        assertManualChoiceStagesCanComplete(preset, level);
+    if (shouldRunGroup("solver")) {
+      timeHarnessStep("group/solver", runSpanGraphPrototypeHarness);
+    }
+
+    if (shouldRunGroup("rules")) {
+      timeHarnessStep("rules/stage-completion", assertStageCompletionRules);
+      timeHarnessStep("rules/level-score", assertLevelScoreRules);
+      timeHarnessStep("rules/best-score", assertBestScoreRules);
+      timeHarnessStep("rules/level-select", assertLevelSelectRows);
+    }
+
+    if (shouldRunGroup("contracts")) {
+      timeHarnessStep("contracts/generated-cavern-deterministic", assertGeneratedCavernDeterministic);
+      timeHarnessStep("contracts/generated-cavern", assertGeneratedCavernContracts);
+    }
+
+    if (shouldRunGroup("game")) {
+      timeHarnessStep("group/game", assertGameLevelsComplete);
+    }
+
+    for (const preset of SCENE_PRESETS) {
+      if (shouldRunGroup("progressive")) {
+        timeHarnessStep(`progressive/${preset}`, () => assertProgressiveStagesMoveWater(preset));
+      }
+
+      if (shouldRunGroup("routes")) {
+        for (const level of GAME_LEVELS.filter((level) => level.scene === preset)) {
+          timeHarnessStep(`routes/${preset}/${level.id}`, () => {
+            assertDeliveryRequirementsGateCompletion(preset, level);
+            assertChoiceStagesCanComplete(preset, level);
+            assertManualChoiceStagesCanComplete(preset, level);
+          });
+        }
+      }
+
+      if (shouldRunGroup("scenario")) {
+        for (const tuningPreset of getScenarioTuningPresets(preset)) {
+          results.push(timeHarnessStep(`scenario/${preset}/${tuningPreset}`, () => runScenario(preset, tuningPreset)));
+        }
       }
     }
 
-    if (shouldRunGroup("scenario")) {
-      for (const tuningPreset of getScenarioTuningPresets(preset)) {
-        results.push(runScenario(preset, tuningPreset));
-      }
+    for (const result of results) {
+      console.log(
+        `${result.preset}/${result.tuningPreset}: water=${result.finalWater.toFixed(3)} delta=${(
+          result.finalWater - result.baselineWater
+        ).toFixed(6)} maxDelta=${result.maxVolumeDelta.toFixed(6)} moved=${result.movedVolume.toFixed(3)} active=${
+          result.finalActiveCells
+        }`,
+      );
     }
+  } finally {
+    console.log(`[timing] harness/total ${formatHarnessDuration(performance.now() - startedAt)}`);
   }
+}
 
-  for (const result of results) {
-    console.log(
-      `${result.preset}/${result.tuningPreset}: water=${result.finalWater.toFixed(3)} delta=${(
-        result.finalWater - result.baselineWater
-      ).toFixed(6)} maxDelta=${result.maxVolumeDelta.toFixed(6)} moved=${result.movedVolume.toFixed(3)} active=${
-        result.finalActiveCells
-      }`,
-    );
+function timeHarnessStep<T>(label: string, run: () => T): T {
+  const startedAt = performance.now();
+  try {
+    return run();
+  } finally {
+    console.log(`[timing] ${label} ${formatHarnessDuration(performance.now() - startedAt)}`);
   }
+}
+
+function formatHarnessDuration(milliseconds: number): string {
+  return milliseconds < 1000 ? `${milliseconds.toFixed(1)}ms` : `${(milliseconds / 1000).toFixed(2)}s`;
 }
 
 function parseHarnessOptions(): HarnessOptions {
@@ -818,43 +838,56 @@ function assertUnfinishedManualRouteDoesNotFail(
 }
 
 function runEdgeCaseHarness(): void {
-  assertWaterFallsThroughOpenedShaft();
-  assertWaterLeaksThroughOpenedSideWall();
-  assertVerticalSpanSettlesAndConservesWater();
-  assertDownFlowRateLimitsVerticalSettling();
-  assertWaterDoesNotMergeDisconnectedVerticalSpans();
-  assertWaterTransfersThroughRaisedPortal();
-  assertWaterTransfersThroughOverlappingPortal();
-  assertWaterOutflowSplitsAcrossEqualPortals();
-  assertWaterFluxMetadataTracksLateralTransfer();
-  assertPipeMomentumCarriesAcrossSmallAdverseHead();
-  assertWaterSurfaceMetadataTracksMotion();
-  assertContinuousWaterSurfaceMeshIsFinite();
-  assertWaterParticleCuesFollowMotion();
-  assertFlowEventCollectionDoesNotChangeWaterState();
-  assertTopologyChangesClearWaterMotion();
-  assertWaterSpillsIntoLowerAdjacentShaft();
-  assertWaterDoesNotCrossNonOverlappingPortal();
-  assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang();
-  assertStackedOverhangSpansAreEnumeratedSeparately();
-  assertFirstPersonCornerClearanceUsesRoundFootprint();
-  assertFirstPersonVelocitySmoothsInput();
-  assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly();
-  assertFirstPersonJumpIntoVoxelWallDoesNotMantleImmediately();
-  assertFirstPersonRisingJumpDoesNotSnapToVoxelTop();
+  const cases: readonly [string, () => void][] = [
+    ["edge/opened-shaft", assertWaterFallsThroughOpenedShaft],
+    ["edge/opened-side-wall", assertWaterLeaksThroughOpenedSideWall],
+    ["edge/vertical-span-settling", assertVerticalSpanSettlesAndConservesWater],
+    ["edge/down-flow-rate", assertDownFlowRateLimitsVerticalSettling],
+    ["edge/disconnected-vertical-spans", assertWaterDoesNotMergeDisconnectedVerticalSpans],
+    ["edge/raised-portal", assertWaterTransfersThroughRaisedPortal],
+    ["edge/overlapping-portal", assertWaterTransfersThroughOverlappingPortal],
+    ["edge/split-outflow", assertWaterOutflowSplitsAcrossEqualPortals],
+    ["edge/flux-metadata", assertWaterFluxMetadataTracksLateralTransfer],
+    ["edge/pipe-momentum", assertPipeMomentumCarriesAcrossSmallAdverseHead],
+    ["edge/surface-motion", assertWaterSurfaceMetadataTracksMotion],
+    ["edge/water-surface-mesh", assertContinuousWaterSurfaceMeshIsFinite],
+    ["edge/particle-cue", assertWaterParticleCuesFollowMotion],
+    ["edge/flow-events-contract", assertFlowEventCollectionDoesNotChangeWaterState],
+    ["edge/topology-clears-flow", assertTopologyChangesClearWaterMotion],
+    ["edge/lower-adjacent-shaft", assertWaterSpillsIntoLowerAdjacentShaft],
+    ["edge/non-overlapping-portal", assertWaterDoesNotCrossNonOverlappingPortal],
+    ["edge/disconnected-overhang-pocket", assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang],
+    ["edge/stacked-overhang-spans", assertStackedOverhangSpansAreEnumeratedSeparately],
+    ["edge/first-person-corner-clearance", assertFirstPersonCornerClearanceUsesRoundFootprint],
+    ["edge/first-person-velocity", assertFirstPersonVelocitySmoothsInput],
+    ["edge/first-person-ground-slope", assertFirstPersonGroundMovementClimbsVoxelSlopeSmoothly],
+    ["edge/first-person-wall-jump", assertFirstPersonJumpIntoVoxelWallDoesNotMantleImmediately],
+    ["edge/first-person-rising-jump", assertFirstPersonRisingJumpDoesNotSnapToVoxelTop],
+  ];
+
+  for (const [label, run] of cases) {
+    timeHarnessStep(label, run);
+  }
 }
 
 function runSpanGraphPrototypeHarness(): void {
-  assertSparseHydraulicGraphIncludesDryPortalTargets();
-  assertSparseHydraulicGraphSplitsOutflowSimultaneously();
-  assertSparseHydraulicGraphEqualizesRaisedPortal();
-  assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead();
-  assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft();
-  assertSparseHydraulicGraphDoesNotCrossNonOverlappingPortal();
-  assertSparseHydraulicGraphDoesNotLeakIntoDisconnectedOverhangPocket();
-  assertSparseHydraulicGraphEnumeratesStackedOverhangSpans();
-  assertSparseHydraulicGraphDiagnosticsAreFinite();
-  assertSparseHydraulicGraphConservesDuringGeneratedCavernWarmup();
+  const cases: readonly [string, () => void][] = [
+    ["solver/graph-build", assertSparseHydraulicGraphIncludesDryPortalTargets],
+    ["solver/split-outflow", assertSparseHydraulicGraphSplitsOutflowSimultaneously],
+    ["solver/raised-portal", assertSparseHydraulicGraphEqualizesRaisedPortal],
+    ["solver/pipe-momentum", assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead],
+    ["solver/lower-adjacent-shaft", assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft],
+    ["solver/hydraulic-visual-events", assertSparseHydraulicGraphEmitsHydraulicVisualEvents],
+    ["solver/non-overlapping-portal", assertSparseHydraulicGraphDoesNotCrossNonOverlappingPortal],
+    ["solver/disconnected-overhang-pocket", assertSparseHydraulicGraphDoesNotLeakIntoDisconnectedOverhangPocket],
+    ["solver/stacked-overhang-spans", assertSparseHydraulicGraphEnumeratesStackedOverhangSpans],
+    ["solver/diagnostics", assertSparseHydraulicGraphDiagnosticsAreFinite],
+    ["solver/generated-cavern-warmup", assertSparseHydraulicGraphConservesDuringGeneratedCavernWarmup],
+  ];
+
+  for (const [label, run] of cases) {
+    timeHarnessStep(label, run);
+  }
 }
 
 function assertSparseHydraulicGraphIncludesDryPortalTargets(): void {
@@ -1009,6 +1042,51 @@ function assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft(): void {
   assertSmallWorldConserved(world, baselineWater, "solver/lower-adjacent-shaft");
 }
 
+function assertSparseHydraulicGraphEmitsHydraulicVisualEvents(): void {
+  const world = createTwoColumnPortalWorld(2, 4, 0, 4);
+  for (let y = 2; y <= 4; y += 1) {
+    setWater(world, 1, y, 1, 1);
+    wakeCell(world, 1, y, 1);
+  }
+
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(world);
+  const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  const visualEvents = world.waterEdgeEvents;
+  const fallingEvent = visualEvents.find((event) => event.kind === "fall" || event.kind === "impact");
+
+  assert(stats.movedVolume > 0, "solver/hydraulic-visual-events: expected sparse solver to move water");
+  assert(visualEvents.length > 0, "solver/hydraulic-visual-events: expected solver-owned visual events");
+  assert(fallingEvent !== undefined, "solver/hydraulic-visual-events: expected a fall or impact event into lower shaft");
+  assert(
+    visualEvents.every(
+      (event) =>
+        Number.isFinite(event.amount) &&
+        Number.isFinite(event.flux) &&
+        Number.isFinite(event.headDelta) &&
+        Number.isFinite(event.dropDistance) &&
+        Number.isFinite(event.intensity),
+    ),
+    "solver/hydraulic-visual-events: expected finite event fields",
+  );
+  assert(
+    fallingEvent.dropDistance > 0.45 && fallingEvent.intensity > 0.2,
+    `solver/hydraulic-visual-events: expected visible drop energy, got drop=${fallingEvent.dropDistance.toFixed(
+      3,
+    )} intensity=${fallingEvent.intensity.toFixed(3)}`,
+  );
+  assert(
+    fallingEvent.targetCellIndex !== fallingEvent.sourceCellIndex,
+    "solver/hydraulic-visual-events: source and target cells should differ",
+  );
+  const target = coords(world, fallingEvent.targetCellIndex);
+  assert(
+    target.x === 2 && target.z === 1,
+    `solver/hydraulic-visual-events: expected target in receiving shaft, got ${target.x},${target.y},${target.z}`,
+  );
+  assertSmallWorldConserved(world, baselineWater, "solver/hydraulic-visual-events");
+}
+
 function assertSparseHydraulicGraphDoesNotCrossNonOverlappingPortal(): void {
   const world = createTwoColumnPortalWorld(3, 4, 0, 1);
   setWater(world, 1, 3, 1, 1);
@@ -1090,15 +1168,47 @@ function assertSparseHydraulicGraphConservesDuringGeneratedCavernWarmup(): void 
   const baselineWater = totalWater(world);
   const volumeTolerance = Math.max(CONSERVATION_TOLERANCE, baselineWater * CONSERVATION_RELATIVE_TOLERANCE);
   openSceneStage(world, "generated-cavern", 0);
+  let solverOwnedEventCount = 0;
+  let fallOrImpactEventCount = 0;
+  let maxEventIntensity = 0;
+  let maxDropDistance = 0;
 
   for (let tick = 0; tick < 120; tick += 1) {
     const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
     assert(stats.activeSpanCount >= 0, "solver/generated-cavern: expected non-negative active span count");
+    for (const event of world.waterEdgeEvents) {
+      solverOwnedEventCount += 1;
+      if (event.kind === "fall" || event.kind === "impact") {
+        fallOrImpactEventCount += 1;
+      }
+      maxEventIntensity = Math.max(maxEventIntensity, event.intensity);
+      maxDropDistance = Math.max(maxDropDistance, event.dropDistance);
+      assert(
+        Number.isFinite(event.amount) &&
+          Number.isFinite(event.flux) &&
+          Number.isFinite(event.headDelta) &&
+          Number.isFinite(event.dropDistance) &&
+          Number.isFinite(event.intensity),
+        "solver/generated-cavern: expected finite hydraulic visual event fields",
+      );
+      assert(
+        event.sourceCellIndex !== event.targetCellIndex,
+        "solver/generated-cavern: hydraulic visual events should connect distinct cells",
+      );
+    }
     if (tick % 10 === 0) {
       scanWorldWater(world, baselineWater, volumeTolerance, `solver/generated-cavern warmup ${tick}`);
     }
   }
 
+  assert(solverOwnedEventCount > 0, "solver/generated-cavern: expected solver-owned hydraulic events during warmup");
+  assert(fallOrImpactEventCount > 0, "solver/generated-cavern: expected fall/impact hydraulic events during warmup");
+  assert(
+    maxEventIntensity > 0.2 && maxDropDistance > 0.35,
+    `solver/generated-cavern: expected visible event energy, got intensity=${maxEventIntensity.toFixed(
+      3,
+    )} drop=${maxDropDistance.toFixed(3)}`,
+  );
   scanWorldWater(world, baselineWater, volumeTolerance, "solver/generated-cavern");
 }
 
@@ -1450,7 +1560,7 @@ function assertContinuousWaterSurfaceMeshIsFinite(): void {
   assert(stats.vertexCount >= 12, `edge/water-surface-mesh: expected shared surface vertices, got ${stats.vertexCount}`);
   assert(stats.triangleCount >= 8, `edge/water-surface-mesh: expected reconstructed surface triangles, got ${stats.triangleCount}`);
   assert(
-    stats.minY >= 0.96 && stats.maxY <= 1.2,
+    stats.minY >= 0.93 && stats.maxY <= 1.2,
     `edge/water-surface-mesh: expected bounded pool surface height, got ${stats.minY.toFixed(3)}..${stats.maxY.toFixed(3)}`,
   );
 }

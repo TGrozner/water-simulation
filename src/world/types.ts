@@ -15,6 +15,27 @@ export type CellCoords = {
   z: number;
 };
 
+export type HydraulicSpanEdgeEventKind = "edge-flow" | "fall" | "impact";
+
+export type HydraulicSpanEdgeEvent = {
+  sourceCellIndex: number;
+  targetCellIndex: number;
+  edgeKey: string;
+  kind: HydraulicSpanEdgeEventKind;
+  dx: number;
+  dy: number;
+  dz: number;
+  amount: number;
+  flux: number;
+  headDelta: number;
+  portalBottomY: number;
+  portalTopY: number;
+  sourceSurfaceY: number;
+  targetSurfaceY: number;
+  dropDistance: number;
+  intensity: number;
+};
+
 export type VoxelWorld = {
   width: number;
   height: number;
@@ -25,6 +46,7 @@ export type VoxelWorld = {
   waterSurfaceOffset: Float32Array;
   waterSurfaceVelocity: Float32Array;
   waterFlux: Map<string, number>;
+  waterEdgeEvents: HydraulicSpanEdgeEvent[];
   activeCells: Set<number>;
   activeFlowCells: Set<number>;
   activeSurfaceCells: Set<number>;

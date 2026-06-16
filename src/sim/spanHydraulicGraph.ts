@@ -1,5 +1,5 @@
 import { coords, inBounds, index, isSolid, setCellWater, totalWater, wakeNeighbors } from "../world/grid";
-import { EPSILON, type CellCoords, type VoxelWorld } from "../world/types";
+import { EPSILON, type CellCoords, type HydraulicSpanEdgeEventKind, type VoxelWorld } from "../world/types";
 import { recordSurfaceImpulse, stepWaterSurface } from "./waterSurface";
 import type { FlowEvent, WaterSimulationConfig } from "./waterSimulation";
 
@@ -20,6 +20,7 @@ const PIPE_MOMENTUM_HEADROOM = 0.08;
 const PIPE_MOMENTUM_HEADROOM_SCALE = 0.35;
 const PIPE_MOMENTUM_MAX_ADVERSE_HEAD_MULTIPLIER = 3;
 const EMPTY_FLOW_EVENTS: FlowEvent[] = [];
+const MAX_HYDRAULIC_EDGE_EVENTS = 2048;
 
 export type HydraulicSpan = {
   id: number;
@@ -140,6 +141,7 @@ export function stepSparseHydraulicSpanGraph(
   config: WaterSimulationConfig,
   options: HydraulicStepOptions = {},
 ): HydraulicStepStats {
+  world.waterEdgeEvents.length = 0;
   const baselineWater = totalWater(world);
   let graph = buildSparseHydraulicSpanGraph(world);
   let movedVolume = 0;
@@ -204,6 +206,7 @@ export function stepSparseHydraulicSpanGraph(
     setSignedFlux(nextFlux, transfer.edge, transfer.signedFlux * (amount / transfer.amount), config.minFlow);
     flowChanged = recordTransferFlow(world, graph, transfer, amount) || flowChanged;
     surfaceChanged = recordTransferSurfaceImpulse(world, graph, transfer, amount) || surfaceChanged;
+    recordHydraulicEdgeEvent(world, graph, transfer, amount);
     if (collectFlowEvents) {
       const source = graph.spans[transfer.sourceId];
       const target = graph.spans[transfer.targetId];
@@ -474,6 +477,7 @@ function settleHydraulicSpan(
     flowChanged = recordWaterFlow(world, lowerCellIndex, 0, -1, 0, transfer) || flowChanged;
     flowChanged = recordWaterFlow(world, upperCellIndex, 0, -1, 0, transfer) || flowChanged;
     surfaceChanged = recordSurfaceImpulse(world, getSpanSurfaceCellIndex(world, span, volume), transfer, 0, -1, 0) || surfaceChanged;
+    recordHydraulicFallEvent(world, span, upperCellIndex, lowerCellIndex, lowerAmount, transfer, offset);
     if (collectFlowEvents) {
       flowEvents.push({
         fromCellIndex: upperCellIndex,
@@ -789,6 +793,100 @@ function decayWaterFlow(world: VoxelWorld): boolean {
   return changed;
 }
 
+function recordHydraulicEdgeEvent(
+  world: VoxelWorld,
+  graph: HydraulicSpanGraph,
+  transfer: AppliedTransfer,
+  amount: number,
+): void {
+  if (amount <= EPSILON || world.waterEdgeEvents.length >= MAX_HYDRAULIC_EDGE_EVENTS) {
+    return;
+  }
+
+  const source = graph.spans[transfer.sourceId];
+  const target = graph.spans[transfer.targetId];
+  const dx = Math.sign(target.x - source.x);
+  const dz = Math.sign(target.z - source.z);
+  const sourceSurfaceY = getSurfaceY(source, source.volume);
+  const targetSurfaceY = getSurfaceY(target, target.volume);
+  const targetVolumeAfterTransfer = Math.min(target.capacity, target.volume + amount);
+  const targetCellIndex = getSpanSurfaceCellIndex(world, target, targetVolumeAfterTransfer);
+  const headDelta = Math.max(sourceSurfaceY, transfer.edge.portalBottomY) - Math.max(targetSurfaceY, transfer.edge.portalBottomY);
+  const dropDistance = Math.max(0, transfer.edge.portalBottomY - targetSurfaceY, sourceSurfaceY - targetSurfaceY - 0.35);
+  const flux = Math.abs(transfer.signedFlux * (amount / Math.max(transfer.amount, EPSILON)));
+  const kind = getHydraulicEdgeEventKind(dropDistance, amount, target.volume);
+  const rawIntensity = 0.12 + amount * 0.48 + Math.max(0, headDelta) * 0.08 + dropDistance * 0.05 + flux * 0.08;
+  const maxIntensity = kind === "impact" ? 0.72 : kind === "fall" ? 0.56 : 0.38;
+
+  world.waterEdgeEvents.push({
+    sourceCellIndex: getSpanSurfaceCellIndex(world, source, source.volume),
+    targetCellIndex,
+    edgeKey: transfer.edge.key,
+    kind,
+    dx,
+    dy: kind === "edge-flow" ? 0 : -1,
+    dz,
+    amount,
+    flux,
+    headDelta,
+    portalBottomY: transfer.edge.portalBottomY,
+    portalTopY: transfer.edge.portalTopY,
+    sourceSurfaceY,
+    targetSurfaceY,
+    dropDistance,
+    intensity: Math.min(maxIntensity, clamp01(rawIntensity)),
+  });
+}
+
+function recordHydraulicFallEvent(
+  world: VoxelWorld,
+  span: HydraulicSpan,
+  sourceCellIndex: number,
+  targetCellIndex: number,
+  lowerAmountBeforeTransfer: number,
+  amount: number,
+  offset: number,
+): void {
+  if (amount <= EPSILON || world.waterEdgeEvents.length >= MAX_HYDRAULIC_EDGE_EVENTS) {
+    return;
+  }
+
+  const targetSurfaceY = span.bottomY + offset + Math.min(1, lowerAmountBeforeTransfer);
+  const sourceSurfaceY = span.bottomY + offset + 1 + Math.min(1, amount);
+  const dropDistance = Math.max(0.15, sourceSurfaceY - targetSurfaceY - 0.12);
+  const kind: HydraulicSpanEdgeEventKind = lowerAmountBeforeTransfer > 0.18 || offset === 0 ? "impact" : "fall";
+  world.waterEdgeEvents.push({
+    sourceCellIndex,
+    targetCellIndex,
+    edgeKey: `${span.key}:fall:${offset}`,
+    kind,
+    dx: 0,
+    dy: -1,
+    dz: 0,
+    amount,
+    flux: amount,
+    headDelta: dropDistance,
+    portalBottomY: span.bottomY + offset,
+    portalTopY: span.bottomY + offset + 1,
+    sourceSurfaceY,
+    targetSurfaceY,
+    dropDistance,
+    intensity: Math.min(0.78, clamp01(0.18 + amount * 0.58 + dropDistance * 0.1)),
+  });
+}
+
+function getHydraulicEdgeEventKind(dropDistance: number, amount: number, targetVolume: number): HydraulicSpanEdgeEventKind {
+  if (dropDistance <= 0.65) {
+    return "edge-flow";
+  }
+
+  if (dropDistance >= 1.25 && targetVolume >= 0.55 && amount >= 0.18) {
+    return "impact";
+  }
+
+  return "fall";
+}
+
 function recordTransferFlow(
   world: VoxelWorld,
   graph: HydraulicSpanGraph,
@@ -847,6 +945,10 @@ function recordWaterFlow(world: VoxelWorld, cellIndex: number, dx: number, dy: n
 
 function clampFlowVector(value: number): number {
   return Math.min(FLOW_VECTOR_LIMIT, Math.max(-FLOW_VECTOR_LIMIT, value));
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value));
 }
 
 function markSpanActive(world: VoxelWorld, span: ColumnSpan, volume: number, target: Set<number>): void {
