@@ -1,5 +1,5 @@
 import { inBounds, index } from "../world/grid";
-import { EPSILON, type VoxelWorld } from "../world/types";
+import { EPSILON, type HydraulicSpanEdgeEvent, type HydraulicVisualEvent, type VoxelWorld } from "../world/types";
 import {
   getWaterSurfaceOffsetAt,
   getWaterSurfaceVelocityAt,
@@ -36,9 +36,13 @@ export type WaterEdgeCue = {
   kind: WaterEdgeCueKind;
   intensity: number;
   amount: number;
+  flux: number;
+  headDelta: number;
   dropDistance: number;
   direction: { x: number; y: number; z: number };
   surfaceEnergy: number;
+  ageTicks: number;
+  ttlTicks: number;
 };
 
 export type WaterEdgeCueMap = Map<number, WaterEdgeCue>;
@@ -105,23 +109,35 @@ export function getWaterFlowStrength(world: VoxelWorld, x: number, y: number, z:
 export function buildWaterEdgeCueMap(world: VoxelWorld): WaterEdgeCueMap {
   const cues: WaterEdgeCueMap = new Map();
 
-  for (const event of world.waterEdgeEvents) {
+  for (const event of getHydraulicCueEvents(world)) {
     const horizontal = Math.hypot(event.dx, event.dz);
+    const intensity = getHydraulicCueIntensity(event);
+    const amount = getHydraulicCueAmount(event);
+    const ageTicks = "ageTicks" in event ? event.ageTicks : 0;
+    const ttlTicks = "ttlTicks" in event ? event.ttlTicks : 1;
     mergeWaterEdgeCue(cues, event.targetCellIndex, {
       kind: event.kind,
-      intensity: event.intensity,
-      amount: event.amount,
+      intensity,
+      amount,
+      flux: event.flux,
+      headDelta: event.headDelta,
       dropDistance: event.dropDistance,
       direction: normalizeCueDirection(event.dx, event.dy, event.dz),
-      surfaceEnergy: clamp01(event.intensity * 0.7 + event.dropDistance * 0.08),
+      surfaceEnergy: clamp01(intensity * 0.7 + event.dropDistance * 0.08 + event.headDelta * 0.04),
+      ageTicks,
+      ttlTicks,
     });
     mergeWaterEdgeCue(cues, event.sourceCellIndex, {
       kind: horizontal > 0.1 ? "edge-flow" : event.kind === "impact" ? "fall" : event.kind,
-      intensity: event.intensity * (horizontal > 0.1 ? 0.35 : 0.55),
-      amount: event.amount,
+      intensity: intensity * (horizontal > 0.1 ? 0.35 : 0.55),
+      amount,
+      flux: event.flux,
+      headDelta: event.headDelta,
       dropDistance: event.dropDistance,
       direction: normalizeCueDirection(event.dx, event.dy, event.dz),
-      surfaceEnergy: clamp01(event.intensity * 0.42 + event.dropDistance * 0.05),
+      surfaceEnergy: clamp01(intensity * 0.42 + event.dropDistance * 0.05 + event.headDelta * 0.03),
+      ageTicks,
+      ttlTicks,
     });
   }
 
@@ -310,9 +326,13 @@ function createEmptyWaterEdgeCue(): WaterEdgeCue {
     kind: "none",
     intensity: 0,
     amount: 0,
+    flux: 0,
+    headDelta: 0,
     dropDistance: 0,
     direction: { x: 0, y: 0, z: 0 },
     surfaceEnergy: 0,
+    ageTicks: 0,
+    ttlTicks: 0,
   };
 }
 
@@ -331,6 +351,8 @@ function mergeWaterEdgeCue(cues: WaterEdgeCueMap, cellIndex: number, cue: WaterE
     kind: getDominantCueKind(previous.kind, cue.kind),
     intensity: nextIntensity,
     amount: previous.amount + cue.amount,
+    flux: Math.max(previous.flux, cue.flux),
+    headDelta: Math.max(previous.headDelta, cue.headDelta),
     dropDistance: Math.max(previous.dropDistance, cue.dropDistance),
     direction: normalizeCueDirection(
       previous.direction.x * previousWeight + cue.direction.x * cueWeight,
@@ -338,7 +360,21 @@ function mergeWaterEdgeCue(cues: WaterEdgeCueMap, cellIndex: number, cue: WaterE
       previous.direction.z * previousWeight + cue.direction.z * cueWeight,
     ),
     surfaceEnergy: Math.max(previous.surfaceEnergy, cue.surfaceEnergy),
+    ageTicks: Math.min(previous.ageTicks, cue.ageTicks),
+    ttlTicks: Math.max(previous.ttlTicks, cue.ttlTicks),
   });
+}
+
+function getHydraulicCueEvents(world: VoxelWorld): readonly (HydraulicSpanEdgeEvent | HydraulicVisualEvent)[] {
+  return world.waterVisualEvents.length > 0 ? world.waterVisualEvents : world.waterEdgeEvents;
+}
+
+function getHydraulicCueIntensity(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
+  return "displayIntensity" in event ? event.displayIntensity : event.intensity;
+}
+
+function getHydraulicCueAmount(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
+  return "accumulatedAmount" in event ? Math.max(event.amount, Math.min(1.5, event.accumulatedAmount * 0.35)) : event.amount;
 }
 
 function getDominantCueKind(a: WaterEdgeCueKind, b: WaterEdgeCueKind): WaterEdgeCueKind {

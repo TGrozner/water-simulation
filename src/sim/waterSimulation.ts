@@ -149,6 +149,9 @@ export function stepWaterSimulation(
     };
   }
 
+  const clearedHydraulicVisualEvents = world.waterVisualEvents.length > 0;
+  world.waterVisualEvents.length = 0;
+
   const currentCells = Array.from(world.activeCells).sort((a, b) => a - b);
   const nextActiveCells = new Set<number>();
   const activeSpans = new Map<string, ColumnSpan>();
@@ -165,7 +168,7 @@ export function stepWaterSimulation(
   };
 
   let flowChanged = decayWaterFlow(world);
-  let surfaceChanged = false;
+  let surfaceChanged = clearedHydraulicVisualEvents;
   world.activeCells.clear();
 
   for (const cellIndex of currentCells) {

@@ -36,6 +36,13 @@ export type HydraulicSpanEdgeEvent = {
   intensity: number;
 };
 
+export type HydraulicVisualEvent = HydraulicSpanEdgeEvent & {
+  ageTicks: number;
+  ttlTicks: number;
+  displayIntensity: number;
+  accumulatedAmount: number;
+};
+
 export type VoxelWorld = {
   width: number;
   height: number;
@@ -47,6 +54,7 @@ export type VoxelWorld = {
   waterSurfaceVelocity: Float32Array;
   waterFlux: Map<string, number>;
   waterEdgeEvents: HydraulicSpanEdgeEvent[];
+  waterVisualEvents: HydraulicVisualEvent[];
   activeCells: Set<number>;
   activeFlowCells: Set<number>;
   activeSurfaceCells: Set<number>;

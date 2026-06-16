@@ -1,5 +1,13 @@
 import { coords, inBounds, index, isSolid, setCellWater, totalWater, wakeNeighbors } from "../world/grid";
-import { EPSILON, type CellCoords, type HydraulicSpanEdgeEventKind, type VoxelWorld } from "../world/types";
+import {
+  EPSILON,
+  type CellCoords,
+  type HydraulicSpanEdgeEvent,
+  type HydraulicSpanEdgeEventKind,
+  type HydraulicVisualEvent,
+  type VoxelWorld,
+} from "../world/types";
+import { getTerrainLateralPortalAperture } from "../world/terrainField";
 import { recordSurfaceImpulse, stepWaterSurface } from "./waterSurface";
 import type { FlowEvent, WaterSimulationConfig } from "./waterSimulation";
 
@@ -21,6 +29,11 @@ const PIPE_MOMENTUM_HEADROOM_SCALE = 0.35;
 const PIPE_MOMENTUM_MAX_ADVERSE_HEAD_MULTIPLIER = 3;
 const EMPTY_FLOW_EVENTS: FlowEvent[] = [];
 const MAX_HYDRAULIC_EDGE_EVENTS = 2048;
+const MAX_HYDRAULIC_VISUAL_EVENTS = 512;
+const HYDRAULIC_VISUAL_EVENT_DECAY = 0.74;
+const HYDRAULIC_VISUAL_EVENT_MIN_INTENSITY = 0.035;
+const HYDRAULIC_VISUAL_EVENT_BASE_TTL = 3;
+const HYDRAULIC_VISUAL_EVENT_EXTRA_TTL = 7;
 
 export type HydraulicSpan = {
   id: number;
@@ -44,6 +57,7 @@ export type HydraulicEdge = {
   portalBottomY: number;
   portalTopY: number;
   aperture: number;
+  terrainAperture: number;
   headDelta: number;
   previousFlux: number;
 };
@@ -142,6 +156,7 @@ export function stepSparseHydraulicSpanGraph(
   options: HydraulicStepOptions = {},
 ): HydraulicStepStats {
   world.waterEdgeEvents.length = 0;
+  const visualEventsDecayed = decayHydraulicVisualEvents(world);
   const baselineWater = totalWater(world);
   let graph = buildSparseHydraulicSpanGraph(world);
   let movedVolume = 0;
@@ -233,6 +248,8 @@ export function stepSparseHydraulicSpanGraph(
   world.waterFlux = nextFlux;
   const surfaceStep = stepWaterSurface(world);
   surfaceChanged = surfaceStep.changed || surfaceChanged;
+  const visualEventsMerged = mergeHydraulicVisualEvents(world);
+  surfaceChanged = visualEventsDecayed || visualEventsMerged || surfaceChanged;
 
   const globalCorrection = baselineWater - totalWater(world);
   if (Math.abs(globalCorrection) > VOLUME_CORRECTION_EPSILON) {
@@ -293,6 +310,12 @@ function buildHydraulicEdges(world: VoxelWorld, spans: HydraulicSpan[], spanIds:
 
         const [a, b] = source.key <= targetSpan.key ? [source, targetSpan] : [targetSpan, source];
         const headDelta = getEdgeHeadDelta(a, b, portalBottomY);
+        const aperture = portalTopY - portalBottomY + 1;
+        const terrainAperture = getTerrainLateralPortalAperture(world, a.x, a.z, b.x, b.z, portalBottomY, portalTopY);
+        if (terrainAperture <= EPSILON) {
+          continue;
+        }
+
         edges.set(key, {
           id: edges.size,
           key,
@@ -302,7 +325,8 @@ function buildHydraulicEdges(world: VoxelWorld, spans: HydraulicSpan[], spanIds:
           dz: b.z - a.z,
           portalBottomY,
           portalTopY,
-          aperture: portalTopY - portalBottomY + 1,
+          aperture,
+          terrainAperture,
           headDelta,
           previousFlux: getSignedStoredFlux(world, a.key, b.key),
         });
@@ -378,7 +402,12 @@ function createEdgeProposal(
     return null;
   }
 
-  const apertureRate = config.sideFlowRate * Math.min(2.4, 0.65 + edge.aperture * 0.22);
+  const openFraction = Math.min(1, Math.max(0, edge.terrainAperture / Math.max(EPSILON, edge.aperture)));
+  if (openFraction <= EPSILON) {
+    return null;
+  }
+
+  const apertureRate = config.sideFlowRate * Math.min(2.4, 0.65 + edge.aperture * 0.22) * openFraction;
   const pressureTransfer = Math.min(headDelta * 0.45, apertureRate, source.volume, targetCapacity);
   const inertialTransfer = Math.max(
     0,
@@ -885,6 +914,121 @@ function getHydraulicEdgeEventKind(dropDistance: number, amount: number, targetV
   }
 
   return "fall";
+}
+
+function decayHydraulicVisualEvents(world: VoxelWorld): boolean {
+  if (world.waterVisualEvents.length === 0) {
+    return false;
+  }
+
+  let changed = false;
+  const retained: HydraulicVisualEvent[] = [];
+  for (const event of world.waterVisualEvents) {
+    const nextAge = event.ageTicks + 1;
+    const nextDisplayIntensity = event.displayIntensity * HYDRAULIC_VISUAL_EVENT_DECAY;
+    if (nextAge < event.ttlTicks && nextDisplayIntensity > HYDRAULIC_VISUAL_EVENT_MIN_INTENSITY) {
+      retained.push({
+        ...event,
+        ageTicks: nextAge,
+        displayIntensity: nextDisplayIntensity,
+      });
+    }
+    changed = true;
+  }
+
+  world.waterVisualEvents = retained;
+  return changed;
+}
+
+function mergeHydraulicVisualEvents(world: VoxelWorld): boolean {
+  if (world.waterEdgeEvents.length === 0) {
+    return false;
+  }
+
+  const byKey = new Map(world.waterVisualEvents.map((event) => [getHydraulicVisualEventKey(event), event]));
+  let changed = false;
+
+  for (const event of world.waterEdgeEvents) {
+    const key = getHydraulicVisualEventKey(event);
+    const previous = byKey.get(key);
+    const ttlTicks = getHydraulicVisualEventTtl(event);
+    if (!previous) {
+      byKey.set(key, createHydraulicVisualEvent(event, ttlTicks));
+      changed = true;
+      continue;
+    }
+
+    byKey.set(key, mergeHydraulicVisualEvent(previous, event, ttlTicks));
+    changed = true;
+  }
+
+  if (byKey.size > MAX_HYDRAULIC_VISUAL_EVENTS) {
+    const sorted = Array.from(byKey.values()).sort((a, b) => b.displayIntensity - a.displayIntensity);
+    world.waterVisualEvents = sorted.slice(0, MAX_HYDRAULIC_VISUAL_EVENTS);
+    return true;
+  }
+
+  world.waterVisualEvents = Array.from(byKey.values()).sort((a, b) => b.displayIntensity - a.displayIntensity);
+  return changed;
+}
+
+function createHydraulicVisualEvent(event: HydraulicSpanEdgeEvent, ttlTicks: number): HydraulicVisualEvent {
+  return {
+    ...event,
+    ageTicks: 0,
+    ttlTicks,
+    displayIntensity: event.intensity,
+    accumulatedAmount: event.amount,
+  };
+}
+
+function mergeHydraulicVisualEvent(
+  previous: HydraulicVisualEvent,
+  event: HydraulicSpanEdgeEvent,
+  ttlTicks: number,
+): HydraulicVisualEvent {
+  const previousWeight = Math.max(previous.displayIntensity, HYDRAULIC_VISUAL_EVENT_MIN_INTENSITY);
+  const eventWeight = Math.max(event.intensity, HYDRAULIC_VISUAL_EVENT_MIN_INTENSITY);
+  const totalWeight = previousWeight + eventWeight;
+  const displayIntensity = Math.min(1, Math.max(previous.displayIntensity, event.intensity) + Math.min(previous.displayIntensity, event.intensity) * 0.22);
+  const dominant = getHydraulicEventKindPriority(event.kind) >= getHydraulicEventKindPriority(previous.kind) ? event : previous;
+
+  return {
+    ...dominant,
+    amount: Math.max(previous.amount, event.amount),
+    flux: Math.max(previous.flux, event.flux),
+    headDelta: Math.max(previous.headDelta, event.headDelta),
+    sourceSurfaceY: (previous.sourceSurfaceY * previousWeight + event.sourceSurfaceY * eventWeight) / totalWeight,
+    targetSurfaceY: (previous.targetSurfaceY * previousWeight + event.targetSurfaceY * eventWeight) / totalWeight,
+    dropDistance: Math.max(previous.dropDistance, event.dropDistance),
+    intensity: Math.max(previous.intensity, event.intensity),
+    ageTicks: 0,
+    ttlTicks: Math.max(previous.ttlTicks, ttlTicks),
+    displayIntensity,
+    accumulatedAmount: previous.accumulatedAmount + event.amount,
+  };
+}
+
+function getHydraulicVisualEventKey(event: HydraulicSpanEdgeEvent): string {
+  return `${event.edgeKey}:${event.dx}:${event.dy}:${event.dz}`;
+}
+
+function getHydraulicVisualEventTtl(event: HydraulicSpanEdgeEvent): number {
+  return Math.round(
+    HYDRAULIC_VISUAL_EVENT_BASE_TTL +
+      Math.min(HYDRAULIC_VISUAL_EVENT_EXTRA_TTL, event.intensity * 4 + event.dropDistance * 0.7),
+  );
+}
+
+function getHydraulicEventKindPriority(kind: HydraulicSpanEdgeEventKind): number {
+  switch (kind) {
+    case "impact":
+      return 3;
+    case "fall":
+      return 2;
+    case "edge-flow":
+      return 1;
+  }
 }
 
 function recordTransferFlow(

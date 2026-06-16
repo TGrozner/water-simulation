@@ -25,7 +25,7 @@ import {
 } from "../sim/waterMotion";
 import { getWaterSurfaceOffsetAt } from "../sim/waterSurface";
 import { cellCenter } from "../world/grid";
-import { EPSILON, type VoxelWorld } from "../world/types";
+import { EPSILON, type HydraulicSpanEdgeEvent, type HydraulicVisualEvent, type VoxelWorld } from "../world/types";
 import { InstancedMeshBatch } from "./instancedMeshBatch";
 import { shouldRenderCell, type RenderOptions } from "./renderOptions";
 import { createRendererStats, type RendererStats } from "./renderStats";
@@ -130,6 +130,9 @@ const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
 const HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY = 0.34;
 const HYDRAULIC_EVENT_RIBBON_MAX_COUNT = 160;
+const HYDRAULIC_EVENT_FOAM_MIN_INTENSITY = 0.24;
+const HYDRAULIC_EVENT_FOAM_MAX_COUNT = 180;
+const HYDRAULIC_EVENT_FOAM_SURFACE_LIFT = 0.058;
 // Gameplay keeps decorative sheet layers disabled until they are generated from
 // solver-owned terrain/contact events instead of axis-aligned voxel quads.
 const ENABLE_GAMEPLAY_SHORELINE_SKIRTS = false;
@@ -329,7 +332,7 @@ function updateWaterMesh(
   surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.56 : 0.72;
   curtainMaterial.emissive.set(debugMode ? 0x125c78 : gameplayMode ? 0x062637 : 0x0b4057);
   curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.28 : 0.42;
-  foamStripMaterial.opacity = debugMode ? 0.12 : gameplayMode ? 0.024 : 0.1;
+  foamStripMaterial.opacity = debugMode ? 0.12 : gameplayMode ? 0.075 : 0.1;
   foamMaterial.opacity = debugMode ? 0.18 : gameplayMode ? 0.075 : 0.12;
   sprayMaterial.opacity = debugMode ? 0.14 : gameplayMode ? 0.08 : 0.12;
   const layerSize = world.width * world.depth;
@@ -423,6 +426,7 @@ function updateWaterMesh(
 
   if (gameplayMode && !debugMode) {
     curtainFaceCount += appendHydraulicEventRibbons(curtainPositions, curtainColors, world);
+    foamCount += appendHydraulicEventFoam(foamStripPositions, foamStripColors, world);
   }
 
   renderer.bodyBatch.finish();
@@ -437,14 +441,16 @@ function updateWaterMesh(
 
 function appendHydraulicEventRibbons(positions: number[], colors: number[], world: VoxelWorld): number {
   let faceCount = 0;
-  for (const event of world.waterEdgeEvents) {
+  for (const event of getHydraulicDisplayEvents(world)) {
     if (faceCount >= HYDRAULIC_EVENT_RIBBON_MAX_COUNT) {
       break;
     }
 
+    const intensity = getHydraulicEventDisplayIntensity(event);
+    const amount = getHydraulicEventDisplayAmount(event);
     if (
       (event.kind !== "fall" && event.kind !== "impact") ||
-      event.intensity < HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY ||
+      intensity < HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY ||
       event.dropDistance < 0.42
     ) {
       continue;
@@ -462,11 +468,87 @@ function appendHydraulicEventRibbons(positions: number[], colors: number[], worl
       continue;
     }
 
-    appendHydraulicRibbon(positions, colors, world, source.x, source.z, event.dx, event.dz, topY, bottomY, event.amount, event.intensity);
+    appendHydraulicRibbon(positions, colors, world, source.x, source.z, event.dx, event.dz, topY, bottomY, amount, intensity);
     faceCount += 1;
   }
 
   return faceCount;
+}
+
+function appendHydraulicEventFoam(positions: number[], colors: number[], world: VoxelWorld): number {
+  let faceCount = 0;
+  for (const event of getHydraulicDisplayEvents(world)) {
+    if (faceCount >= HYDRAULIC_EVENT_FOAM_MAX_COUNT) {
+      break;
+    }
+
+    const intensity = getHydraulicEventDisplayIntensity(event);
+    if (intensity < HYDRAULIC_EVENT_FOAM_MIN_INTENSITY || !shouldRenderHydraulicEventFoam(event, intensity)) {
+      continue;
+    }
+
+    const target = getCoordsFromCellIndex(world, event.targetCellIndex);
+    if (!target || !isHorizontalInBounds(world, target.x, target.z)) {
+      continue;
+    }
+
+    const amount = getHydraulicEventDisplayAmount(event);
+    const surfaceY = event.targetSurfaceY + HYDRAULIC_EVENT_FOAM_SURFACE_LIFT;
+    if (!Number.isFinite(surfaceY) || world.solid[event.targetCellIndex] === 1) {
+      continue;
+    }
+
+    const horizontal = Math.hypot(event.dx, event.dz);
+    const flowX = horizontal > EPSILON ? event.dx / horizontal : 0;
+    const flowZ = horizontal > EPSILON ? event.dz / horizontal : 0;
+    const tangentX = horizontal > EPSILON ? -flowZ : 1;
+    const tangentZ = horizontal > EPSILON ? flowX : 0;
+    const centerX = target.x - world.width / 2 + 0.5 - flowX * 0.06;
+    const centerZ = target.z - world.depth / 2 + 0.5 - flowZ * 0.06;
+    const halfWidth = 0.12 + Math.min(0.3, intensity * 0.18 + event.flux * 0.08);
+    const length = 0.18 + Math.min(0.48, amount * 0.13 + intensity * 0.2 + event.dropDistance * 0.045);
+    const liftA = getFoamLift(target.x, target.z) * 0.55;
+    const liftB = getFoamLift(target.z, target.x) * 0.55;
+    const color = getHydraulicFoamColor(amount, intensity, event.kind);
+
+    appendCurtainQuad(
+      positions,
+      colors,
+      [centerX - tangentX * halfWidth - flowX * length * 0.35, surfaceY + liftA, centerZ - tangentZ * halfWidth - flowZ * length * 0.35],
+      [centerX + tangentX * halfWidth - flowX * length * 0.25, surfaceY + liftB, centerZ + tangentZ * halfWidth - flowZ * length * 0.25],
+      [centerX + tangentX * halfWidth * 0.62 + flowX * length, surfaceY + 0.006, centerZ + tangentZ * halfWidth * 0.62 + flowZ * length],
+      [centerX - tangentX * halfWidth * 0.62 + flowX * length, surfaceY + 0.012, centerZ - tangentZ * halfWidth * 0.62 + flowZ * length],
+      color,
+      color,
+    );
+    faceCount += 1;
+  }
+
+  return faceCount;
+}
+
+function shouldRenderHydraulicEventFoam(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent, intensity: number): boolean {
+  if (event.kind === "impact") {
+    return event.dropDistance > 0.32 || event.flux > 0.12;
+  }
+
+  if (event.kind === "fall") {
+    return event.dropDistance > 0.44 || intensity > 0.36;
+  }
+
+  return event.headDelta > 0.16 || event.flux > 0.22;
+}
+
+function getHydraulicDisplayEvents(world: VoxelWorld): readonly (HydraulicSpanEdgeEvent | HydraulicVisualEvent)[] {
+  return world.waterVisualEvents.length > 0 ? world.waterVisualEvents : world.waterEdgeEvents;
+}
+
+function getHydraulicEventDisplayIntensity(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
+  return "displayIntensity" in event ? event.displayIntensity : event.intensity;
+}
+
+function getHydraulicEventDisplayAmount(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
+  return "accumulatedAmount" in event ? Math.max(event.amount, Math.min(1.5, event.accumulatedAmount * 0.35)) : event.amount;
 }
 
 function appendHydraulicRibbon(
@@ -2051,6 +2133,16 @@ function getShoreFoamColor(amount: number, intensity = 0): Rgb {
     r: 0.28 + amount * 0.06 + intensity * 0.08,
     g: 0.66 + amount * 0.08 + intensity * 0.08,
     b: 0.82 + amount * 0.06 + intensity * 0.06,
+  };
+}
+
+function getHydraulicFoamColor(amount: number, intensity: number, kind: "edge-flow" | "fall" | "impact"): Rgb {
+  const base = getShoreFoamColor(amount, intensity);
+  const impactBoost = kind === "impact" ? 0.16 : kind === "fall" ? 0.08 : 0;
+  return {
+    r: Math.min(0.92, base.r + 0.2 + impactBoost),
+    g: Math.min(0.98, base.g + 0.16 + impactBoost * 0.45),
+    b: Math.min(1, base.b + 0.12 + impactBoost * 0.35),
   };
 }
 

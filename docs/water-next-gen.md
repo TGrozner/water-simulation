@@ -28,27 +28,33 @@ the older sequential span solver still available for comparison:
 - active column spans are connected by overlapping portal edges;
 - lateral edge fluxes are proposed simultaneously from head delta, aperture,
   capacity, and stored pipe flux;
+- lateral portal conductance is now throttled by the shared organic terrain
+  density field, so narrow carved openings flow less than clean square portals
+  without fully closing valid one-cell tunnels;
 - pipe flux metadata now carries bounded momentum across tiny adverse heads;
 - applied span-edge transfers now emit solver-owned visual events for edge
   flow, falls, and impacts;
+- raw hydraulic events are coalesced into a short-lived visual event buffer so
+  waterfalls, impact cues, foam, and spray can fade from solver state instead of
+  flickering with one-tick event availability or stacking stale target cells;
 - solver diagnostics expose active span count, edge count, flux magnitude, max
   head delta, and correction volume;
 - terrain and water rendering now share the same organic terrain density field
   for shoreline/contact decisions;
 - rendering reconstructs continuous water surfaces from contiguous simulated
   water segments rather than from entire open voxel columns;
-- gameplay can emit localized waterfall/impact ribbons from solver-owned
-  hydraulic events.
+- gameplay can emit localized waterfall/impact ribbons and foam patches from
+  solver-owned hydraulic events.
 
 That baseline is strong enough to iterate visually and physically, but not the
 final water model.
 
 The gameplay renderer intentionally keeps decorative shoreline skirts, broad
-heuristic waterfall sheets, and foam quads disabled. Re-enabling axis-aligned
-quads would make screenshots look busier, but it would hide the exact
-terrain/water defects the simulation still needs to solve. The only gameplay
-fall sheets currently allowed are localized ribbons emitted directly from
-hydraulic `fall` and `impact` events.
+heuristic waterfall sheets, and legacy foam quads disabled. Re-enabling
+axis-aligned quads would make screenshots look busier, but it would hide the
+exact terrain/water defects the simulation still needs to solve. Gameplay fall
+sheets and foam are allowed only when emitted directly from persistent hydraulic
+`edge-flow`, `fall`, and `impact` events.
 
 ## Architecture Direction
 
@@ -152,15 +158,15 @@ can be substantially slower on the generated cavern.
 
 1. Move surface rendering inputs further from voxel top cells toward span
    surface targets and edge flow metadata.
-2. Replace disabled gameplay shoreline skirts and foam with terrain-contact
-   geometry emitted from hydraulic events.
+2. Replace disabled gameplay shoreline skirts with terrain-contact geometry
+   emitted from shared terrain density plus hydraulic contact events.
 3. Extend local particle spray/mist around high-energy impact events while
    keeping activation solver-driven.
 4. Add stronger profiler coverage for `test:sim:full` and generated-cavern
    warmup so long checks can be split intentionally instead of skipped.
 5. Profile the sparse graph on generated-cavern carving bursts and add chunked
    span invalidation only if the metrics require it.
-6. Add terrain-aware foam variants for constrictions, shore rebound, and
-   waterfall impact zones.
+6. Add stronger terrain-aware foam variants for constrictions, shore rebound,
+   and waterfall impact zones.
 7. Expand visual captures to post-carve sluice sequences and side-by-side
    `solver=sparse` / `solver=legacy` comparisons when debugging regressions.

@@ -1,6 +1,6 @@
 import { stepWaterSimulation } from "./waterSimulation";
 import { buildSparseHydraulicSpanGraph, stepSparseHydraulicSpanGraph } from "./spanHydraulicGraph";
-import { getWaterMotionSample, getWaterParticleCue } from "./waterMotion";
+import { buildWaterEdgeCueMap, getWaterEdgeCueForCell, getWaterMotionSample, getWaterParticleCue } from "./waterMotion";
 import { WATER_SURFACE_OFFSET_LIMIT, WATER_SURFACE_VELOCITY_LIMIT } from "./waterSurface";
 import {
   DEFAULT_TUNING_PRESET_ID,
@@ -24,6 +24,7 @@ import {
   type ClearBox,
 } from "../world/sceneTools";
 import { EPSILON, type VoxelWorld } from "../world/types";
+import { getTerrainLateralPortalAperture } from "../world/terrainField";
 import { getBestScore, isBetterScore, mergeBestScore, parseStoredBestScores } from "../game/bestScoreStorage";
 import { getLevelSelectRows } from "../game/gamePanel";
 import { evaluateLevel, GAME_LEVELS, scoreLevel } from "../game/levels";
@@ -852,6 +853,7 @@ function runEdgeCaseHarness(): void {
     ["edge/surface-motion", assertWaterSurfaceMetadataTracksMotion],
     ["edge/water-surface-mesh", assertContinuousWaterSurfaceMeshIsFinite],
     ["edge/particle-cue", assertWaterParticleCuesFollowMotion],
+    ["edge/hydraulic-visual-cue-map", assertWaterEdgeCuesUsePersistentHydraulicVisualEvents],
     ["edge/flow-events-contract", assertFlowEventCollectionDoesNotChangeWaterState],
     ["edge/topology-clears-flow", assertTopologyChangesClearWaterMotion],
     ["edge/lower-adjacent-shaft", assertWaterSpillsIntoLowerAdjacentShaft],
@@ -873,6 +875,7 @@ function runEdgeCaseHarness(): void {
 function runSpanGraphPrototypeHarness(): void {
   const cases: readonly [string, () => void][] = [
     ["solver/graph-build", assertSparseHydraulicGraphIncludesDryPortalTargets],
+    ["solver/terrain-aperture", assertSparseHydraulicGraphUsesTerrainAperture],
     ["solver/split-outflow", assertSparseHydraulicGraphSplitsOutflowSimultaneously],
     ["solver/raised-portal", assertSparseHydraulicGraphEqualizesRaisedPortal],
     ["solver/pipe-momentum", assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead],
@@ -900,9 +903,53 @@ function assertSparseHydraulicGraphIncludesDryPortalTargets(): void {
   assert(graph.spans.length === 5, `solver/graph-build: expected source plus four dry neighbor spans, got ${graph.spans.length}`);
   assert(graph.edges.length === 4, `solver/graph-build: expected four portal edges, got ${graph.edges.length}`);
   assert(
-    graph.edges.every((edge) => Number.isFinite(edge.headDelta) && edge.aperture === 1),
-    "solver/graph-build: expected finite single-cell portal edges",
+    graph.edges.every((edge) => Number.isFinite(edge.headDelta) && edge.aperture === 1 && edge.terrainAperture > 0.99),
+    "solver/graph-build: expected finite fully open single-cell portal edges",
   );
+}
+
+function assertSparseHydraulicGraphUsesTerrainAperture(): void {
+  const openWorld = createEmptyWorld(3, 3, 3);
+  const openAperture = getTerrainLateralPortalAperture(openWorld, 1, 1, 2, 1, 1, 1);
+  const tunnelWorld = createEmptyWorld(3, 3, 3);
+  tunnelWorld.solid.fill(1);
+  tunnelWorld.solid[index(tunnelWorld, 1, 1, 1)] = 0;
+  tunnelWorld.solid[index(tunnelWorld, 2, 1, 1)] = 0;
+
+  const throttledAperture = getTerrainLateralPortalAperture(tunnelWorld, 1, 1, 2, 1, 1, 1);
+  assert(openAperture > 0.99, `solver/terrain-aperture: expected open portal aperture near 1, got ${openAperture.toFixed(3)}`);
+  assert(
+    throttledAperture > 0.2 && throttledAperture < openAperture - 0.05,
+    `solver/terrain-aperture: expected one-cell tunnel to conduct while throttled ${openAperture.toFixed(
+      3,
+    )} -> ${throttledAperture.toFixed(3)}`,
+  );
+
+  setWater(tunnelWorld, 1, 1, 1, 0.6);
+  wakeCell(tunnelWorld, 1, 1, 1);
+  const graph = buildSparseHydraulicSpanGraph(tunnelWorld);
+  const edge = graph.edges.find((candidate) => {
+    const a = graph.spans[candidate.a];
+    const b = graph.spans[candidate.b];
+    return a.z === 1 && b.z === 1 && ((a.x === 1 && b.x === 2) || (a.x === 2 && b.x === 1));
+  });
+
+  assert(edge !== undefined, "solver/terrain-aperture: expected partially open organic portal edge");
+  assert(
+    edge.terrainAperture < edge.aperture,
+    `solver/terrain-aperture: expected graph edge aperture to be throttled, got ${edge.terrainAperture.toFixed(
+      3,
+    )}/${edge.aperture}`,
+  );
+  const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
+  const baselineWater = totalWater(tunnelWorld);
+  const stats = stepSparseHydraulicSpanGraph(tunnelWorld, waterConfig);
+  assert(stats.movedVolume > waterConfig.minFlow, "solver/terrain-aperture: expected water to move through a one-cell tunnel");
+  assert(
+    tunnelWorld.water[index(tunnelWorld, 2, 1, 1)] > waterConfig.minFlow,
+    "solver/terrain-aperture: expected throttled one-cell tunnel to receive water",
+  );
+  assertSmallWorldConserved(tunnelWorld, baselineWater, "solver/terrain-aperture");
 }
 
 function assertSparseHydraulicGraphSplitsOutflowSimultaneously(): void {
@@ -1052,20 +1099,24 @@ function assertSparseHydraulicGraphEmitsHydraulicVisualEvents(): void {
   const waterConfig = cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig;
   const baselineWater = totalWater(world);
   const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
-  const visualEvents = world.waterEdgeEvents;
+  const rawEvents = world.waterEdgeEvents;
+  const visualEvents = world.waterVisualEvents;
   const fallingEvent = visualEvents.find((event) => event.kind === "fall" || event.kind === "impact");
 
   assert(stats.movedVolume > 0, "solver/hydraulic-visual-events: expected sparse solver to move water");
-  assert(visualEvents.length > 0, "solver/hydraulic-visual-events: expected solver-owned visual events");
+  assert(rawEvents.length > 0, "solver/hydraulic-visual-events: expected solver-owned raw events");
+  assert(visualEvents.length > 0, "solver/hydraulic-visual-events: expected persistent visual events");
   assert(fallingEvent !== undefined, "solver/hydraulic-visual-events: expected a fall or impact event into lower shaft");
   assert(
     visualEvents.every(
       (event) =>
         Number.isFinite(event.amount) &&
         Number.isFinite(event.flux) &&
-        Number.isFinite(event.headDelta) &&
-        Number.isFinite(event.dropDistance) &&
-        Number.isFinite(event.intensity),
+          Number.isFinite(event.headDelta) &&
+          Number.isFinite(event.dropDistance) &&
+          Number.isFinite(event.intensity) &&
+          Number.isFinite(event.displayIntensity) &&
+          Number.isFinite(event.accumulatedAmount),
     ),
     "solver/hydraulic-visual-events: expected finite event fields",
   );
@@ -1083,6 +1134,43 @@ function assertSparseHydraulicGraphEmitsHydraulicVisualEvents(): void {
   assert(
     target.x === 2 && target.z === 1,
     `solver/hydraulic-visual-events: expected target in receiving shaft, got ${target.x},${target.y},${target.z}`,
+  );
+
+  const displayIntensityBeforeDecay = fallingEvent.displayIntensity;
+  world.activeCells.clear();
+  world.waterEdgeEvents.length = 0;
+  const decayStats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  const decayedEvent = world.waterVisualEvents.find((event) => event.edgeKey === fallingEvent.edgeKey && event.kind === fallingEvent.kind);
+  assert(decayStats.surfaceChanged, "solver/hydraulic-visual-events: visual event decay should mark surface changed");
+  assert(decayedEvent !== undefined, "solver/hydraulic-visual-events: persistent event should survive at least one decay tick");
+  assert(
+    decayedEvent.ageTicks > fallingEvent.ageTicks && decayedEvent.displayIntensity < displayIntensityBeforeDecay,
+    `solver/hydraulic-visual-events: expected event to age and fade, got age=${decayedEvent.ageTicks} intensity=${decayedEvent.displayIntensity.toFixed(
+      3,
+    )}`,
+  );
+  for (let tick = 0; tick < 8; tick += 1) {
+    stepSparseHydraulicSpanGraph(world, waterConfig);
+  }
+
+  const persistentKeys = new Set(world.waterVisualEvents.map((event) => `${event.edgeKey}:${event.dx}:${event.dy}:${event.dz}`));
+  assert(
+    persistentKeys.size === world.waterVisualEvents.length,
+    `solver/hydraulic-visual-events: expected at most one persistent event per edge/direction, got ${world.waterVisualEvents.length} events for ${persistentKeys.size} keys`,
+  );
+
+  const activeWorld = createTwoColumnPortalWorld(2, 4, 0, 4);
+  for (let y = 2; y <= 4; y += 1) {
+    setWater(activeWorld, 1, y, 1, 1);
+    wakeCell(activeWorld, 1, y, 1);
+  }
+  for (let tick = 0; tick < 8; tick += 1) {
+    stepSparseHydraulicSpanGraph(activeWorld, waterConfig);
+  }
+  const activePersistentKeys = new Set(activeWorld.waterVisualEvents.map((event) => `${event.edgeKey}:${event.dx}:${event.dy}:${event.dz}`));
+  assert(
+    activePersistentKeys.size === activeWorld.waterVisualEvents.length,
+    `solver/hydraulic-visual-events: active transfers should coalesce by edge/direction, got ${activeWorld.waterVisualEvents.length} events for ${activePersistentKeys.size} keys`,
   );
   assertSmallWorldConserved(world, baselineWater, "solver/hydraulic-visual-events");
 }
@@ -1609,6 +1697,51 @@ function assertWaterParticleCuesFollowMotion(): void {
     fallingCue.direction.y < -0.25,
     `edge/particle-cue: expected downward falling cue direction, got y=${fallingCue.direction.y.toFixed(3)}`,
   );
+}
+
+function assertWaterEdgeCuesUsePersistentHydraulicVisualEvents(): void {
+  const world = createEmptyWorld(2, 1, 1);
+  const sourceCellIndex = index(world, 0, 0, 0);
+  const targetCellIndex = index(world, 1, 0, 0);
+
+  world.waterVisualEvents.push({
+    sourceCellIndex,
+    targetCellIndex,
+    edgeKey: "edge/hydraulic-visual-cue-map",
+    kind: "impact",
+    dx: 1,
+    dy: -1,
+    dz: 0,
+    amount: 0.38,
+    flux: 0.44,
+    headDelta: 0.72,
+    portalBottomY: 0,
+    portalTopY: 0,
+    sourceSurfaceY: 1,
+    targetSurfaceY: 0.18,
+    dropDistance: 0.82,
+    intensity: 0.56,
+    ageTicks: 2,
+    ttlTicks: 8,
+    displayIntensity: 0.43,
+    accumulatedAmount: 1.24,
+  });
+
+  const cueMap = buildWaterEdgeCueMap(world);
+  const targetCue = getWaterEdgeCueForCell(cueMap, world, 1, 0, 0);
+  const sourceCue = getWaterEdgeCueForCell(cueMap, world, 0, 0, 0);
+
+  assert(targetCue.kind === "impact", `edge/hydraulic-visual-cue-map: expected impact target cue, got ${targetCue.kind}`);
+  assert(
+    Math.abs(targetCue.intensity - 0.43) <= 0.0001,
+    `edge/hydraulic-visual-cue-map: expected display intensity from persistent buffer, got ${targetCue.intensity.toFixed(3)}`,
+  );
+  assert(
+    targetCue.amount > 0.38 && targetCue.flux === 0.44 && targetCue.headDelta === 0.72,
+    "edge/hydraulic-visual-cue-map: expected accumulated amount and hydraulic metadata",
+  );
+  assert(sourceCue.kind === "edge-flow", `edge/hydraulic-visual-cue-map: expected source edge-flow cue, got ${sourceCue.kind}`);
+  assert(sourceCue.ageTicks === 2 && sourceCue.ttlTicks === 8, "edge/hydraulic-visual-cue-map: expected cue age metadata");
 }
 
 function assertFlowEventCollectionDoesNotChangeWaterState(): void {
