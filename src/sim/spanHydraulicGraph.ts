@@ -239,7 +239,7 @@ export function stepSparseHydraulicSpanGraph(
 
   for (let spanId = 0; spanId < graph.spans.length; spanId += 1) {
     const volume = getSpanVolumeByHydraulicSpan(world, graph.spans[spanId]);
-    if (volume > EPSILON && canHydraulicSpanStillFlow(graph, spanId, spanVolumes, config)) {
+    if (volume > EPSILON && canHydraulicSpanStillFlow(world, graph, spanId, spanVolumes, config)) {
       markSpanActive(world, graph.spans[spanId], volume, nextActiveCells);
     }
   }
@@ -253,7 +253,16 @@ export function stepSparseHydraulicSpanGraph(
 
   const globalCorrection = baselineWater - totalWater(world);
   if (Math.abs(globalCorrection) > VOLUME_CORRECTION_EPSILON) {
-    conservationCorrection += applyGraphVolumeCorrection(world, graph.spans, globalCorrection);
+    const graphCorrection = applyGraphVolumeCorrection(world, graph.spans, globalCorrection);
+    conservationCorrection += graphCorrection.applied;
+    changedCells += graphCorrection.changedCells;
+    for (const spanId of graphCorrection.changedSpanIds) {
+      const span = graph.spans[spanId];
+      const volume = getSpanVolumeByHydraulicSpan(world, span);
+      if (volume > EPSILON) {
+        markSpanActive(world, span, volume, world.activeCells);
+      }
+    }
   }
 
   const diagnostics = summarizeGraph(graph, appliedTransfers, conservationCorrection);
@@ -446,7 +455,7 @@ function scaleEdgeProposals(
     targetInflow.set(proposal.targetId, (targetInflow.get(proposal.targetId) ?? 0) + proposal.amount);
     targetCapacity.set(
       proposal.targetId,
-      Math.min(targetCapacity.get(proposal.targetId) ?? Number.POSITIVE_INFINITY, proposal.targetCapacity),
+      Math.max(targetCapacity.get(proposal.targetId) ?? 0, proposal.targetCapacity),
     );
   }
 
@@ -545,6 +554,7 @@ function createHydraulicSpan(world: VoxelWorld, span: ColumnSpan, id: number): H
 }
 
 function canHydraulicSpanStillFlow(
+  world: VoxelWorld,
   graph: HydraulicSpanGraph,
   spanId: number,
   spanVolumes: number[],
@@ -564,7 +574,17 @@ function canHydraulicSpanStillFlow(
     const target = graph.spans[edge.a === spanId ? edge.b : edge.a];
     const targetVolume = spanVolumes[target.id] ?? target.volume;
     const targetSurfaceY = Math.max(getSurfaceY(target, targetVolume), edge.portalBottomY);
-    return surfaceY - targetSurfaceY > config.minFlow;
+    const headDelta = surfaceY - targetSurfaceY;
+    if (headDelta > config.minFlow) {
+      return true;
+    }
+
+    const forwardMomentum = Math.max(0, getSignedStoredFlux(world, span.key, target.key));
+    return (
+      forwardMomentum > config.minFlow &&
+      headDelta >= -config.minFlow * PIPE_MOMENTUM_MAX_ADVERSE_HEAD_MULTIPLIER &&
+      Math.min(PIPE_MOMENTUM_HEADROOM, forwardMomentum * PIPE_MOMENTUM_HEADROOM_SCALE) > config.minFlow
+    );
   });
 }
 
@@ -773,9 +793,15 @@ function applySpanVolumeCorrection(world: VoxelWorld, span: ColumnSpan, correcti
   return 0;
 }
 
-function applyGraphVolumeCorrection(world: VoxelWorld, spans: HydraulicSpan[], correction: number): number {
+function applyGraphVolumeCorrection(
+  world: VoxelWorld,
+  spans: HydraulicSpan[],
+  correction: number,
+): { applied: number; changedCells: number; changedSpanIds: number[] } {
   let remaining = correction;
   let totalApplied = 0;
+  let changedCells = 0;
+  const changedSpanIds: number[] = [];
 
   for (const span of spans) {
     if (Math.abs(remaining) <= VOLUME_CORRECTION_EPSILON) {
@@ -785,11 +811,13 @@ function applyGraphVolumeCorrection(world: VoxelWorld, spans: HydraulicSpan[], c
     const applied = applySpanVolumeCorrection(world, span, remaining);
     if (applied > 0) {
       totalApplied += applied;
+      changedCells += 1;
+      changedSpanIds.push(span.id);
       remaining += correction > 0 ? -applied : applied;
     }
   }
 
-  return totalApplied;
+  return { applied: totalApplied, changedCells, changedSpanIds };
 }
 
 function decayWaterFlow(world: VoxelWorld): boolean {

@@ -44,12 +44,12 @@ const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
     filename: "water-contact-tunnel.png",
-    timeoutMs: 5000,
+    timeoutMs: 10000,
   },
   {
     url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
     filename: "water-hazard-flow.png",
-    timeoutMs: 5000,
+    timeoutMs: 10000,
   },
   {
     url: `${BASE_URL}/?game=1&level=generated-cavern&camera=fps&spawn=overview`,

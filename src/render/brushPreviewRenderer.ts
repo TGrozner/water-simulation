@@ -20,10 +20,10 @@ const WEBGPU_SAFE_BATCH_CAPACITY = 1000;
 export function createBrushPreviewRenderer(scene: Scene, world: VoxelWorld): BrushPreviewRenderer {
   const geometry = new BoxGeometry(1.12, 1.12, 1.12);
   const material = new MeshBasicMaterial({
-    color: 0xb8fbff,
+    color: 0xffc247,
     transparent: true,
-    opacity: 0.18,
-    wireframe: false,
+    opacity: 0.34,
+    wireframe: true,
     depthTest: true,
     depthWrite: false,
   });

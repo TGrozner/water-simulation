@@ -1,4 +1,4 @@
-import { clearWaterMotion, index, inBounds, wakeNeighbors } from "./grid";
+import { clearWaterMotion, clearWaterMotionNearCells, index, inBounds, wakeNeighbors } from "./grid";
 import type { ScenePresetId } from "./createWorld";
 import type { VoxelWorld } from "./types";
 
@@ -140,6 +140,7 @@ function box(minX: number, maxX: number, minY: number, maxY: number, minZ: numbe
 
 function clearBox(world: VoxelWorld, clearRegion: ClearBox): number {
   let removed = 0;
+  const changedCells: number[] = [];
 
   for (let y = clearRegion.minY; y <= clearRegion.maxY; y += 1) {
     for (let z = clearRegion.minZ; z <= clearRegion.maxZ; z += 1) {
@@ -153,13 +154,18 @@ function clearBox(world: VoxelWorld, clearRegion: ClearBox): number {
           removed += 1;
         }
         world.solid[cellIndex] = 0;
+        changedCells.push(cellIndex);
         wakeNeighbors(world, x, y, z);
       }
     }
   }
 
   if (removed > 0) {
-    clearWaterMotion(world);
+    if (changedCells.length > world.water.length * 0.08) {
+      clearWaterMotion(world);
+    } else {
+      clearWaterMotionNearCells(world, changedCells);
+    }
   }
 
   return removed;

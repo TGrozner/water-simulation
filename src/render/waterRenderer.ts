@@ -41,6 +41,9 @@ export type WaterRenderer = {
   surfaceHeightMemory: Map<string, number>;
   surfaceFieldMemory: Map<string, number>;
   surfaceHeightMemorySizeKey: string;
+  curtainGeometryState: DynamicGeometryState;
+  foamGeometryState: DynamicGeometryState;
+  surfaceRippleTexture: CanvasTexture;
   stats: RendererStats;
   pickCell: (raycaster: Raycaster) => { cellIndex: number; distance: number } | null;
   update: (world: VoxelWorld, debugMode: boolean, options?: RenderOptions, gameplayMode?: boolean) => void;
@@ -71,10 +74,23 @@ type ColumnSurfaceSample = {
   topY: number;
   spanKey: string;
 };
+type SurfaceComponentSpan = {
+  x: number;
+  z: number;
+  bottomY: number;
+  topY: number;
+  spanKey: string;
+  volume: number;
+  capacity: number;
+};
 type SurfaceHeightState = {
   surfaceHeightMemory: Map<string, number>;
   surfaceFieldMemory: Map<string, number>;
   surfaceHeightMemorySizeKey: string;
+};
+type DynamicGeometryState = {
+  positionCapacity: number;
+  colorCapacity: number;
 };
 type SurfaceBuildState = SurfaceHeightState & {
   columnSurfaceCache: Map<string, ColumnSurfaceSample | null>;
@@ -108,7 +124,6 @@ const SURFACE_SHORE_INSET = 0.085;
 const SURFACE_SOLID_INSET = 0.18;
 const SURFACE_ISO_LEVEL = 0.42;
 const SURFACE_TERRAIN_CONTACT_VALUE = 0.06;
-const SURFACE_OPEN_CONTACT_VALUE = SURFACE_ISO_LEVEL - 0.18;
 const SURFACE_MEMORY_ALPHA = 0.38;
 const SURFACE_MEMORY_SNAP_DELTA = 0.6;
 const SURFACE_FIELD_RISE_ALPHA = 0.62;
@@ -128,11 +143,14 @@ const EDGE_SHEET_MIN_AMOUNT = 0.48;
 const FALLING_WATER_DROP_DELTA = 0.2;
 const FALLING_WATER_MIN_AMOUNT = 0.16;
 const FALLING_RIBBON_MAX_DROP = 12;
-const HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY = 0.34;
-const HYDRAULIC_EVENT_RIBBON_MAX_COUNT = 160;
-const HYDRAULIC_EVENT_FOAM_MIN_INTENSITY = 0.24;
-const HYDRAULIC_EVENT_FOAM_MAX_COUNT = 180;
+const HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY = 0.48;
+const HYDRAULIC_EVENT_RIBBON_MAX_COUNT = 48;
+const HYDRAULIC_EVENT_FOAM_MIN_INTENSITY = 0.5;
+const HYDRAULIC_EVENT_FOAM_MAX_COUNT = 42;
 const HYDRAULIC_EVENT_FOAM_SURFACE_LIFT = 0.058;
+const HYDRAULIC_EVENT_MIN_FRESHNESS = 0.22;
+const HYDRAULIC_EVENT_MIN_TARGET_WATER = 0.16;
+const HYDRAULIC_EVENT_MAX_SURFACE_DRIFT = 0.72;
 // Gameplay keeps decorative sheet layers disabled until they are generated from
 // solver-owned terrain/contact events instead of axis-aligned voxel quads.
 const ENABLE_GAMEPLAY_SHORELINE_SKIRTS = false;
@@ -261,6 +279,9 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     surfaceHeightMemory: new Map(),
     surfaceFieldMemory: new Map(),
     surfaceHeightMemorySizeKey: getSurfaceMemorySizeKey(world),
+    curtainGeometryState: { positionCapacity: 0, colorCapacity: 0 },
+    foamGeometryState: { positionCapacity: 0, colorCapacity: 0 },
+    surfaceRippleTexture,
     stats,
     pickCell: (raycaster) => {
       const hit = bodyBatch.pick(raycaster);
@@ -324,15 +345,21 @@ function updateWaterMesh(
   const foamStripMaterial = renderer.foamMesh.material;
   const foamMaterial = renderer.foamBatch.material;
   const sprayMaterial = renderer.sprayBatch.material;
+  const nextSurfaceMap = debugMode || !gameplayMode ? renderer.surfaceRippleTexture : null;
   material.color.set(debugMode ? 0x5ef0ff : 0x32d5eb);
   material.emissive.set(debugMode ? 0x126c7c : 0x073d4d);
+  material.transparent = true;
   material.opacity = debugMode ? 0.45 : 0;
   material.colorWrite = debugMode;
   surfaceMaterial.emissive.set(debugMode ? 0x1a7b88 : gameplayMode ? 0x084451 : 0x125d68);
-  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.56 : 0.72;
+  surfaceMaterial.opacity = debugMode ? 0.72 : gameplayMode ? 0.78 : 0.72;
+  if (surfaceMaterial.map !== nextSurfaceMap) {
+    surfaceMaterial.map = nextSurfaceMap;
+    surfaceMaterial.needsUpdate = true;
+  }
   curtainMaterial.emissive.set(debugMode ? 0x125c78 : gameplayMode ? 0x062637 : 0x0b4057);
-  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.28 : 0.42;
-  foamStripMaterial.opacity = debugMode ? 0.12 : gameplayMode ? 0.075 : 0.1;
+  curtainMaterial.opacity = debugMode ? 0.5 : gameplayMode ? 0.18 : 0.42;
+  foamStripMaterial.opacity = debugMode ? 0.12 : gameplayMode ? 0.045 : 0.1;
   foamMaterial.opacity = debugMode ? 0.18 : gameplayMode ? 0.075 : 0.12;
   sprayMaterial.opacity = debugMode ? 0.14 : gameplayMode ? 0.08 : 0.12;
   const layerSize = world.width * world.depth;
@@ -368,7 +395,7 @@ function updateWaterMesh(
     instanceCount += 1;
 
     if (shouldRenderWaterSurface(world, x, y, z, amount, debugMode, gameplayMode)) {
-      const surfaceCell = createSurfaceCell(world, x, y, z, waterHeight, columnSurfaceCache);
+      const surfaceCell = createSurfaceCell(world, x, y, z, columnSurfaceCache);
       if (surfaceCell) {
         surfaceCells.push(surfaceCell);
       }
@@ -425,14 +452,18 @@ function updateWaterMesh(
   }
 
   if (gameplayMode && !debugMode) {
-    curtainFaceCount += appendHydraulicEventRibbons(curtainPositions, curtainColors, world);
-    foamCount += appendHydraulicEventFoam(foamStripPositions, foamStripColors, world);
+    if (ENABLE_GAMEPLAY_WATER_RIBBONS) {
+      curtainFaceCount += appendHydraulicEventRibbons(curtainPositions, curtainColors, world);
+    }
+    if (ENABLE_GAMEPLAY_FOAM_QUADS) {
+      foamCount += appendHydraulicEventFoam(foamStripPositions, foamStripColors, world);
+    }
   }
 
   renderer.bodyBatch.finish();
   replacePoolSurfaceGeometry(renderer, world, surfaceCells);
-  replaceDynamicGeometry(renderer.curtainMesh, curtainPositions, curtainColors);
-  replaceDynamicGeometry(renderer.foamMesh, foamStripPositions, foamStripColors);
+  replaceDynamicGeometry(renderer, renderer.curtainMesh, renderer.curtainGeometryState, curtainPositions, curtainColors);
+  replaceDynamicGeometry(renderer, renderer.foamMesh, renderer.foamGeometryState, foamStripPositions, foamStripColors);
   renderer.foamBatch.finish();
   renderer.sprayBatch.finish();
   renderer.stats.instances = instanceCount + surfaceFaceCount + curtainFaceCount + foamCount + sprayCount;
@@ -446,9 +477,13 @@ function appendHydraulicEventRibbons(positions: number[], colors: number[], worl
       break;
     }
 
-    const intensity = getHydraulicEventDisplayIntensity(event);
-    const amount = getHydraulicEventDisplayAmount(event);
+    const freshness = getHydraulicEventFreshness(event);
+    const intensity = getHydraulicEventDisplayIntensity(event) * freshness;
+    const amount = getHydraulicEventDisplayAmount(event) * Math.max(0.35, freshness);
+    const horizontal = Math.hypot(event.dx, event.dz);
     if (
+      freshness < HYDRAULIC_EVENT_MIN_FRESHNESS ||
+      horizontal <= EPSILON ||
       (event.kind !== "fall" && event.kind !== "impact") ||
       intensity < HYDRAULIC_EVENT_RIBBON_MIN_INTENSITY ||
       event.dropDistance < 0.42
@@ -458,7 +493,12 @@ function appendHydraulicEventRibbons(positions: number[], colors: number[], worl
 
     const source = getCoordsFromCellIndex(world, event.sourceCellIndex);
     const target = getCoordsFromCellIndex(world, event.targetCellIndex);
-    if (!source || !target || isTerrainBlockingWaterSheet(world, target.x, event.targetSurfaceY, target.z)) {
+    if (
+      !source ||
+      !target ||
+      world.water[event.sourceCellIndex] <= EPSILON ||
+      !isHydraulicEventAttachedToCurrentWater(world, event, target, HYDRAULIC_EVENT_MIN_TARGET_WATER * 0.35)
+    ) {
       continue;
     }
 
@@ -482,21 +522,23 @@ function appendHydraulicEventFoam(positions: number[], colors: number[], world: 
       break;
     }
 
-    const intensity = getHydraulicEventDisplayIntensity(event);
+    const freshness = getHydraulicEventFreshness(event);
+    const intensity = getHydraulicEventDisplayIntensity(event) * freshness;
     if (intensity < HYDRAULIC_EVENT_FOAM_MIN_INTENSITY || !shouldRenderHydraulicEventFoam(event, intensity)) {
       continue;
     }
 
     const target = getCoordsFromCellIndex(world, event.targetCellIndex);
-    if (!target || !isHorizontalInBounds(world, target.x, target.z)) {
+    if (!target || !isHydraulicEventAttachedToCurrentWater(world, event, target, HYDRAULIC_EVENT_MIN_TARGET_WATER)) {
       continue;
     }
 
-    const amount = getHydraulicEventDisplayAmount(event);
-    const surfaceY = event.targetSurfaceY + HYDRAULIC_EVENT_FOAM_SURFACE_LIFT;
-    if (!Number.isFinite(surfaceY) || world.solid[event.targetCellIndex] === 1) {
+    const amount = getHydraulicEventDisplayAmount(event) * Math.max(0.4, freshness);
+    const currentSurfaceY = getHydraulicEventCurrentSurfaceY(world, event, target, HYDRAULIC_EVENT_MIN_TARGET_WATER);
+    if (currentSurfaceY === null) {
       continue;
     }
+    const surfaceY = currentSurfaceY + HYDRAULIC_EVENT_FOAM_SURFACE_LIFT;
 
     const horizontal = Math.hypot(event.dx, event.dz);
     const flowX = horizontal > EPSILON ? event.dx / horizontal : 0;
@@ -505,8 +547,8 @@ function appendHydraulicEventFoam(positions: number[], colors: number[], world: 
     const tangentZ = horizontal > EPSILON ? flowX : 0;
     const centerX = target.x - world.width / 2 + 0.5 - flowX * 0.06;
     const centerZ = target.z - world.depth / 2 + 0.5 - flowZ * 0.06;
-    const halfWidth = 0.12 + Math.min(0.3, intensity * 0.18 + event.flux * 0.08);
-    const length = 0.18 + Math.min(0.48, amount * 0.13 + intensity * 0.2 + event.dropDistance * 0.045);
+    const halfWidth = 0.055 + Math.min(0.16, intensity * 0.12 + event.flux * 0.04);
+    const length = 0.1 + Math.min(0.28, amount * 0.08 + intensity * 0.13 + event.dropDistance * 0.028);
     const liftA = getFoamLift(target.x, target.z) * 0.55;
     const liftB = getFoamLift(target.z, target.x) * 0.55;
     const color = getHydraulicFoamColor(amount, intensity, event.kind);
@@ -528,15 +570,7 @@ function appendHydraulicEventFoam(positions: number[], colors: number[], world: 
 }
 
 function shouldRenderHydraulicEventFoam(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent, intensity: number): boolean {
-  if (event.kind === "impact") {
-    return event.dropDistance > 0.32 || event.flux > 0.12;
-  }
-
-  if (event.kind === "fall") {
-    return event.dropDistance > 0.44 || intensity > 0.36;
-  }
-
-  return event.headDelta > 0.16 || event.flux > 0.22;
+  return event.kind === "impact" && intensity > 0.52 && event.dropDistance > 0.55 && event.flux > 0.08;
 }
 
 function getHydraulicDisplayEvents(world: VoxelWorld): readonly (HydraulicSpanEdgeEvent | HydraulicVisualEvent)[] {
@@ -549,6 +583,46 @@ function getHydraulicEventDisplayIntensity(event: HydraulicSpanEdgeEvent | Hydra
 
 function getHydraulicEventDisplayAmount(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
   return "accumulatedAmount" in event ? Math.max(event.amount, Math.min(1.5, event.accumulatedAmount * 0.35)) : event.amount;
+}
+
+function getHydraulicEventFreshness(event: HydraulicSpanEdgeEvent | HydraulicVisualEvent): number {
+  if (!("ageTicks" in event) || event.ttlTicks <= 0) {
+    return 1;
+  }
+
+  return clamp01(1 - event.ageTicks / event.ttlTicks);
+}
+
+function isHydraulicEventAttachedToCurrentWater(
+  world: VoxelWorld,
+  event: HydraulicSpanEdgeEvent | HydraulicVisualEvent,
+  target: { x: number; y: number; z: number },
+  minWater: number,
+): boolean {
+  const currentSurfaceY = getHydraulicEventCurrentSurfaceY(world, event, target, minWater);
+  return (
+    currentSurfaceY !== null &&
+    Math.abs(currentSurfaceY - event.targetSurfaceY) <= HYDRAULIC_EVENT_MAX_SURFACE_DRIFT &&
+    !isTerrainBlockingWaterSheet(world, target.x, currentSurfaceY, target.z)
+  );
+}
+
+function getHydraulicEventCurrentSurfaceY(
+  world: VoxelWorld,
+  event: HydraulicSpanEdgeEvent | HydraulicVisualEvent,
+  target: { x: number; y: number; z: number },
+  minWater: number,
+): number | null {
+  if (!isHorizontalInBounds(world, target.x, target.z) || world.solid[event.targetCellIndex] === 1) {
+    return null;
+  }
+
+  const water = world.water[event.targetCellIndex];
+  if (water < minWater) {
+    return null;
+  }
+
+  return target.y + Math.min(1, water);
 }
 
 function appendHydraulicRibbon(
@@ -1182,7 +1256,7 @@ function collectDebugSurfaceCells(world: VoxelWorld): SurfaceCell[] {
       shouldRenderWaterCell(world, x, y, z, amount, false, true) &&
       shouldRenderWaterSurface(world, x, y, z, amount, false, true)
     ) {
-      const surfaceCell = createSurfaceCell(world, x, y, z, Math.max(0.05, Math.min(1, amount)), columnSurfaceCache);
+      const surfaceCell = createSurfaceCell(world, x, y, z, columnSurfaceCache);
       if (surfaceCell) {
         cells.push(surfaceCell);
       }
@@ -1197,7 +1271,6 @@ function createSurfaceCell(
   x: number,
   y: number,
   z: number,
-  waterHeight: number,
   columnSurfaceCache: Map<string, ColumnSurfaceSample | null>,
 ): SurfaceCell | null {
   const column = getColumnSurfaceSample(world, x, y, z, columnSurfaceCache);
@@ -1209,7 +1282,7 @@ function createSurfaceCell(
     x,
     y,
     z,
-    waterHeight,
+    waterHeight: Math.max(0.05, Math.min(1, column.surfaceY - y)),
     surfaceY: column.surfaceY,
     columnDepth: column.columnDepth,
     spanBottomY: column.bottomY,
@@ -1246,25 +1319,152 @@ function getColumnSurfaceSample(
     return cached;
   }
 
-  let columnDepth = 0;
-  for (let sampleY = bottomY; sampleY <= topY; sampleY += 1) {
-    columnDepth += getWaterAmountAt(world, x, sampleY, z);
+  buildConnectedColumnSurfaceSamples(world, { x, z, bottomY, topY }, cache);
+  return cache.get(spanKey) ?? null;
+}
+
+function buildConnectedColumnSurfaceSamples(
+  world: VoxelWorld,
+  seed: { x: number; z: number; bottomY: number; topY: number },
+  cache: Map<string, ColumnSurfaceSample | null>,
+): void {
+  const seedKey = getColumnSpanKey(seed.x, seed.z, seed.bottomY, seed.topY);
+  const component = new Map<string, SurfaceComponentSpan>();
+  const queue = [seed];
+
+  for (let queueIndex = 0; queueIndex < queue.length; queueIndex += 1) {
+    const span = queue[queueIndex];
+    const spanKey = getColumnSpanKey(span.x, span.z, span.bottomY, span.topY);
+    if (component.has(spanKey)) {
+      continue;
+    }
+
+    const volume = getSurfaceSpanVolume(world, span.x, span.z, span.bottomY, span.topY);
+    if (volume <= EPSILON) {
+      cache.set(spanKey, null);
+      continue;
+    }
+
+    component.set(spanKey, {
+      ...span,
+      spanKey,
+      volume,
+      capacity: span.topY - span.bottomY + 1,
+    });
+
+    for (const direction of SIDE_DIRECTIONS) {
+      for (const neighbor of findOverlappingSurfaceSpans(world, span, span.x + direction.dx, span.z + direction.dz)) {
+        const neighborKey = getColumnSpanKey(neighbor.x, neighbor.z, neighbor.bottomY, neighbor.topY);
+        if (!component.has(neighborKey) && cache.get(neighborKey) === undefined) {
+          queue.push(neighbor);
+        }
+      }
+    }
   }
 
-  if (columnDepth <= EPSILON) {
-    cache.set(spanKey, null);
+  if (component.size === 0) {
+    cache.set(seedKey, null);
+    return;
+  }
+
+  const waterline = solveComponentWaterline(Array.from(component.values()));
+  for (const span of component.values()) {
+    const columnDepth = Math.min(span.capacity, Math.max(0, waterline - span.bottomY));
+    if (columnDepth <= EPSILON) {
+      cache.set(span.spanKey, null);
+      continue;
+    }
+
+    cache.set(span.spanKey, {
+      surfaceY: span.bottomY + columnDepth,
+      columnDepth,
+      bottomY: span.bottomY,
+      topY: span.topY,
+      spanKey: span.spanKey,
+    });
+  }
+}
+
+function findOverlappingSurfaceSpans(
+  world: VoxelWorld,
+  source: { bottomY: number; topY: number },
+  targetX: number,
+  targetZ: number,
+): { x: number; z: number; bottomY: number; topY: number }[] {
+  const spans: { x: number; z: number; bottomY: number; topY: number }[] = [];
+  if (!isHorizontalInBounds(world, targetX, targetZ)) {
+    return spans;
+  }
+
+  let y = source.bottomY;
+  while (y <= source.topY) {
+    if (!isSurfaceColumnWaterCell(world, targetX, y, targetZ)) {
+      y += 1;
+      continue;
+    }
+
+    const span = findSurfaceWaterSpan(world, targetX, y, targetZ);
+    if (!span) {
+      y += 1;
+      continue;
+    }
+
+    if (getSurfaceSpanVolume(world, span.x, span.z, span.bottomY, span.topY) > EPSILON) {
+      spans.push(span);
+    }
+    y = span.topY + 1;
+  }
+
+  return spans;
+}
+
+function findSurfaceWaterSpan(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+): { x: number; z: number; bottomY: number; topY: number } | null {
+  if (x < 0 || x >= world.width || y < 0 || y >= world.height || z < 0 || z >= world.depth || !isSurfaceColumnWaterCell(world, x, y, z)) {
     return null;
   }
 
-  const sample = {
-    surfaceY: bottomY + Math.min(topY - bottomY + 1, columnDepth),
-    columnDepth,
-    bottomY,
-    topY,
-    spanKey,
-  };
-  cache.set(spanKey, sample);
-  return sample;
+  let bottomY = y;
+  while (bottomY > 0 && isSurfaceColumnWaterCell(world, x, bottomY - 1, z)) {
+    bottomY -= 1;
+  }
+
+  let topY = y;
+  while (topY + 1 < world.height && isSurfaceColumnWaterCell(world, x, topY + 1, z)) {
+    topY += 1;
+  }
+
+  return { x, z, bottomY, topY };
+}
+
+function getSurfaceSpanVolume(world: VoxelWorld, x: number, z: number, bottomY: number, topY: number): number {
+  let volume = 0;
+  for (let y = bottomY; y <= topY; y += 1) {
+    volume += getWaterAmountAt(world, x, y, z);
+  }
+  return volume;
+}
+
+function solveComponentWaterline(spans: SurfaceComponentSpan[]): number {
+  const totalVolume = spans.reduce((total, span) => total + span.volume, 0);
+  let low = Math.min(...spans.map((span) => span.bottomY));
+  let high = Math.max(...spans.map((span) => span.topY + 1));
+
+  for (let i = 0; i < 28; i += 1) {
+    const mid = (low + high) * 0.5;
+    const volumeAtMid = spans.reduce((total, span) => total + Math.min(span.capacity, Math.max(0, mid - span.bottomY)), 0);
+    if (volumeAtMid < totalVolume) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+
+  return high;
 }
 
 function isSurfaceColumnWaterCell(world: VoxelWorld, x: number, y: number, z: number): boolean {
@@ -1327,6 +1527,7 @@ function buildPoolSurfaceGeometry(
     for (const cell of layer) {
       layerCells.set(getSurfaceCellKey(cell.x, cell.z), cell);
     }
+    addOpenWaterBridgeSurfaceCells(world, layerCells, bounds);
 
     const getSample = (x: number, z: number): SurfaceSample => {
       const key = getSurfaceCellKey(x, z);
@@ -1371,6 +1572,83 @@ function buildPoolSurfaceGeometry(
   nextGeometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
   nextGeometry.computeBoundingSphere();
   return { geometry: nextGeometry, activeHeightKeys };
+}
+
+function addOpenWaterBridgeSurfaceCells(
+  world: VoxelWorld,
+  layerCells: Map<string, SurfaceCell>,
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number },
+): void {
+  for (let pass = 0; pass < 2; pass += 1) {
+    const bridgeCells: SurfaceCell[] = [];
+
+    for (let z = bounds.minZ - 1; z <= bounds.maxZ + 1; z += 1) {
+      for (let x = bounds.minX - 1; x <= bounds.maxX + 1; x += 1) {
+        if (layerCells.has(getSurfaceCellKey(x, z))) {
+          continue;
+        }
+
+        const neighbors = getNeighborSurfaceCells(layerCells, x, z);
+        if (neighbors.length < (pass === 0 ? 2 : 1)) {
+          continue;
+        }
+
+        const surfaceY = averageSurfaceValue(neighbors, (cell) => cell.surfaceY);
+        if (
+          !isHorizontalInBounds(world, x, z) ||
+          isTerrainBlockingWaterSheet(world, x, surfaceY, z) ||
+          neighbors.every((cell) => Math.abs(cell.surfaceY - surfaceY) > SURFACE_LAYER_MAX_STEP * 0.72)
+        ) {
+          continue;
+        }
+
+        const y = clampInt(Math.floor(surfaceY - EPSILON), 0, world.height - 1);
+        if (isSolidWaterNeighbor(world, x, y, z)) {
+          continue;
+        }
+
+        bridgeCells.push({
+          x,
+          y,
+          z,
+          waterHeight: Math.max(0.05, Math.min(1, averageSurfaceValue(neighbors, (cell) => cell.waterHeight))),
+          surfaceY,
+          columnDepth: averageSurfaceValue(neighbors, (cell) => cell.columnDepth),
+          spanBottomY: Math.min(...neighbors.map((cell) => cell.spanBottomY)),
+          spanTopY: Math.max(...neighbors.map((cell) => cell.spanTopY)),
+          spanKey: `bridge:${x}:${z}:${Math.round(surfaceY * SURFACE_VERTEX_KEY_SCALE)}`,
+          motion: neighbors[0].motion,
+        });
+      }
+    }
+
+    for (const cell of bridgeCells) {
+      layerCells.set(getSurfaceCellKey(cell.x, cell.z), cell);
+    }
+  }
+}
+
+function getNeighborSurfaceCells(cells: Map<string, SurfaceCell>, x: number, z: number): SurfaceCell[] {
+  const neighbors: SurfaceCell[] = [];
+
+  for (let dz = -1; dz <= 1; dz += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dz === 0) {
+        continue;
+      }
+
+      const neighbor = cells.get(getSurfaceCellKey(x + dx, z + dz));
+      if (neighbor) {
+        neighbors.push(neighbor);
+      }
+    }
+  }
+
+  return neighbors;
+}
+
+function averageSurfaceValue(cells: SurfaceCell[], read: (cell: SurfaceCell) => number): number {
+  return cells.reduce((total, cell) => total + read(cell), 0) / Math.max(1, cells.length);
 }
 
 function getSurfaceLayers(cells: SurfaceCell[]): SurfaceCell[][] {
@@ -1484,7 +1762,7 @@ function createSurfaceSample(
       z: z + 0.5,
       value: smoothSurfaceFieldValue(surfaceState, heightKey, getWetSurfaceFieldTarget(world, cell), activeHeightKeys),
       height,
-      color: getSurfaceCellColor(cell),
+      color: getSmoothedSurfaceCellColor(cells, cell),
       terrainContact: terrainOcclusion >= SURFACE_TERRAIN_OCCLUSION_START || hasRenderedTerrainContactNearSurface(world, cell),
     };
   }
@@ -1555,7 +1833,19 @@ function getDrySurfaceFieldTarget(terrainContact: boolean, nearbyWaterCount: num
     return Math.max(0, Math.min(SURFACE_TERRAIN_CONTACT_VALUE, SURFACE_ISO_LEVEL * 2 - nearbyWetFieldValue));
   }
 
-  return nearbyWaterCount >= 3 ? SURFACE_OPEN_CONTACT_VALUE : 0;
+  if (nearbyWaterCount >= 5) {
+    return Math.max(SURFACE_ISO_LEVEL + 0.12, nearbyWetFieldValue * 0.62);
+  }
+
+  if (nearbyWaterCount >= 4) {
+    return Math.max(SURFACE_ISO_LEVEL + 0.04, nearbyWetFieldValue * 0.52);
+  }
+
+  if (nearbyWaterCount >= 3) {
+    return Math.max(SURFACE_ISO_LEVEL + 0.01, nearbyWetFieldValue * 0.42);
+  }
+
+  return nearbyWaterCount >= 2 ? Math.max(SURFACE_ISO_LEVEL + 0.005, nearbyWetFieldValue * 0.32) : 0;
 }
 
 function isTerrainContactSurfaceSample(
@@ -1646,6 +1936,9 @@ function getSurfaceVertexKey(vertex: SurfaceVertex): string {
 function getSurfaceSquarePolygons(vertices: SurfaceVertex[]): SurfaceVertex[][] {
   const inside = vertices.map((vertex) => vertex.value >= SURFACE_ISO_LEVEL);
   if (inside[0] && inside[2] && !inside[1] && !inside[3]) {
+    if (shouldBridgeOpenWaterAmbiguousSquare(vertices)) {
+      return [vertices];
+    }
     return [
       [vertices[0], interpolateSurfaceVertex(vertices[0], vertices[1]), interpolateSurfaceVertex(vertices[0], vertices[3])],
       [vertices[2], interpolateSurfaceVertex(vertices[2], vertices[3]), interpolateSurfaceVertex(vertices[2], vertices[1])],
@@ -1653,6 +1946,9 @@ function getSurfaceSquarePolygons(vertices: SurfaceVertex[]): SurfaceVertex[][] 
   }
 
   if (inside[1] && inside[3] && !inside[0] && !inside[2]) {
+    if (shouldBridgeOpenWaterAmbiguousSquare(vertices)) {
+      return [vertices];
+    }
     return [
       [vertices[1], interpolateSurfaceVertex(vertices[1], vertices[2]), interpolateSurfaceVertex(vertices[1], vertices[0])],
       [vertices[3], interpolateSurfaceVertex(vertices[3], vertices[0]), interpolateSurfaceVertex(vertices[3], vertices[2])],
@@ -1661,6 +1957,15 @@ function getSurfaceSquarePolygons(vertices: SurfaceVertex[]): SurfaceVertex[][] 
 
   const polygon = clipSurfacePolygon(vertices);
   return polygon.length >= 3 ? [polygon] : [];
+}
+
+function shouldBridgeOpenWaterAmbiguousSquare(vertices: SurfaceVertex[]): boolean {
+  if (vertices.some((vertex) => vertex.terrainContact)) {
+    return false;
+  }
+
+  const averageValue = vertices.reduce((total, vertex) => total + vertex.value, 0) / vertices.length;
+  return averageValue >= SURFACE_ISO_LEVEL * 0.72;
 }
 
 function clipSurfacePolygon(vertices: SurfaceVertex[]): SurfaceVertex[] {
@@ -1773,6 +2078,10 @@ function smoothSurfaceFieldValue(
 
 function getSurfaceCellKey(x: number, z: number): string {
   return `${x}:${z}`;
+}
+
+function getColumnSpanKey(x: number, z: number, bottomY: number, topY: number): string {
+  return `${x}:${z}:${bottomY}:${topY}`;
 }
 
 function getSurfaceHeightMemoryKey(y: number, x: number, z: number): string {
@@ -2037,14 +2346,71 @@ function createWaterRippleTexture(lightColor: number, darkColor: number): Canvas
   return texture;
 }
 
-function replaceDynamicGeometry(mesh: Mesh<BufferGeometry, Material>, positions: number[], colors: number[]): void {
-  const nextGeometry = new BufferGeometry();
-  nextGeometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
-  nextGeometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
-  nextGeometry.computeVertexNormals();
-  nextGeometry.computeBoundingSphere();
-  mesh.geometry.dispose();
-  mesh.geometry = nextGeometry;
+function replaceDynamicGeometry(
+  renderer: WaterRenderer,
+  mesh: Mesh<BufferGeometry, Material>,
+  state: DynamicGeometryState,
+  positions: number[],
+  colors: number[],
+): void {
+  const vertexCount = positions.length / 3;
+  const requiredPositionCapacity = positions.length;
+  const requiredColorCapacity = colors.length;
+  const positionAttribute = mesh.geometry.getAttribute("position") as Float32BufferAttribute | undefined;
+  const colorAttribute = mesh.geometry.getAttribute("color") as Float32BufferAttribute | undefined;
+  const needsResize =
+    !positionAttribute ||
+    !colorAttribute ||
+    requiredPositionCapacity > state.positionCapacity ||
+    requiredColorCapacity > state.colorCapacity ||
+    shouldShrinkDynamicGeometry(state, requiredPositionCapacity, requiredColorCapacity);
+
+  if (needsResize) {
+    state.positionCapacity = growDynamicGeometryCapacity(requiredPositionCapacity);
+    state.colorCapacity = growDynamicGeometryCapacity(requiredColorCapacity);
+    mesh.geometry.dispose();
+    mesh.geometry = new BufferGeometry();
+    mesh.geometry.setAttribute("position", new Float32BufferAttribute(new Float32Array(state.positionCapacity), 3));
+    mesh.geometry.setAttribute("color", new Float32BufferAttribute(new Float32Array(state.colorCapacity), 3));
+    renderer.stats.rebuilds += 1;
+  }
+
+  const nextPositionAttribute = mesh.geometry.getAttribute("position") as Float32BufferAttribute;
+  const nextColorAttribute = mesh.geometry.getAttribute("color") as Float32BufferAttribute;
+  nextPositionAttribute.array.set(positions);
+  nextColorAttribute.array.set(colors);
+  if (requiredPositionCapacity < state.positionCapacity) {
+    nextPositionAttribute.array.fill(0, requiredPositionCapacity);
+  }
+  if (requiredColorCapacity < state.colorCapacity) {
+    nextColorAttribute.array.fill(0, requiredColorCapacity);
+  }
+  nextPositionAttribute.needsUpdate = true;
+  nextColorAttribute.needsUpdate = true;
+  mesh.geometry.setDrawRange(0, vertexCount);
+  mesh.geometry.computeVertexNormals();
+  mesh.geometry.computeBoundingSphere();
+}
+
+function shouldShrinkDynamicGeometry(state: DynamicGeometryState, requiredPositionCapacity: number, requiredColorCapacity: number): boolean {
+  return (
+    (requiredPositionCapacity === 0 && state.positionCapacity > 0) ||
+    (requiredColorCapacity === 0 && state.colorCapacity > 0) ||
+    state.positionCapacity > Math.max(4096, requiredPositionCapacity * 4) ||
+    state.colorCapacity > Math.max(4096, requiredColorCapacity * 4)
+  );
+}
+
+function growDynamicGeometryCapacity(required: number): number {
+  if (required <= 0) {
+    return 0;
+  }
+
+  let capacity = 3;
+  while (capacity < required) {
+    capacity *= 2;
+  }
+  return capacity;
 }
 
 function appendCurtainQuad(
@@ -2088,18 +2454,42 @@ function getSurfaceWave(x: number, y: number, z: number, cornerX: number, corner
 }
 
 function getSurfaceCellColor(cell: SurfaceCell): Rgb {
-  const depth = Math.min(1, cell.columnDepth / 4.5);
+  const depth = Math.min(1, cell.columnDepth / 14);
   const motion = cell.motion;
   const flow = motion.strength;
-  const variation = getCellVariation(cell.x, cell.y + 7, cell.z) * 0.014;
-  const shallow = { r: 0.1 + cell.waterHeight * 0.04, g: 0.58 + cell.waterHeight * 0.08, b: 0.82 + cell.waterHeight * 0.08 };
-  const deep = { r: 0.025, g: 0.29, b: 0.5 };
+  const variation = getCellVariation(cell.x, cell.y + 7, cell.z) * 0.0015;
+  const shallow = { r: 0.055, g: 0.48, b: 0.7 };
+  const deep = { r: 0.04, g: 0.43, b: 0.67 };
   const color = lerpRgb(shallow, deep, depth);
   return {
     r: color.r + variation + flow * 0.012,
     g: color.g + variation * 0.35 + flow * 0.04,
     b: color.b + flow * 0.06,
   };
+}
+
+function getSmoothedSurfaceCellColor(cells: Map<string, SurfaceCell>, cell: SurfaceCell): Rgb {
+  let weightedColor = scaleRgb(getSurfaceCellColor(cell), 2.4);
+  let totalWeight = 2.4;
+
+  for (let dz = -1; dz <= 1; dz += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dz === 0) {
+        continue;
+      }
+
+      const neighbor = cells.get(getSurfaceCellKey(cell.x + dx, cell.z + dz));
+      if (!neighbor || Math.abs(neighbor.surfaceY - cell.surfaceY) > SURFACE_LAYER_MAX_STEP) {
+        continue;
+      }
+
+      const weight = Math.abs(dx) + Math.abs(dz) === 2 ? 0.48 : 0.78;
+      weightedColor = addRgb(weightedColor, scaleRgb(getSurfaceCellColor(neighbor), weight));
+      totalWeight += weight;
+    }
+  }
+
+  return scaleRgb(weightedColor, 1 / totalWeight);
 }
 
 function getCurtainTopColor(x: number, z: number, amount: number): Rgb {
@@ -2138,11 +2528,11 @@ function getShoreFoamColor(amount: number, intensity = 0): Rgb {
 
 function getHydraulicFoamColor(amount: number, intensity: number, kind: "edge-flow" | "fall" | "impact"): Rgb {
   const base = getShoreFoamColor(amount, intensity);
-  const impactBoost = kind === "impact" ? 0.16 : kind === "fall" ? 0.08 : 0;
+  const impactBoost = kind === "impact" ? 0.1 : kind === "fall" ? 0.04 : 0;
   return {
-    r: Math.min(0.92, base.r + 0.2 + impactBoost),
-    g: Math.min(0.98, base.g + 0.16 + impactBoost * 0.45),
-    b: Math.min(1, base.b + 0.12 + impactBoost * 0.35),
+    r: Math.min(0.78, base.r + 0.08 + impactBoost),
+    g: Math.min(0.9, base.g + 0.08 + impactBoost * 0.45),
+    b: Math.min(0.98, base.b + 0.08 + impactBoost * 0.35),
   };
 }
 

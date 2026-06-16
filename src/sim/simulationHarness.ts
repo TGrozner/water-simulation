@@ -8,8 +8,8 @@ import {
   type TuningPresetId,
   cloneTuningPreset,
 } from "./tuningPresets";
-import { PerspectiveCamera, Vector3 } from "three";
-import { coords, createEmptyWorld, index, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
+import { PerspectiveCamera, Scene, Vector3 } from "three";
+import { coords, createEmptyWorld, index, setCellWater, setWater, totalWater, wakeCell, wakeNeighbors } from "../world/grid";
 import { createWorld, SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
 import { FIRST_PERSON_MOVEMENT_TEST_HOOKS } from "../input/firstPersonController";
 import {
@@ -34,6 +34,8 @@ import {
   isStageChoiceComplete,
 } from "../game/stageCompletion";
 import { getWaterSurfaceMeshDebugStats } from "../render/waterRenderer";
+import { createTerrainRenderer } from "../render/terrainRenderer";
+import { digSphere } from "../world/dig";
 
 type HarnessResult = {
   preset: ScenePresetId;
@@ -851,11 +853,14 @@ function runEdgeCaseHarness(): void {
     ["edge/flux-metadata", assertWaterFluxMetadataTracksLateralTransfer],
     ["edge/pipe-momentum", assertPipeMomentumCarriesAcrossSmallAdverseHead],
     ["edge/surface-motion", assertWaterSurfaceMetadataTracksMotion],
+    ["edge/total-water-cache", assertTotalWaterCacheTracksCellWrites],
+    ["edge/terrain-renderer-noop-update", assertTerrainRendererNoopUpdateDoesNotRebuild],
     ["edge/water-surface-mesh", assertContinuousWaterSurfaceMeshIsFinite],
     ["edge/particle-cue", assertWaterParticleCuesFollowMotion],
     ["edge/hydraulic-visual-cue-map", assertWaterEdgeCuesUsePersistentHydraulicVisualEvents],
     ["edge/flow-events-contract", assertFlowEventCollectionDoesNotChangeWaterState],
     ["edge/topology-clears-flow", assertTopologyChangesClearWaterMotion],
+    ["edge/dig-clears-local-water-motion", assertDigClearsOnlyLocalWaterMotion],
     ["edge/lower-adjacent-shaft", assertWaterSpillsIntoLowerAdjacentShaft],
     ["edge/non-overlapping-portal", assertWaterDoesNotCrossNonOverlappingPortal],
     ["edge/disconnected-overhang-pocket", assertDisconnectedPocketDoesNotReceiveWaterThroughOverhang],
@@ -877,6 +882,7 @@ function runSpanGraphPrototypeHarness(): void {
     ["solver/graph-build", assertSparseHydraulicGraphIncludesDryPortalTargets],
     ["solver/terrain-aperture", assertSparseHydraulicGraphUsesTerrainAperture],
     ["solver/split-outflow", assertSparseHydraulicGraphSplitsOutflowSimultaneously],
+    ["solver/multi-inflow-target-capacity", assertSparseHydraulicGraphScalesMultiInflowByTargetCapacity],
     ["solver/raised-portal", assertSparseHydraulicGraphEqualizesRaisedPortal],
     ["solver/pipe-momentum", assertSparseHydraulicGraphCarriesPipeMomentumAcrossSmallAdverseHead],
     ["solver/lower-adjacent-shaft", assertSparseHydraulicGraphSpillsIntoLowerAdjacentShaft],
@@ -982,6 +988,39 @@ function assertSparseHydraulicGraphSplitsOutflowSimultaneously(): void {
     );
   }
   assertSmallWorldConserved(world, baselineWater, "solver/split");
+}
+
+function assertSparseHydraulicGraphScalesMultiInflowByTargetCapacity(): void {
+  const world = createEmptyWorld(3, 3, 3);
+  world.solid.fill(1);
+  for (let y = 0; y <= 2; y += 1) {
+    world.solid[index(world, 0, y, 1)] = 0;
+    world.solid[index(world, 1, y, 1)] = 0;
+  }
+  world.solid[index(world, 2, 0, 1)] = 0;
+
+  for (let y = 0; y <= 2; y += 1) {
+    setWater(world, 0, y, 1, 1);
+    wakeCell(world, 0, y, 1);
+  }
+  setWater(world, 2, 0, 1, 1);
+  wakeCell(world, 2, 0, 1);
+
+  const waterConfig = {
+    ...cloneTuningPreset(DEFAULT_TUNING_PRESET_ID).waterConfig,
+    sideFlowRate: 10,
+  };
+  const baselineWater = totalWater(world);
+  const stats = stepSparseHydraulicSpanGraph(world, waterConfig);
+  const targetWater = measureColumnWater(world, 1, 1, 0, 2);
+
+  assert(stats.movedVolume > 1.5, `solver/multi-inflow: expected both sources to feed target, got moved=${stats.movedVolume.toFixed(3)}`);
+  assert(
+    targetWater > 1.5,
+    `solver/multi-inflow: expected target to receive more than the smaller source cap, got ${targetWater.toFixed(3)}`,
+  );
+  assert(targetWater <= 3 + EPSILON, `solver/multi-inflow: target exceeded capacity with ${targetWater.toFixed(3)}`);
+  assertSmallWorldConserved(world, baselineWater, "solver/multi-inflow");
 }
 
 function assertSparseHydraulicGraphEqualizesRaisedPortal(): void {
@@ -1632,6 +1671,51 @@ function assertWaterSurfaceMetadataTracksMotion(): void {
   assertSmallWorldConserved(world, baselineWater, "edge/surface-motion");
 }
 
+function assertTotalWaterCacheTracksCellWrites(): void {
+  const world = createEmptyWorld(3, 2, 3);
+  assert(totalWater(world) === 0, "edge/total-water-cache: expected empty world to start at zero water");
+
+  setWater(world, 1, 0, 1, 0.4);
+  setWater(world, 2, 0, 1, 0.7);
+  assert(Math.abs(totalWater(world) - 1.1) <= 0.0001, `edge/total-water-cache: expected 1.1 water, got ${totalWater(world)}`);
+
+  setCellWater(world, index(world, 1, 0, 1), 0.9);
+  assert(Math.abs(totalWater(world) - 1.6) <= 0.0001, `edge/total-water-cache: expected updated total 1.6, got ${totalWater(world)}`);
+
+  world.solid[index(world, 2, 0, 1)] = 1;
+  setCellWater(world, index(world, 2, 0, 1), 1);
+  assert(
+    Math.abs(totalWater(world) - 0.9) <= 0.0001,
+    `edge/total-water-cache: expected solid write to clear water total, got ${totalWater(world)}`,
+  );
+}
+
+function assertTerrainRendererNoopUpdateDoesNotRebuild(): void {
+  const world = createEmptyWorld(4, 2, 4);
+  for (let z = 0; z < world.depth; z += 1) {
+    for (let x = 0; x < world.width; x += 1) {
+      world.solid[index(world, x, 0, z)] = 1;
+    }
+  }
+
+  const scene = new Scene();
+  const renderer = createTerrainRenderer(scene, world);
+  const rebuildsAfterInitialUpdate = renderer.stats.rebuilds;
+  renderer.update(world);
+  assert(
+    renderer.stats.rebuilds === rebuildsAfterInitialUpdate,
+    `edge/terrain-renderer-noop-update: expected no rebuild on clean update (${rebuildsAfterInitialUpdate} -> ${renderer.stats.rebuilds})`,
+  );
+
+  renderer.markCellsDirty([index(world, 1, 0, 1)]);
+  renderer.update(world);
+  assert(
+    renderer.stats.rebuilds > rebuildsAfterInitialUpdate,
+    "edge/terrain-renderer-noop-update: dirty cells should still rebuild at least one chunk",
+  );
+  renderer.dispose();
+}
+
 function assertContinuousWaterSurfaceMeshIsFinite(): void {
   const world = createEmptyWorld(5, 3, 5);
   for (let z = 1; z <= 3; z += 1) {
@@ -1798,6 +1882,45 @@ function assertTopologyChangesClearWaterMotion(): void {
   assert(world.activeFlowCells.size === 0, "edge/topology-clears-flow: terrain change should clear active flow cells");
   assert(totalWaterSurfaceMagnitude(world) <= EPSILON, "edge/topology-clears-flow: terrain change should clear surface motion");
   assert(world.activeSurfaceCells.size === 0, "edge/topology-clears-flow: terrain change should clear active surface cells");
+}
+
+function assertDigClearsOnlyLocalWaterMotion(): void {
+  const world = createEmptyWorld(14, 4, 4);
+  world.solid.fill(1);
+  for (let z = 0; z < world.depth; z += 1) {
+    for (let x = 0; x < world.width; x += 1) {
+      world.solid[index(world, x, 0, z)] = 0;
+    }
+  }
+  world.solid[index(world, 2, 1, 1)] = 1;
+
+  const localCell = index(world, 2, 0, 1);
+  const distantCell = index(world, 11, 0, 1);
+  world.waterFlow[localCell * 3] = 1;
+  world.waterFlow[distantCell * 3] = 1;
+  world.waterSurfaceOffset[localCell] = 0.2;
+  world.waterSurfaceOffset[distantCell] = 0.2;
+  world.activeFlowCells.add(localCell);
+  world.activeFlowCells.add(distantCell);
+  world.activeSurfaceCells.add(localCell);
+  world.activeSurfaceCells.add(distantCell);
+
+  const result = digSphere(world, index(world, 2, 1, 1), 0.5);
+  assert(result.removed === 1, `edge/dig-clears-local-water-motion: expected one removed cell, got ${result.removed}`);
+  assert(world.waterFlow[localCell * 3] === 0, "edge/dig-clears-local-water-motion: expected local flow to clear");
+  assert(world.waterSurfaceOffset[localCell] === 0, "edge/dig-clears-local-water-motion: expected local surface motion to clear");
+  assert(!world.activeFlowCells.has(localCell), "edge/dig-clears-local-water-motion: expected local flow cell inactive");
+  assert(!world.activeSurfaceCells.has(localCell), "edge/dig-clears-local-water-motion: expected local surface cell inactive");
+  assert(world.waterFlow[distantCell * 3] === 1, "edge/dig-clears-local-water-motion: expected distant flow to survive");
+  assert(
+    Math.abs(world.waterSurfaceOffset[distantCell] - 0.2) <= 0.0001,
+    "edge/dig-clears-local-water-motion: expected distant surface motion to survive",
+  );
+  assert(world.activeFlowCells.has(distantCell), "edge/dig-clears-local-water-motion: expected distant flow cell to remain active");
+  assert(
+    world.activeSurfaceCells.has(distantCell),
+    "edge/dig-clears-local-water-motion: expected distant surface cell to remain active",
+  );
 }
 
 function assertWaterSpillsIntoLowerAdjacentShaft(): void {

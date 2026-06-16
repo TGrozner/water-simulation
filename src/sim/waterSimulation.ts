@@ -824,7 +824,12 @@ function applySpanVolumeCorrection(world: VoxelWorld, span: ColumnSpan, correcti
 }
 
 function writeCellWater(world: VoxelWorld, cellIndex: number, amount: number): void {
-  world.water[cellIndex] = world.solid[cellIndex] === 1 ? 0 : Math.min(1, Math.max(0, amount));
+  const previousWater = world.water[cellIndex];
+  const nextWater = world.solid[cellIndex] === 1 ? 0 : Math.min(1, Math.max(0, amount));
+  if (previousWater !== nextWater) {
+    world.water[cellIndex] = nextWater;
+    world.totalWater += world.water[cellIndex] - previousWater;
+  }
   refreshWetCell(world, cellIndex);
 }
 

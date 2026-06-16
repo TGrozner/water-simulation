@@ -49,6 +49,7 @@ export type VoxelWorld = {
   depth: number;
   solid: Uint8Array;
   water: Float32Array;
+  totalWater: number;
   waterFlow: Float32Array;
   waterSurfaceOffset: Float32Array;
   waterSurfaceVelocity: Float32Array;

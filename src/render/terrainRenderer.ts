@@ -150,13 +150,20 @@ export function createTerrainRenderer(scene: Scene, world: VoxelWorld): TerrainR
   function updateTerrainChunks(renderer: TerrainRenderer, nextWorld: VoxelWorld, options: RenderOptions): void {
     const startedAt = performance.now();
     const optionsKey = getRenderOptionsKey(options);
-    const rebuildAllChunks = allDirty || optionsKey !== lastOptionsKey || dirtyChunks.size === 0;
+    const optionsChanged = optionsKey !== lastOptionsKey;
+    if (!allDirty && !optionsChanged && dirtyChunks.size === 0) {
+      renderer.stats.updateMs = performance.now() - startedAt;
+      return;
+    }
+
+    const rebuildAllChunks = allDirty || optionsChanged;
     const targetChunks = rebuildAllChunks ? chunks.map((_chunk, chunkIndex) => chunkIndex) : [...dirtyChunks];
 
     for (const chunkIndex of targetChunks) {
       rebuildTerrainChunk(chunks[chunkIndex], nextWorld, options);
       rebuildOrganicTerrainChunk(chunks[chunkIndex], nextWorld, options);
     }
+    renderer.stats.rebuilds += targetChunks.length;
 
     refreshVisibleChunks();
     renderer.stats.updateMs = performance.now() - startedAt;
@@ -1210,7 +1217,10 @@ function getTerrainVertexColor(
   const adjacentWater = getAdjacentWaterAmount(world, x, y, z, direction);
   if (adjacentWater > EPSILON) {
     const wetColor = isGeneratedCavernWorld(world) ? 0x1f6472 : 0x2f7a86;
-    baseColor = mixHexColors(baseColor, wetColor, Math.min(0.52, 0.22 + adjacentWater * 0.24));
+    const wetTint = isGeneratedCavernWorld(world)
+      ? Math.min(0.035, adjacentWater * 0.02)
+      : Math.min(0.52, 0.22 + adjacentWater * 0.24);
+    baseColor = mixHexColors(baseColor, wetColor, wetTint);
   }
 
   const heightFactor = world.height <= 1 ? 0 : gridY / world.height;

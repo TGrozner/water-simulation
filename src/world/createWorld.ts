@@ -631,9 +631,19 @@ function carveBox(
   maxY: number,
   maxZ: number,
 ): void {
-  for (let y = minY; y <= maxY; y += 1) {
-    for (let z = minZ; z <= maxZ; z += 1) {
-      for (let x = minX; x <= maxX; x += 1) {
+  const clampedMinX = Math.max(0, minX);
+  const clampedMaxX = Math.min(world.width - 1, maxX);
+  const clampedMinY = Math.max(0, minY);
+  const clampedMaxY = Math.min(world.height - 1, maxY);
+  const clampedMinZ = Math.max(0, minZ);
+  const clampedMaxZ = Math.min(world.depth - 1, maxZ);
+  if (clampedMinX > clampedMaxX || clampedMinY > clampedMaxY || clampedMinZ > clampedMaxZ) {
+    return;
+  }
+
+  for (let y = clampedMinY; y <= clampedMaxY; y += 1) {
+    for (let z = clampedMinZ; z <= clampedMaxZ; z += 1) {
+      for (let x = clampedMinX; x <= clampedMaxX; x += 1) {
         world.solid[index(world, x, y, z)] = 0;
       }
     }

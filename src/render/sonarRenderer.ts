@@ -48,6 +48,7 @@ const SONAR_VERTICAL_RANGE = 24;
 const SONAR_VERTICAL_SCALE = 0.28;
 const SONAR_MIN_COLUMN_HEIGHT = 0.16;
 const SONAR_MAX_COLUMN_HEIGHT = 7.2;
+const SONAR_PROJECTION_BUCKET_SIZE = 0.75;
 const SONAR_PLAYER_MARKER_Y = 1.1;
 const SONAR_RANGE_RINGS = [8, 16, 24] as const;
 const SONAR_MISSION_BEACONS = [
@@ -66,6 +67,10 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
   `;
   parent.appendChild(panel);
   let sonarWorld = world;
+  let terrainDirty = true;
+  let waterDirty = true;
+  let lastTerrainProjectionKey = "";
+  let lastWaterProjectionKey = "";
 
   const scene = new Scene();
   scene.background = new Color(0x071018);
@@ -153,13 +158,24 @@ export function createSonarRenderer(parent: HTMLElement, world: VoxelWorld): Son
   const sonarRenderer: SonarRenderer = {
     updateTerrain: (nextWorld) => {
       sonarWorld = nextWorld;
+      terrainDirty = true;
     },
     updateWater: (nextWorld) => {
       sonarWorld = nextWorld;
+      waterDirty = true;
     },
     render: (sourceCamera) => {
-      updateProjectedTerrainMesh(terrainBatch, sonarWorld, sourceCamera);
-      updateProjectedWaterMesh(waterBatch, sonarWorld, sourceCamera);
+      const projectionKey = getSonarProjectionKey(sourceCamera, sonarWorld);
+      if (terrainDirty || projectionKey !== lastTerrainProjectionKey) {
+        updateProjectedTerrainMesh(terrainBatch, sonarWorld, sourceCamera);
+        terrainDirty = false;
+        lastTerrainProjectionKey = projectionKey;
+      }
+      if (waterDirty || projectionKey !== lastWaterProjectionKey) {
+        updateProjectedWaterMesh(waterBatch, sonarWorld, sourceCamera);
+        waterDirty = false;
+        lastWaterProjectionKey = projectionKey;
+      }
       updateCameraMarker(playerMarker, directionLine, sourceCamera, sonarWorld);
       updateRangeGuides(rangeGuides.group, sourceCamera, sonarWorld);
       updateMissionBeacons(missionBeacons.group, sonarWorld, sourceCamera);
@@ -307,6 +323,15 @@ function updateMapCamera(
   mapCamera.up.copy(mapUp);
   mapCamera.lookAt(mapTarget);
   mapCamera.updateMatrixWorld();
+}
+
+function getSonarProjectionKey(sourceCamera: PerspectiveCamera, world: VoxelWorld): string {
+  const playerPosition = getClampedCameraPosition(sourceCamera, world);
+  return [
+    Math.round(playerPosition.x / SONAR_PROJECTION_BUCKET_SIZE),
+    Math.round(playerPosition.y / SONAR_PROJECTION_BUCKET_SIZE),
+    Math.round(playerPosition.z / SONAR_PROJECTION_BUCKET_SIZE),
+  ].join(":");
 }
 
 function updateProjectedTerrainMesh(
