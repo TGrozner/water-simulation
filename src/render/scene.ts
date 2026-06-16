@@ -119,15 +119,21 @@ async function createMainRenderer(
 }
 
 function configureRenderer(renderer: MainRenderer): void {
+  const captureMode = new URLSearchParams(window.location.search).get("capture") === "1";
   renderer.outputColorSpace = SRGBColorSpace;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(captureMode ? 1 : Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = PCFSoftShadowMap;
 }
 
 function getInitialRendererMode(): RendererRequestMode {
-  const requested = new URLSearchParams(window.location.search).get("renderer");
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("capture") === "1") {
+    return "webgl";
+  }
+
+  const requested = params.get("renderer");
   if (requested === "webgpu" || requested === "webgl" || requested === "auto") {
     return requested;
   }
