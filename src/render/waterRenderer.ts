@@ -8,6 +8,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshPhongMaterial,
+  MeshStandardMaterial,
   type Material,
   Object3D,
   Raycaster,
@@ -33,8 +34,8 @@ import { getTerrainNodeDensity, ORGANIC_TERRAIN_ISO_LEVEL } from "./terrainField
 
 export type WaterRenderer = {
   bodyBatch: InstancedMeshBatch<BoxGeometry, MeshPhongMaterial, number>;
-  surfaceMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
-  curtainMesh: Mesh<BufferGeometry, MeshPhongMaterial>;
+  surfaceMesh: Mesh<BufferGeometry, MeshStandardMaterial>;
+  curtainMesh: Mesh<BufferGeometry, MeshStandardMaterial>;
   foamMesh: Mesh<BufferGeometry, MeshBasicMaterial>;
   foamBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
   sprayBatch: InstancedMeshBatch<CircleGeometry, MeshBasicMaterial>;
@@ -182,11 +183,12 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
   // Invisible depth pre-pass for transparent water; gameplay color writes stay off below.
   material.colorWrite = false;
 
-  const surfaceMaterial = new MeshPhongMaterial({
+  const surfaceMaterial = new MeshStandardMaterial({
     color: 0xffffff,
     emissive: 0x093f50,
-    specular: 0xffffff,
-    shininess: 210,
+    roughness: 0.07,
+    metalness: 0,
+    envMapIntensity: 0.62,
     transparent: true,
     opacity: 0.58,
     depthWrite: false,
@@ -194,11 +196,12 @@ export function createWaterRenderer(scene: Scene, world: VoxelWorld): WaterRende
     vertexColors: true,
     map: surfaceRippleTexture,
   });
-  const curtainMaterial = new MeshPhongMaterial({
+  const curtainMaterial = new MeshStandardMaterial({
     color: 0xffffff,
     emissive: 0x062637,
-    specular: 0xdffbff,
-    shininess: 145,
+    roughness: 0.18,
+    metalness: 0,
+    envMapIntensity: 0.38,
     transparent: true,
     opacity: 0.38,
     depthWrite: false,

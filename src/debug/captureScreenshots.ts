@@ -7,13 +7,15 @@ import { SCENE_PRESETS, type ScenePresetId } from "../world/createWorld";
 import { getSceneOpeningStages, isStageAutoOpen } from "../world/sceneTools";
 
 const HOST = "127.0.0.1";
-const PORT = 4175;
+const CAPTURE_PORT_BASE = 32_000;
+const CAPTURE_PORT_SPAN = 20_000;
+const PORT = getCapturePort();
 const BASE_URL = `http://${HOST}:${PORT}`;
 const BASELINE_DIR = "test/baselines/visual";
 const OUTPUT_ROOT = ".sim-build/screenshots";
 const ACTUAL_DIR = `${OUTPUT_ROOT}/actual`;
 const DIFF_DIR = `${OUTPUT_ROOT}/diff`;
-const CHROME_PROFILE_DIR = `${OUTPUT_ROOT}/chrome-profile`;
+const CHROME_PROFILE_DIR = `${OUTPUT_ROOT}/chrome-profile-${process.pid}-${Date.now()}`;
 const CHROME_CANDIDATES = ["google-chrome", "chromium", "chromium-browser"];
 const DIFFERENCE_THRESHOLD = 0.03;
 const MIN_VARIANCE = 2;
@@ -22,7 +24,7 @@ const DEFAULT_CAPTURE_WAIT_MS = 5_000;
 const LARGE_SCENE_CAPTURE_WAIT_MS = 10_000;
 const BLANK_CAPTURE_RETRY_COUNT = 3;
 const CDP_CAPTURE_READY_TIMEOUT_MS = 25_000;
-const CDP_REQUEST_TIMEOUT_MS = 15_000;
+const CDP_REQUEST_TIMEOUT_MS = 45_000;
 const STAGED_CAPTURE_PRESETS: ScenePresetId[] = ["generated-cavern"];
 type GameCapture = {
   url: string;
@@ -143,6 +145,7 @@ const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
       scenePreset: "generated-cavern",
       gameMode: true,
       levelId: "generated-cavern",
+      paused: true,
       minOpenedStages: 1,
       minTickCount: 300,
       minTotalWater: 2000,
@@ -157,6 +160,7 @@ const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
       scenePreset: "generated-cavern",
       gameMode: true,
       levelId: "generated-cavern",
+      paused: true,
       minOpenedStages: 3,
       minTickCount: 240,
       minManualRouteWater: 1,
@@ -172,6 +176,7 @@ const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
       scenePreset: "generated-cavern",
       gameMode: true,
       levelId: "generated-cavern",
+      paused: true,
       minOpenedStages: 3,
       minTickCount: 240,
       minManualRouteWater: 1,
@@ -187,6 +192,7 @@ const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
       scenePreset: "generated-cavern",
       gameMode: true,
       levelId: "generated-cavern",
+      paused: true,
       minOpenedStages: 3,
       minOpenedHazards: 1,
       minTickCount: 240,
@@ -201,22 +207,22 @@ const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
 
 const GAME_CAPTURES: GameCapture[] = [
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=1&warmupTicks=300&camera=fps&spawn=water-drop&debugUi=0&visualCapture=1`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=1&warmupTicks=300&camera=fps&spawn=water-drop&debugUi=0&visualCapture=1&paused=1`,
     filename: "water-reservoir-drop.png",
     timeoutMs: 1200,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins&debugUi=0&visualCapture=1`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins&debugUi=0&visualCapture=1&paused=1`,
     filename: "water-shoreline-basin.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1&paused=1`,
     filename: "water-contact-tunnel.png",
     timeoutMs: 10000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin&debugUi=0&visualCapture=1&paused=1`,
     filename: "water-hazard-flow.png",
     timeoutMs: 10000,
   },
@@ -225,17 +231,17 @@ const GAME_CAPTURES: GameCapture[] = [
     filename: "game-generated-cavern-start.png",
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&camera=fps&spawn=drop`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&camera=fps&spawn=drop&paused=1`,
     filename: "game-generated-cavern-open-2.png",
     timeoutMs: 700,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&warmupTicks=240&camera=fps&spawn=basins&paused=1`,
     filename: "game-generated-cavern-complete.png",
     timeoutMs: 5000,
   },
   {
-    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin`,
+    url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=2&carveManual=1&openHazards=1&warmupTicks=240&camera=fps&spawn=south-basin&paused=1`,
     filename: "game-generated-cavern-hazard.png",
     timeoutMs: 5000,
   },
@@ -252,8 +258,12 @@ const GAME_CAPTURES: GameCapture[] = [
 async function run(): Promise<void> {
   const updateBaseline = process.argv.includes("--update-baseline");
   const onlyFilenames = getOnlyFilenames();
+  if (process.argv.includes("--isolated")) {
+    await runIsolatedCaptures(updateBaseline, onlyFilenames);
+    return;
+  }
+
   await mkdir(BASELINE_DIR, { recursive: true });
-  await rm(CHROME_PROFILE_DIR, { recursive: true, force: true });
   await mkdir(CHROME_PROFILE_DIR, { recursive: true });
   await mkdir(ACTUAL_DIR, { recursive: true });
   await mkdir(DIFF_DIR, { recursive: true });
@@ -328,7 +338,48 @@ async function run(): Promise<void> {
     }
   } finally {
     await stopProcess(server);
+    await rm(CHROME_PROFILE_DIR, { recursive: true, force: true }).catch((error: unknown) => {
+      console.warn(`could not remove ${CHROME_PROFILE_DIR}: ${String(error)}`);
+    });
   }
+}
+
+async function runIsolatedCaptures(updateBaseline: boolean, onlyFilenames: Set<string> | null): Promise<void> {
+  if (!onlyFilenames || onlyFilenames.size === 0) {
+    throw new Error("--isolated requires an explicit --only=file.png[,file2.png] list");
+  }
+
+  for (const filename of onlyFilenames) {
+    await runCaptureChild(filename, updateBaseline);
+  }
+}
+
+function runCaptureChild(filename: string, updateBaseline: boolean): Promise<void> {
+  const args = ["tsx", "src/debug/captureScreenshots.ts", `--only=${filename}`];
+  if (updateBaseline) {
+    args.push("--update-baseline");
+  }
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("npx", args, { stdio: "inherit", env: process.env });
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`${filename}: isolated capture failed code=${String(code)} signal=${String(signal)}`));
+    });
+  });
+}
+
+function getCapturePort(): number {
+  const requestedPort = Number.parseInt(process.env.CAPTURE_PORT ?? "", 10);
+  if (Number.isFinite(requestedPort) && requestedPort > 0) {
+    return requestedPort;
+  }
+
+  return CAPTURE_PORT_BASE + (process.pid % CAPTURE_PORT_SPAN);
 }
 
 function getOnlyFilenames(): Set<string> | null {
@@ -520,8 +571,13 @@ function comparePngs(baseline: PNG, actual: PNG): { score: number; diffImage: PN
 
 function stopProcess(processToStop: ReturnType<typeof spawn>): Promise<void> {
   return new Promise((resolve) => {
+    if (processToStop.exitCode !== null || processToStop.signalCode !== null) {
+      resolve();
+      return;
+    }
+
     const timeout = setTimeout(() => {
-      processToStop.kill("SIGKILL");
+      signalProcess(processToStop, "SIGKILL");
       resolve();
     }, 1_000);
 
@@ -530,7 +586,62 @@ function stopProcess(processToStop: ReturnType<typeof spawn>): Promise<void> {
       resolve();
     });
 
-    processToStop.kill("SIGTERM");
+    signalProcess(processToStop, "SIGTERM");
+  });
+}
+
+function stopProcessGroup(processToStop: ReturnType<typeof spawn>): Promise<void> {
+  return new Promise((resolve) => {
+    if (processToStop.exitCode !== null || processToStop.signalCode !== null) {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      signalProcess(processToStop, "SIGKILL", true);
+      resolve();
+    }, 1_000);
+
+    processToStop.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+
+    signalProcess(processToStop, "SIGTERM", true);
+  });
+}
+
+function signalProcess(processToSignal: ReturnType<typeof spawn>, signal: NodeJS.Signals, processGroup = false): void {
+  if (processGroup && processToSignal.pid !== undefined) {
+    try {
+      process.kill(-processToSignal.pid, signal);
+      return;
+    } catch {
+      // Fall back to the parent process if the group has already exited.
+    }
+  }
+
+  processToSignal.kill(signal);
+}
+
+function waitForProcessClose(processToWaitFor: ReturnType<typeof spawn>, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (processToWaitFor.exitCode !== null || processToWaitFor.signalCode !== null) {
+      resolve(true);
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      processToWaitFor.off("close", onClose);
+      resolve(false);
+    }, timeoutMs);
+
+    const onClose = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+
+    processToWaitFor.once("close", onClose);
   });
 }
 
@@ -599,10 +710,10 @@ async function capture(chrome: string, url: string, outputPath: string, timeoutM
   ];
 
   return new Promise((resolve, reject) => {
-    const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"], detached: true });
     let stderr = "";
     const timeout = setTimeout(() => {
-      browser.kill("SIGKILL");
+      signalProcess(browser, "SIGKILL", true);
       reject(new Error(`Chrome screenshot timed out after ${CAPTURE_TIMEOUT_MS}ms for ${url}`));
     }, CAPTURE_TIMEOUT_MS);
 
@@ -645,12 +756,13 @@ async function captureWithCdp(
     `--user-data-dir=${profilePath}`,
     "about:blank",
   ];
-  const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"] });
+  const browser = spawn(chrome, args, { stdio: ["ignore", "ignore", "pipe"], detached: true });
   let stderr = "";
   let timedOut = false;
+  let browserCloseRequested = false;
   const timeout = setTimeout(() => {
     timedOut = true;
-    browser.kill("SIGKILL");
+    signalProcess(browser, "SIGKILL", true);
   }, CAPTURE_TIMEOUT_MS);
   browser.stderr.on("data", (chunk: Buffer) => {
     stderr += chunk.toString();
@@ -681,6 +793,8 @@ async function captureWithCdp(
     );
     await writeFile(outputPath, Buffer.from(screenshot.data, "base64"));
     await cdp.send("Target.closeTarget", { targetId });
+    browserCloseRequested = true;
+    await cdp.send("Browser.close").catch(() => undefined);
     cdp.close();
   } catch (error) {
     if (timedOut) {
@@ -689,7 +803,10 @@ async function captureWithCdp(
     throw new Error(`CDP screenshot failed for ${url}: ${String(error)}\n${stderr}`);
   } finally {
     clearTimeout(timeout);
-    await stopProcess(browser);
+    if (browserCloseRequested && (await waitForProcessClose(browser, 2_000))) {
+      return;
+    }
+    await stopProcessGroup(browser);
   }
 }
 
