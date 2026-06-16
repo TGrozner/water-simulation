@@ -30,6 +30,175 @@ type GameCapture = {
   timeoutMs?: number;
 };
 
+type BrowserStateContract = {
+  scenePreset?: ScenePresetId;
+  gameMode?: boolean;
+  levelId?: string;
+  debugUiVisible?: boolean;
+  paused?: boolean;
+  debugWater?: boolean;
+  sliceEnabled?: boolean;
+  sliceZ?: number;
+  minTotalWater?: number;
+  minTerrainInstances?: number;
+  minWaterInstances?: number;
+  minTickCount?: number;
+  minOpenedStages?: number;
+  minOpenedHazards?: number;
+  minSelectedRouteWater?: number;
+  minManualRouteWater?: number;
+  requireLevelProgress?: boolean;
+};
+
+type CaptureBrowserState = {
+  renderer?: {
+    backend?: string;
+    mode?: string;
+  };
+  canvas?: {
+    width?: number;
+    height?: number;
+    clientWidth?: number;
+    clientHeight?: number;
+  };
+  scene?: {
+    preset?: string;
+    gameMode?: boolean;
+    firstPerson?: boolean;
+    debugUiVisible?: boolean;
+  };
+  input?: {
+    paused?: boolean;
+    debugWater?: boolean;
+    showActiveCells?: boolean;
+    showFlowDebug?: boolean;
+    sliceEnabled?: boolean;
+    sliceZ?: number;
+  };
+  world?: {
+    totalWater?: number;
+    activeCells?: number;
+    wetCells?: number;
+    visualEvents?: number;
+  };
+  render?: {
+    terrainInstances?: number;
+    waterInstances?: number;
+    terrainRebuilds?: number;
+    waterRebuilds?: number;
+  };
+  simulation?: {
+    tickCount?: number;
+    stableTicks?: number;
+    movedLastFrame?: number;
+  };
+  game?: {
+    levelId?: string | null;
+    openedStages?: number;
+    stageCount?: number;
+    openedHazards?: number;
+    hazardCount?: number;
+    selectedRouteWater?: number | null;
+    manualRouteWater?: number | null;
+    deliveredWater?: number | null;
+    wastedWater?: number | null;
+    complete?: boolean | null;
+    failed?: boolean | null;
+    status?: string | null;
+  };
+};
+
+const SEMANTIC_CAPTURE_CONTRACTS = new Map<string, BrowserStateContract>([
+  [
+    "generated-cavern.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: false,
+      debugUiVisible: true,
+      paused: true,
+      sliceEnabled: false,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+    },
+  ],
+  [
+    "generated-cavern-slice.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: false,
+      debugUiVisible: true,
+      paused: true,
+      debugWater: true,
+      sliceEnabled: true,
+      sliceZ: 36,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+    },
+  ],
+  [
+    "water-reservoir-drop.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: true,
+      levelId: "generated-cavern",
+      minOpenedStages: 1,
+      minTickCount: 300,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+      requireLevelProgress: true,
+    },
+  ],
+  [
+    "water-shoreline-basin.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: true,
+      levelId: "generated-cavern",
+      minOpenedStages: 3,
+      minTickCount: 240,
+      minManualRouteWater: 1,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+      requireLevelProgress: true,
+    },
+  ],
+  [
+    "water-contact-tunnel.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: true,
+      levelId: "generated-cavern",
+      minOpenedStages: 3,
+      minTickCount: 240,
+      minManualRouteWater: 1,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+      requireLevelProgress: true,
+    },
+  ],
+  [
+    "water-hazard-flow.png",
+    {
+      scenePreset: "generated-cavern",
+      gameMode: true,
+      levelId: "generated-cavern",
+      minOpenedStages: 3,
+      minOpenedHazards: 1,
+      minTickCount: 240,
+      minManualRouteWater: 1,
+      minTotalWater: 2000,
+      minTerrainInstances: 1,
+      minWaterInstances: 1,
+      requireLevelProgress: true,
+    },
+  ],
+]);
+
 const GAME_CAPTURES: GameCapture[] = [
   {
     url: `${BASE_URL}/?game=1&level=generated-cavern&openStages=1&warmupTicks=300&camera=fps&spawn=water-drop&debugUi=0&visualCapture=1`,
@@ -110,18 +279,20 @@ async function run(): Promise<void> {
           sceneFilename,
           updateBaseline,
           getSceneCaptureTimeout(preset),
+          getSemanticContract(sceneFilename),
         );
       }
 
       const sliceFilename = `${preset}-slice.png`;
       if (shouldCapture(sliceFilename, onlyFilenames)) {
-        await captureNonBlank(
+        await captureAndCompare(
           chrome,
-          withCaptureMode(getSceneSliceCaptureUrl(preset)),
-          `${ACTUAL_DIR}/${sliceFilename}`,
+          getSceneSliceCaptureUrl(preset),
+          sliceFilename,
+          updateBaseline,
           getSceneCaptureTimeout(preset),
+          getSemanticContract(sliceFilename),
         );
-        await compareOrUpdateBaseline(sliceFilename, updateBaseline);
       }
     }
 
@@ -136,6 +307,8 @@ async function run(): Promise<void> {
             `${BASE_URL}/?scene=${preset}&openStages=${openStages}&debug=1&paused=1`,
             filename,
             updateBaseline,
+            undefined,
+            getSemanticContract(filename),
           );
         }
       }
@@ -143,7 +316,14 @@ async function run(): Promise<void> {
 
     for (const gameCapture of GAME_CAPTURES) {
       if (shouldCapture(gameCapture.filename, onlyFilenames)) {
-        await captureAndCompare(chrome, gameCapture.url, gameCapture.filename, updateBaseline, gameCapture.timeoutMs);
+        await captureAndCompare(
+          chrome,
+          gameCapture.url,
+          gameCapture.filename,
+          updateBaseline,
+          gameCapture.timeoutMs,
+          getSemanticContract(gameCapture.filename),
+        );
       }
     }
   } finally {
@@ -187,14 +367,21 @@ async function captureAndCompare(
   filename: string,
   updateBaseline: boolean,
   timeoutMs?: number,
+  contract?: BrowserStateContract,
 ): Promise<void> {
-  await captureNonBlank(chrome, withCaptureMode(url), `${ACTUAL_DIR}/${filename}`, timeoutMs);
-  await compareOrUpdateBaseline(filename, updateBaseline);
+  await captureNonBlank(chrome, withCaptureMode(url), `${ACTUAL_DIR}/${filename}`, timeoutMs, contract);
+  await compareOrUpdateBaseline(filename, updateBaseline, contract);
 }
 
-async function captureNonBlank(chrome: string, url: string, outputPath: string, timeoutMs = DEFAULT_CAPTURE_WAIT_MS): Promise<void> {
-  if (shouldUseCdpFirst(outputPath, timeoutMs)) {
-    await captureWithCdp(chrome, url, outputPath, timeoutMs);
+async function captureNonBlank(
+  chrome: string,
+  url: string,
+  outputPath: string,
+  timeoutMs = DEFAULT_CAPTURE_WAIT_MS,
+  contract?: BrowserStateContract,
+): Promise<void> {
+  if (contract || shouldUseCdpFirst(outputPath, timeoutMs)) {
+    await captureWithCdp(chrome, url, outputPath, timeoutMs, contract);
     assertNotBlank(await readPng(outputPath), outputPath);
     return;
   }
@@ -223,7 +410,7 @@ async function captureNonBlank(chrome: string, url: string, outputPath: string, 
   }
 
   console.warn(`falling back to CDP capture ${outputPath}`);
-  await captureWithCdp(chrome, url, outputPath, timeoutMs);
+  await captureWithCdp(chrome, url, outputPath, timeoutMs, contract);
   try {
     assertNotBlank(await readPng(outputPath), outputPath);
   } catch (error) {
@@ -238,12 +425,26 @@ function withCaptureMode(url: string): string {
   return `${url}${url.includes("?") ? "&" : "?"}capture=1`;
 }
 
-async function compareOrUpdateBaseline(filename: string, updateBaseline: boolean): Promise<void> {
+function getSemanticContract(filename: string): BrowserStateContract | undefined {
+  return SEMANTIC_CAPTURE_CONTRACTS.get(filename);
+}
+
+async function compareOrUpdateBaseline(
+  filename: string,
+  updateBaseline: boolean,
+  contract?: BrowserStateContract,
+): Promise<void> {
   const actualPath = `${ACTUAL_DIR}/${filename}`;
   const baselinePath = `${BASELINE_DIR}/${filename}`;
   const diffPath = `${DIFF_DIR}/${filename}`;
 
-  assertNotBlank(await readPng(actualPath), actualPath);
+  const actual = await readPng(actualPath);
+  assertNotBlank(actual, actualPath);
+
+  if (contract) {
+    console.log(`checked ${filename} semantic=ok`);
+    return;
+  }
 
   if (updateBaseline || !existsSync(baselinePath)) {
     await copyFile(actualPath, baselinePath);
@@ -252,7 +453,6 @@ async function compareOrUpdateBaseline(filename: string, updateBaseline: boolean
   }
 
   const baseline = await readPng(baselinePath);
-  const actual = await readPng(actualPath);
   const diff = comparePngs(baseline, actual);
   await writeFile(diffPath, PNG.sync.write(diff.diffImage));
 
@@ -424,7 +624,13 @@ async function capture(chrome: string, url: string, outputPath: string, timeoutM
   });
 }
 
-async function captureWithCdp(chrome: string, url: string, outputPath: string, timeoutMs: number): Promise<void> {
+async function captureWithCdp(
+  chrome: string,
+  url: string,
+  outputPath: string,
+  timeoutMs: number,
+  contract?: BrowserStateContract,
+): Promise<void> {
   const port = 12_000 + Math.floor(Math.random() * 20_000);
   const profilePath = `${getCaptureProfilePath(outputPath)}-cdp`;
   await rm(profilePath, { recursive: true, force: true });
@@ -464,6 +670,10 @@ async function captureWithCdp(chrome: string, url: string, outputPath: string, t
     await waitForRenderedPage(cdp, sessionId);
     await sleep(getCdpSettleWaitMs(timeoutMs));
     cdp.throwIfRuntimeFailed(url);
+    if (contract) {
+      const state = await readCaptureState(cdp, sessionId, url);
+      assertCaptureState(getCaptureFilename(outputPath), contract, state);
+    }
     const screenshot = await cdp.send<{ data: string }>(
       "Page.captureScreenshot",
       { format: "png", fromSurface: true, captureBeyondViewport: false },
@@ -480,6 +690,96 @@ async function captureWithCdp(chrome: string, url: string, outputPath: string, t
   } finally {
     clearTimeout(timeout);
     await stopProcess(browser);
+  }
+}
+
+async function readCaptureState(cdp: CdpClient, sessionId: string, url: string): Promise<CaptureBrowserState> {
+  const captured = await cdp.send<{ result?: { value?: CaptureBrowserState | null } }>(
+    "Runtime.evaluate",
+    {
+      expression:
+        'typeof window.__WATER_CAPTURE_STATE__ === "function" ? window.__WATER_CAPTURE_STATE__() : null',
+      returnByValue: true,
+    },
+    sessionId,
+  );
+  const state = captured.result?.value;
+  if (!state) {
+    throw new Error(`${url}: capture state probe is unavailable`);
+  }
+
+  return state;
+}
+
+function assertCaptureState(filename: string, contract: BrowserStateContract, state: CaptureBrowserState): void {
+  assertEqual(filename, "renderer.backend", state.renderer?.backend, "webgl");
+  assertEqual(filename, "canvas.clientWidth", state.canvas?.clientWidth, 1280);
+  assertEqual(filename, "canvas.clientHeight", state.canvas?.clientHeight, 720);
+
+  if (contract.scenePreset !== undefined) {
+    assertEqual(filename, "scene.preset", state.scene?.preset, contract.scenePreset);
+  }
+  if (contract.gameMode !== undefined) {
+    assertEqual(filename, "scene.gameMode", state.scene?.gameMode, contract.gameMode);
+  }
+  if (contract.levelId !== undefined) {
+    assertEqual(filename, "game.levelId", state.game?.levelId, contract.levelId);
+  }
+  if (contract.debugUiVisible !== undefined) {
+    assertEqual(filename, "scene.debugUiVisible", state.scene?.debugUiVisible, contract.debugUiVisible);
+  }
+  if (contract.paused !== undefined) {
+    assertEqual(filename, "input.paused", state.input?.paused, contract.paused);
+  }
+  if (contract.debugWater !== undefined) {
+    assertEqual(filename, "input.debugWater", state.input?.debugWater, contract.debugWater);
+  }
+  if (contract.sliceEnabled !== undefined) {
+    assertEqual(filename, "input.sliceEnabled", state.input?.sliceEnabled, contract.sliceEnabled);
+  }
+  if (contract.sliceZ !== undefined) {
+    assertEqual(filename, "input.sliceZ", state.input?.sliceZ, contract.sliceZ);
+  }
+  if (contract.minTotalWater !== undefined) {
+    assertAtLeast(filename, "world.totalWater", state.world?.totalWater, contract.minTotalWater);
+  }
+  if (contract.minTerrainInstances !== undefined) {
+    assertAtLeast(filename, "render.terrainInstances", state.render?.terrainInstances, contract.minTerrainInstances);
+  }
+  if (contract.minWaterInstances !== undefined) {
+    assertAtLeast(filename, "render.waterInstances", state.render?.waterInstances, contract.minWaterInstances);
+  }
+  if (contract.minTickCount !== undefined) {
+    assertAtLeast(filename, "simulation.tickCount", state.simulation?.tickCount, contract.minTickCount);
+  }
+  if (contract.minOpenedStages !== undefined) {
+    assertAtLeast(filename, "game.openedStages", state.game?.openedStages, contract.minOpenedStages);
+  }
+  if (contract.minOpenedHazards !== undefined) {
+    assertAtLeast(filename, "game.openedHazards", state.game?.openedHazards, contract.minOpenedHazards);
+  }
+  if (contract.minSelectedRouteWater !== undefined) {
+    assertAtLeast(filename, "game.selectedRouteWater", state.game?.selectedRouteWater, contract.minSelectedRouteWater);
+  }
+  if (contract.minManualRouteWater !== undefined) {
+    assertAtLeast(filename, "game.manualRouteWater", state.game?.manualRouteWater, contract.minManualRouteWater);
+  }
+  if (contract.requireLevelProgress) {
+    if (state.game?.deliveredWater === null || state.game?.wastedWater === null || state.game?.status === null) {
+      throw new Error(`${filename}: expected level progress in capture state`);
+    }
+  }
+}
+
+function assertEqual(filename: string, field: string, actual: unknown, expected: unknown): void {
+  if (actual !== expected) {
+    throw new Error(`${filename}: expected ${field}=${String(expected)}, got ${String(actual)}`);
+  }
+}
+
+function assertAtLeast(filename: string, field: string, actual: number | null | undefined, minimum: number): void {
+  if (typeof actual !== "number" || actual < minimum) {
+    throw new Error(`${filename}: expected ${field} >= ${minimum}, got ${String(actual)}`);
   }
 }
 

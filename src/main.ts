@@ -96,6 +96,72 @@ const ACTIVE_STAGE_GUIDE_STYLE = {
   outlineDepthTest: true,
 };
 type AimFeedbackState = "idle" | "dig" | "blocked" | "hazard";
+type WaterCaptureState = {
+  renderer: {
+    mode: string;
+    backend: string;
+  };
+  canvas: {
+    width: number;
+    height: number;
+    clientWidth: number;
+    clientHeight: number;
+  };
+  scene: {
+    preset: ScenePresetId;
+    gameMode: boolean;
+    firstPerson: boolean;
+    debugUiVisible: boolean;
+  };
+  input: {
+    paused: boolean;
+    debugWater: boolean;
+    showActiveCells: boolean;
+    showFlowDebug: boolean;
+    sliceEnabled: boolean;
+    sliceZ: number;
+  };
+  world: {
+    width: number;
+    height: number;
+    depth: number;
+    totalWater: number;
+    activeCells: number;
+    wetCells: number;
+    visualEvents: number;
+  };
+  render: {
+    terrainInstances: number;
+    waterInstances: number;
+    terrainRebuilds: number;
+    waterRebuilds: number;
+  };
+  simulation: {
+    tickCount: number;
+    stableTicks: number;
+    movedLastFrame: number;
+  };
+  game: {
+    levelId: string | null;
+    openedStages: number;
+    stageCount: number;
+    openedHazards: number;
+    hazardCount: number;
+    selectedRouteWater: number | null;
+    manualRouteWater: number | null;
+    deliveredWater: number | null;
+    wastedWater: number | null;
+    complete: boolean | null;
+    failed: boolean | null;
+    status: string | null;
+  };
+};
+
+declare global {
+  interface Window {
+    __WATER_CAPTURE_STATE__?: () => WaterCaptureState;
+  }
+}
 
 const initialUrlParams = new URLSearchParams(window.location.search);
 const captureMode = initialUrlParams.get("capture") === "1";
@@ -1467,6 +1533,89 @@ function setElementText(root: ParentNode, selector: string, value: string): void
   }
 }
 
+function installCaptureStateProbe(): void {
+  if (!captureMode && !visualCaptureMode) {
+    return;
+  }
+
+  window.__WATER_CAPTURE_STATE__ = getCaptureState;
+}
+
+function getCaptureState(): WaterCaptureState {
+  const canvas = sceneContext.renderer.domElement;
+  const stageCount = getSceneOpeningStages(currentPreset).length;
+  const level = gameModeEnabled ? getCurrentLevel() : null;
+  const stageProgress = levelProgress?.stageProgress ?? getMissionStageProgress();
+  const currentWaterVolume = levelProgress?.totalWater ?? totalWater(world);
+
+  return {
+    renderer: {
+      mode: sceneContext.rendererMode,
+      backend: sceneContext.rendererBackend,
+    },
+    canvas: {
+      width: canvas.width,
+      height: canvas.height,
+      clientWidth: canvas.clientWidth,
+      clientHeight: canvas.clientHeight,
+    },
+    scene: {
+      preset: currentPreset,
+      gameMode: gameModeEnabled,
+      firstPerson: firstPersonMode,
+      debugUiVisible,
+    },
+    input: {
+      paused: inputState.paused,
+      debugWater: inputState.debugWater,
+      showActiveCells: inputState.showActiveCells,
+      showFlowDebug: inputState.showFlowDebug,
+      sliceEnabled: inputState.sliceEnabled,
+      sliceZ: getRenderOptions().slice.z,
+    },
+    world: {
+      width: world.width,
+      height: world.height,
+      depth: world.depth,
+      totalWater: currentWaterVolume,
+      activeCells: world.activeCells.size,
+      wetCells: world.wetCells.size,
+      visualEvents: world.waterVisualEvents.length,
+    },
+    render: {
+      terrainInstances: terrainRenderer.stats.instances,
+      waterInstances: waterRenderer.stats.instances,
+      terrainRebuilds: terrainRenderer.stats.rebuilds,
+      waterRebuilds: waterRenderer.stats.rebuilds,
+    },
+    simulation: {
+      tickCount,
+      stableTicks,
+      movedLastFrame,
+    },
+    game: {
+      levelId: level?.id ?? null,
+      openedStages: openedStageCount,
+      stageCount,
+      openedHazards: openedHazards.size,
+      hazardCount: level?.hazardStages.length ?? 0,
+      selectedRouteWater: stageProgress.selectedRouteWater,
+      manualRouteWater: getManualRouteWater(),
+      deliveredWater: levelProgress?.deliveredWater ?? null,
+      wastedWater: levelProgress?.wastedWater ?? null,
+      complete: levelProgress?.complete ?? null,
+      failed: levelProgress?.failed ?? null,
+      status: levelProgress?.status ?? null,
+    },
+  };
+}
+
+function getManualRouteWater(): number | null {
+  const manualStage = getSceneOpeningStages(currentPreset).find((stage) => !isStageAutoOpen(stage));
+  return manualStage ? measureBoxWater(world, getStageDigBoxes(manualStage)) : null;
+}
+
+installCaptureStateProbe();
 requestAnimationFrame(animate);
 
 function recordFlowEvents(events: FlowEvent[]): void {

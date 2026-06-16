@@ -18,7 +18,7 @@
     "screenshots:smoke": "tsx src/debug/captureScreenshots.ts --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png,water-reservoir-drop.png,water-shoreline-basin.png,water-contact-tunnel.png,water-hazard-flow.png",
     "screenshots:full": "tsx src/debug/captureScreenshots.ts",
     "screenshots:update": "tsx src/debug/captureScreenshots.ts --update-baseline",
-    "screenshots:update:smoke": "tsx src/debug/captureScreenshots.ts --update-baseline --only=generated-cavern.png,generated-cavern-slice.png,game-generated-cavern-start.png,water-reservoir-drop.png,water-shoreline-basin.png,water-contact-tunnel.png,water-hazard-flow.png",
+    "screenshots:update:smoke": "tsx src/debug/captureScreenshots.ts --update-baseline --only=game-generated-cavern-start.png",
     "preview": "vite preview"
   },
   "dependencies": {
